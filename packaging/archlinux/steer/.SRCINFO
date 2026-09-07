@@ -1,6 +1,6 @@
 pkgbase = steer
 	pkgdesc = Transparent proxy policy compiler and Linux systemd adapter
-	pkgver = 0.10.1
+	pkgver = 0.10.2
 	pkgrel = 1
 	url = https://github.com/gsh20040816/steer
 	arch = x86_64
@@ -16,7 +16,7 @@ pkgbase = steer
 	noextract = steer-geodata.tar.zst
 	backup = etc/steer/config.json
 	backup = etc/steer/web.json
-	source = steer::git+https://github.com/gsh20040816/steer.git#commit=df4f2e0815a4f715d8a72f243eebc355ebc1d06b
+	source = steer::git+https://github.com/gsh20040816/steer.git#commit=36279f560cfc5f0c0bcd7452ea8af57389f65296
 	source = steer-geodata.tar.zst::https://gsh20040816.github.io/steer/geodata/latest/steer-geodata.tar.zst
 	sha256sums = SKIP
 	sha256sums = SKIP
