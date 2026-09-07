@@ -67,7 +67,7 @@ final class ProbeDiagnosticsTests: XCTestCase {
         XCTAssertEqual(document.objects.routes.map(\.enabled), [true, false])
         XCTAssertEqual(document.objects.subscriptions.map(\.enabled), [true, false])
         XCTAssertEqual(document.probeResults.latestResults.map(\.scope), ["overview", "nodes", "routes"])
-        XCTAssertEqual(document.diagnostics.dnsCapture?.mode, "dedicated_shim")
+        XCTAssertEqual(document.diagnostics.dnsCapture?.mode, "native_hijack_with_local_shim")
         XCTAssertEqual(document.diagnostics.dnsCapture?.activeGeneration, "generation-a")
         XCTAssertEqual(document.diagnostics.dnsCapture?.configured, true)
         XCTAssertTrue(document.diagnostics.dnsCapture?.detail.contains("port-53 capture artifacts") == true)
