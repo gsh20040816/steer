@@ -16,7 +16,14 @@ func RenderFirewall(plan Plan) (string, error) {
 	)
 	add(
 		"\t\tfib daddr type != local return",
-		fmt.Sprintf("\t\tmeta l4proto { tcp, udp } th dport 53 counter redirect to :%d", plan.Resources.DNSPort), "\t}",
+		fmt.Sprintf("\t\tmeta nfproto ipv4 meta l4proto { tcp, udp } th dport 53 counter redirect to :%d", plan.Resources.DNSPort),
+		// Link-local clients cannot be forwarded to another interface. Their
+		// replies stay on the ingress link, so retain the local listener.
+		fmt.Sprintf("\t\tip6 saddr fe80::/10 meta l4proto { tcp, udp } th dport 53 counter redirect to :%d", plan.Resources.DNSPort),
+		// A relay LAN may have only a link-local IPv6 address. Redirecting to
+		// its wildcard UDP listener can reply from a different interface's
+		// address, missing reverse NAT. Use the native TUN DNS endpoint instead.
+		"\t\tmeta nfproto ipv6 meta l4proto { tcp, udp } th dport 53 counter dnat ip6 to fdfe:dcba:9876::2", "\t}",
 		"\tchain dns_output {", "\t\ttype nat hook output priority mangle - 2; policy accept;",
 		"\t\toifname \"steer0\" return",
 		fmt.Sprintf("\t\tmeta mark 0x%x counter return", plan.Resources.AutoRedirectOutputMark),

@@ -99,7 +99,24 @@ def main():
                 stun = b"\x00\x01\x00\x00\x21\x12\xa4\x42" + b"0123456789ab"
                 client.sendto(stun, ("11.77.0.99", 19000))
                 assert client.recvfrom(4096)[0] == stun, "source-port reuse misrouted STUN"
-            print("PASS: host/forwarded IPv4+IPv6 UDP+TCP DNS, host-local+LAN-local DNS shim, DNS→STUN source-port reuse")
+            # Relay topology: the LAN has only a link-local IPv6 address,
+            # while the router's non-link-local address belongs to the WAN.
+            # A wildcard UDP redirect listener may choose that WAN source
+            # on replies and miss reverse NAT. Exercise real client queries.
+            run("ip", "link", "add", "dns-wan", "type", "veth", "peer", "name", "dns-uplink")
+            run("ip", "link", "set", "dns-wan", "up")
+            run("ip", "link", "set", "dns-uplink", "up")
+            run("ip", "-6", "addr", "add", "fe80::77:1/64", "dev", "dns-host", "nodad")
+            run("ip", "-6", "addr", "del", "fd77::1/64", "dev", "dns-host")
+            run("ip", "-6", "addr", "add", "fd77::1/64", "dev", "dns-wan", "nodad")
+            run("ip", "-6", "route", "replace", "fd77::2/128", "dev", "dns-host")
+            run("ip", "-n", "dns-client", "-6", "route", "replace", "fd77::1/128", "via", "fe80::77:1", "dev", "dns-peer")
+            run("ip", "-n", "dns-client", "-6", "route", "replace", "default", "via", "fe80::77:1", "dev", "dns-peer")
+            for server in ["fdfe:dcba:9876::1", "fd77::1", "fe80::77:1%dns-peer"]:
+                for transport in ["+notcp", "+tcp"]:
+                    answer = run("ip", "netns", "exec", "dns-client", "dig", "+short", "+time=2", "+tries=1", transport, "@" + server, "steer.test", "A").strip()
+                    assert answer == "203.0.113.7", ("relay", server, transport, answer)
+            print("PASS: host/forwarded IPv4+IPv6 UDP+TCP DNS, host-local+LAN-local DNS shim, DNS→STUN source-port reuse, IPv6 relay DNS")
         except BaseException:
             log.seek(0)
             print(log.read(), file=sys.stderr)

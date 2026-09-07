@@ -12,7 +12,7 @@ func TestRenderMinimalDNSShim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"redirect to :1053", "dnat ip to 127.0.0.1:1053", "dnat ip6 to [::1]:1053", "snat ip to 127.0.0.1", "snat ip6 to ::1", "udp dport 123"} {
+	for _, required := range []string{"meta nfproto ipv4 meta l4proto { tcp, udp } th dport 53 counter redirect to :1053", "dnat ip6 to fdfe:dcba:9876::2", "dnat ip to 127.0.0.1:1053", "dnat ip6 to [::1]:1053", "snat ip to 127.0.0.1", "snat ip6 to ::1", "udp dport 123"} {
 		if !strings.Contains(config, required) {
 			t.Fatalf("missing %q:\n%s", required, config)
 		}

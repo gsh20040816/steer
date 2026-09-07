@@ -86,6 +86,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/steer-linux-system/geodata-seed"
           (
             cd go
+            STEER_DNS_FIXTURE_DIR="$RUNNER_TEMP/steer-linux-system/dns-fixtures" \
+              go test ./internal/platform -run TestExportNativeDNSFixtures -count=1
             CGO_ENABLED=0 go build \
               -trimpath \
               -o "$RUNNER_TEMP/steer-linux-system/steer" \
@@ -133,6 +135,15 @@ jobs:
             --env STEER_GEODATA_SEED=/artifacts/geodata-seed \
             steer-linux-system \
             /workspace/tests/integration/run-linux-system.sh
+
+      - name: Test native DNS and IPv6 relay topology
+        run: |
+          for platform in linux openwrt; do
+            docker exec --env PATH=/artifacts:/usr/sbin:/usr/bin:/sbin:/bin \
+              steer-linux-system python3 /workspace/tests/integration/check-native-dns.py \
+              "/artifacts/dns-fixtures/$platform.json" \
+              "/artifacts/dns-fixtures/$platform.nft"
+          done
 
       - name: Stop disposable systemd container
         if: always()

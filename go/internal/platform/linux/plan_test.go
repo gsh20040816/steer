@@ -58,7 +58,7 @@ func TestLinuxFirewallCapturesHostAndForwardedDNS(t *testing.T) {
 	}
 	for _, required := range []string{
 		"meta nfproto ipv4 meta l4proto { tcp, udp } th dport 53 counter redirect to :1053",
-		"meta nfproto ipv6 meta l4proto { tcp, udp } th dport 53 counter redirect to :1054",
+		"meta nfproto ipv6 meta l4proto { tcp, udp } th dport 53 counter dnat ip6 to fdfe:dcba:9876::2",
 		"iifname \"steer0\" return",
 		"meta mark 0x2024 counter return",
 		"dnat ip to 127.0.0.1:1053",

@@ -19,7 +19,11 @@ func RenderFirewall(plan Plan) string {
 		fmt.Sprintf("\t\tmeta mark 0x%x counter return", plan.Resources.AutoRedirectOutputMark),
 		"\t\tfib daddr type != local return",
 		fmt.Sprintf("\t\tmeta nfproto ipv4 meta l4proto { tcp, udp } th dport 53 counter redirect to :%d", plan.Resources.DNSPort),
-		fmt.Sprintf("\t\tmeta nfproto ipv6 meta l4proto { tcp, udp } th dport 53 counter redirect to :%d", plan.Resources.DNSPort6),
+		// Link-local sources must remain on their ingress interface.
+		fmt.Sprintf("\t\tip6 saddr fe80::/10 meta l4proto { tcp, udp } th dport 53 counter redirect to :%d", plan.Resources.DNSPort6),
+		// A LAN with only link-local IPv6 cannot safely use a wildcard UDP
+		// redirect listener: replies may select another interface's address.
+		"\t\tmeta nfproto ipv6 meta l4proto { tcp, udp } th dport 53 counter dnat ip6 to fdfe:dcba:9876::2",
 		"\t}",
 		"\tchain dns_output {",
 		"\t\ttype nat hook output priority mangle - 2; policy accept;",
