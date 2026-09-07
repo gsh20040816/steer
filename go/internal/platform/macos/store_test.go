@@ -17,7 +17,7 @@ func TestNewPathsRequiresAbsoluteRuntimeRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if paths.ConfigPath != filepath.Join(paths.Root, "config", "config.json") || paths.StatusPath != filepath.Join(paths.Root, "status", "current.json") {
+	if paths.ConfigPath != filepath.Join(paths.Root, "config", "config.json") {
 		t.Fatalf("unexpected runtime paths: %#v", paths)
 	}
 }
@@ -49,30 +49,6 @@ func TestIntentStoreDefaultsToMacOSGeoDataDirectory(t *testing.T) {
 	store := IntentStore{}
 	if got := store.geoDataDirectory(); got != DefaultGeoDataDirectory {
 		t.Fatalf("empty Store Geo directory = %q, want %q", got, DefaultGeoDataDirectory)
-	}
-}
-
-func TestStatusRoundTripRejectsUnknownFields(t *testing.T) {
-	paths, err := NewPaths(filepath.Join(t.TempDir(), "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	status := DefaultStatus()
-	status.Healthy = true
-	status.GenerationID = "generation"
-	if err := paths.SaveStatus(status); err != nil {
-		t.Fatal(err)
-	}
-	loaded, err := paths.LoadStatus()
-	if err != nil || loaded.GenerationID != status.GenerationID || !loaded.Healthy {
-		t.Fatalf("unexpected status: %#v %v", loaded, err)
-	}
-	content, err := os.ReadFile(paths.StatusPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(content) == 0 {
-		t.Fatal("status file is empty")
 	}
 }
 

@@ -14,20 +14,20 @@
     {"id": "feed_fast", "source_subscription": "feed"}
   ],
   "latest_results": [
-    {"scope":"nodes","object_id":"slow","kind":"connect","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":false,"summary":"88 ms","error_summary":""},
-    {"scope":"nodes","object_id":"slow","kind":"download","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":false,"summary":"32.0 Mbps","error_summary":""},
-    {"scope":"nodes","object_id":"stale","kind":"connect","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":true,"summary":"5 ms","error_summary":""},
-    {"scope":"nodes","object_id":"stale","kind":"download","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":true,"summary":"99.0 Mbps","error_summary":""},
-    {"scope":"nodes","object_id":"fast","kind":"connect","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":false,"summary":"21 ms","error_summary":""},
-    {"scope":"nodes","object_id":"fast","kind":"download","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":false,"summary":"16.0 Mbps","error_summary":""},
+    {"scope":"nodes","object_id":"slow","kind":"connect","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":false,"metric_value":88,"summary":"88 ms","error_summary":""},
+    {"scope":"nodes","object_id":"slow","kind":"download","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":false,"metric_value":32,"summary":"下载速度：32 Mbps","error_summary":""},
+    {"scope":"nodes","object_id":"stale","kind":"connect","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":true,"metric_value":5,"summary":"5 ms","error_summary":""},
+    {"scope":"nodes","object_id":"stale","kind":"download","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":true,"metric_value":99,"summary":"99.0 Mbps","error_summary":""},
+    {"scope":"nodes","object_id":"fast","kind":"connect","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":false,"metric_value":21,"summary":"延迟 21 毫秒","error_summary":""},
+    {"scope":"nodes","object_id":"fast","kind":"download","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":false,"metric_value":16,"summary":"16.0 Mbps","error_summary":""},
     {"scope":"nodes","object_id":"failed","kind":"connect","tested_at":"2026-08-28T01:00:00Z","ok":false,"stale":false,"summary":"","error_summary":"Connection failed"},
     {"scope":"nodes","object_id":"failed","kind":"download","tested_at":"2026-08-28T01:00:00Z","ok":false,"stale":false,"summary":"","error_summary":"Download failed"},
-    {"scope":"nodes","object_id":"tie","kind":"connect","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":false,"summary":"21 ms","error_summary":""},
-    {"scope":"nodes","object_id":"tie","kind":"download","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":false,"summary":"16.0 Mbps","error_summary":""},
+    {"scope":"nodes","object_id":"tie","kind":"connect","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":false,"metric_value":21,"summary":"延迟 21 毫秒","error_summary":""},
+    {"scope":"nodes","object_id":"tie","kind":"download","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":false,"metric_value":16,"summary":"16.0 Mbps","error_summary":""},
     {"scope":"nodes","object_id":"invalid","kind":"connect","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":false,"summary":"fast","error_summary":""},
     {"scope":"nodes","object_id":"invalid","kind":"download","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":false,"summary":"unknown","error_summary":""},
-    {"scope":"nodes","object_id":"feed_slow","kind":"connect","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":false,"summary":"70 ms","error_summary":""},
-    {"scope":"nodes","object_id":"feed_fast","kind":"connect","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":false,"summary":"12 ms","error_summary":""}
+    {"scope":"nodes","object_id":"feed_slow","kind":"connect","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":false,"metric_value":70,"summary":"70 ms","error_summary":""},
+    {"scope":"nodes","object_id":"feed_fast","kind":"connect","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":false,"metric_value":12,"summary":"12 ms","error_summary":""}
   ],
   "cases": [
     {"name":"default preserves the manual group order","group":"","mode":"default","direction":"best_first","expected_ids":["slow","stale","fast","failed","tie","missing","invalid"]},

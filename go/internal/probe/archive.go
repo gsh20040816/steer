@@ -33,14 +33,16 @@ type Identity struct {
 // LatestProbeResult is the only persisted-probe contract intended for an
 // ordinary UI. Raw Report values remain an internal diagnostic artifact.
 type LatestProbeResult struct {
-	Scope        string    `json:"scope"`
-	ObjectID     string    `json:"object_id,omitempty"`
-	Kind         string    `json:"kind"`
-	TestedAt     time.Time `json:"tested_at"`
-	OK           bool      `json:"ok"`
-	Stale        bool      `json:"stale"`
-	Summary      string    `json:"summary"`
-	ErrorSummary string    `json:"error_summary"`
+	Scope    string    `json:"scope"`
+	ObjectID string    `json:"object_id,omitempty"`
+	Kind     string    `json:"kind"`
+	TestedAt time.Time `json:"tested_at"`
+	OK       bool      `json:"ok"`
+	Stale    bool      `json:"stale"`
+	Summary  string    `json:"summary"`
+	// MetricValue is latency in ms for connect probes and throughput in Mbps for downloads.
+	MetricValue  *float64 `json:"metric_value,omitempty"`
+	ErrorSummary string   `json:"error_summary"`
 }
 
 type LatestProbeResults struct {
@@ -210,9 +212,7 @@ func SaveReport(stateDirectory string, report Report) error {
 	return nil
 }
 
-// ReadLatestProbeResults returns one result for every persisted
-// scope/object/kind key. It intentionally has no global count limit: 135
-// Nodes with two probe kinds must still yield all 270 latest results.
+// ReadLatestProbeResults returns one result for every persisted scope/object/kind key.
 func ReadLatestProbeResults(stateDirectory string, identity Identity) LatestProbeResults {
 	reports, warnings := readReports(stateDirectory)
 	results := make([]LatestProbeResult, 0, len(reports))
@@ -229,7 +229,7 @@ func PresentLatestProbeResult(report Report, identity Identity) LatestProbeResul
 		TestedAt: report.TestedAt, OK: report.OK, Stale: reportIsStale(report, identity),
 	}
 	if report.OK {
-		result.Summary = coreMetric(report)
+		result.Summary, result.MetricValue = coreMetric(report)
 	} else {
 		result.ErrorSummary = safeErrorSummary(report)
 	}
@@ -317,7 +317,7 @@ func reportIsStale(report Report, identity Identity) bool {
 	return report.ActiveGeneration != identity.ActiveGeneration || report.ActiveDigest != identity.ActiveDigest
 }
 
-func coreMetric(report Report) string {
+func coreMetric(report Report) (string, *float64) {
 	for _, result := range report.Results {
 		if !result.OK {
 			continue
@@ -325,7 +325,7 @@ func coreMetric(report Report) string {
 		if report.Kind == "download" || report.Kind == "speedtest" {
 			if result.DownloadedBytes > 0 && result.DownloadMilliseconds > 0 {
 				megabitsPerSecond := float64(result.DownloadedBytes) * 8 / float64(result.DownloadMilliseconds) / 1000
-				return fmt.Sprintf("%.1f Mbps", megabitsPerSecond)
+				return fmt.Sprintf("%.1f Mbps", megabitsPerSecond), &megabitsPerSecond
 			}
 			continue
 		}
@@ -337,13 +337,14 @@ func coreMetric(report Report) string {
 			milliseconds = result.ConnectMilliseconds
 		}
 		if milliseconds > 0 {
-			return fmt.Sprintf("%d ms", milliseconds)
+			value := float64(milliseconds)
+			return fmt.Sprintf("%d ms", milliseconds), &value
 		}
 		if result.Status > 0 {
-			return fmt.Sprintf("HTTP %d", result.Status)
+			return fmt.Sprintf("HTTP %d", result.Status), nil
 		}
 	}
-	return "成功"
+	return "成功", nil
 }
 
 func safeErrorSummary(report Report) string {

@@ -166,61 +166,19 @@ struct UICollectionOrderingPolicy: Decodable {
     }
 }
 
-struct UICollectionDragContract: Decodable {
-    let states: [String]
-    let feedback: String
-    let commit: String
-    let cancel: String
-    let fallbackActions: [String]
-    let pointerInputs: [String]
-    let orderingPolicySource: String
-    let singleMutationPerDrop: Bool
-
-    enum CodingKeys: String, CodingKey {
-        case states, feedback, commit, cancel
-        case fallbackActions = "fallback_actions"
-        case pointerInputs = "pointer_inputs"
-        case orderingPolicySource = "ordering_policy_source"
-        case singleMutationPerDrop = "single_mutation_per_drop"
-    }
-}
-
 struct UINodeDisplaySortingContract: Decodable {
     let modes: [String]
-    let headerColumns: [String]
     let directionModes: [String]
     let defaultDirection: String
-    let repeatClick: String
-    let resultSource: String
-    let metricField: String
-    let connectMetricSuffix: String
-    let downloadMetricSuffix: String
     let connectDirection: String
     let downloadDirection: String
-    let unrankedStates: [String]
-    let unrankedPlacement: String
-    let tieBreaker: String
-    let scope: String
-    let orderingActionsMode: String
-    let mutatesDraft: Bool
 
     enum CodingKeys: String, CodingKey {
-        case modes, scope
-        case headerColumns = "header_columns"
+        case modes
         case directionModes = "direction_modes"
         case defaultDirection = "default_direction"
-        case repeatClick = "repeat_click"
-        case resultSource = "result_source"
-        case metricField = "metric_field"
-        case connectMetricSuffix = "connect_metric_suffix"
-        case downloadMetricSuffix = "download_metric_suffix"
         case connectDirection = "connect_direction"
         case downloadDirection = "download_direction"
-        case unrankedStates = "unranked_states"
-        case unrankedPlacement = "unranked_placement"
-        case tieBreaker = "tie_breaker"
-        case orderingActionsMode = "ordering_actions_mode"
-        case mutatesDraft = "mutates_draft"
     }
 }
 
@@ -259,30 +217,6 @@ struct UIIDPolicy: Decodable {
     }
 }
 
-struct UIPageResponsibility: Decodable {
-    let summary: String
-    let facts: [String]
-    let regions: [UIPageRegion]?
-    let objectCountSource: String?
-    let validationSource: String?
-    let forbiddenFacts: [String]?
-
-    enum CodingKeys: String, CodingKey {
-        case summary, facts, regions
-        case objectCountSource = "object_count_source"
-        case validationSource = "validation_source"
-        case forbiddenFacts = "forbidden_facts"
-    }
-}
-
-struct UIPageRegion: Decodable, Identifiable {
-    let key: String
-    let facts: [String]
-    let sources: [String]
-    let actions: [String]?
-    var id: String { key }
-}
-
 struct UIDNSBoundary: Decodable {
     let captureMode: String
     let captureScope: String
@@ -315,35 +249,6 @@ struct UISubscriptionInventoryContract: Decodable {
     }
 }
 
-struct UIProbeResultsContract: Decodable {
-    let keyFields: [String]
-    let resultFields: [String]
-    let frontendRole: String
-
-    enum CodingKeys: String, CodingKey {
-        case keyFields = "key_fields"
-        case resultFields = "result_fields"
-        case frontendRole = "frontend_role"
-    }
-}
-
-struct UIGlobalStatusContract: Decodable {
-    let visibleOnEveryPage: Bool
-    let enableAction: String
-    let includesCurrentDraft: Bool
-    let blockingConditions: [String]
-    let facts: [String]
-    let actions: [String]
-
-    enum CodingKeys: String, CodingKey {
-        case facts, actions
-        case visibleOnEveryPage = "visible_on_every_page"
-        case enableAction = "enable_action"
-        case includesCurrentDraft = "includes_current_draft"
-        case blockingConditions = "blocking_conditions"
-    }
-}
-
 struct UIContract: Decodable {
     let schemaVersion: Int
     let canonicalSchema: Int
@@ -366,17 +271,13 @@ struct UIContract: Decodable {
     let ruleConnectionOnlyFields: [String]
     let collectionReferences: [UICollectionReference]
     let collectionOrdering: [String: UICollectionOrderingPolicy]
-    let collectionDrag: UICollectionDragContract
     let nodeDisplaySorting: UINodeDisplaySortingContract
     let domainPrefixes: [String]
     let ipPrefixes: [String]
     let platformCapabilities: [String: UIPlatformCapabilities]
     let navigation: [UINavigationGroup]
-    let pageResponsibilities: [String: UIPageResponsibility]
     let dnsBoundaries: [String: UIDNSBoundary]
     let subscriptionInventory: UISubscriptionInventoryContract
-    let probeResults: UIProbeResultsContract
-    let globalStatus: UIGlobalStatusContract
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -400,17 +301,13 @@ struct UIContract: Decodable {
         case ruleConnectionOnlyFields = "rule_connection_only_fields"
         case collectionReferences = "collection_references"
         case collectionOrdering = "collection_ordering"
-        case collectionDrag = "collection_drag"
         case nodeDisplaySorting = "node_display_sorting"
         case domainPrefixes = "domain_prefixes"
         case ipPrefixes = "ip_prefixes"
         case platformCapabilities = "platform_capabilities"
         case navigation
-        case pageResponsibilities = "page_responsibilities"
         case dnsBoundaries = "dns_boundaries"
         case subscriptionInventory = "subscription_inventory"
-        case probeResults = "probe_results"
-        case globalStatus = "global_status"
     }
 }
 

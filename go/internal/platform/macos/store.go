@@ -30,8 +30,6 @@ type Paths struct {
 	ConfigPath           string `json:"config_path"`
 	GenerationsDirectory string `json:"generations_directory"`
 	StateDirectory       string `json:"state_directory"`
-	StatusDirectory      string `json:"status_directory"`
-	StatusPath           string `json:"status_path"`
 	LogsDirectory        string `json:"logs_directory"`
 }
 
@@ -46,16 +44,13 @@ func NewPaths(rootDirectory string) (Paths, error) {
 		ConfigPath:           filepath.Join(configDirectory, "config.json"),
 		GenerationsDirectory: filepath.Join(root, "generations"),
 		StateDirectory:       filepath.Join(root, "state"),
-		StatusDirectory:      filepath.Join(root, "status"),
-		StatusPath:           filepath.Join(root, "status", "current.json"),
 		LogsDirectory:        filepath.Join(root, "logs"),
 	}, nil
 }
 
 func (paths Paths) Ensure() error {
 	for _, directory := range []string{
-		paths.ConfigDirectory, paths.GenerationsDirectory, paths.StateDirectory,
-		paths.StatusDirectory, paths.LogsDirectory,
+		paths.ConfigDirectory, paths.GenerationsDirectory, paths.StateDirectory, paths.LogsDirectory,
 	} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			return fmt.Errorf("create macOS runtime directory %s: %w", directory, err)
@@ -121,44 +116,6 @@ type Status struct {
 
 func DefaultStatus() Status {
 	return Status{SchemaVersion: RuntimeSchemaVersion}
-}
-
-func (paths Paths) LoadStatus() (Status, error) {
-	content, err := os.ReadFile(paths.StatusPath)
-	if err != nil {
-		return Status{}, fmt.Errorf("read macOS status: %w", err)
-	}
-	decoder := json.NewDecoder(bytes.NewReader(content))
-	decoder.DisallowUnknownFields()
-	var status Status
-	if err := decoder.Decode(&status); err != nil {
-		return Status{}, fmt.Errorf("decode macOS status: %w", err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		if err == nil {
-			err = errors.New("multiple JSON values")
-		}
-		return Status{}, fmt.Errorf("decode macOS status: %w", err)
-	}
-	if status.SchemaVersion != RuntimeSchemaVersion {
-		return Status{}, fmt.Errorf("macOS status requires schema %d, found %d", RuntimeSchemaVersion, status.SchemaVersion)
-	}
-	return status, nil
-}
-
-func (paths Paths) SaveStatus(status Status) error {
-	if status.SchemaVersion == 0 {
-		status.SchemaVersion = RuntimeSchemaVersion
-	}
-	if status.SchemaVersion != RuntimeSchemaVersion {
-		return fmt.Errorf("macOS status requires schema %d, found %d", RuntimeSchemaVersion, status.SchemaVersion)
-	}
-	encoded, err := json.MarshalIndent(status, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode macOS status: %w", err)
-	}
-	return atomicWrite(paths.StatusPath, append(encoded, '\n'))
 }
 
 func contentRevision(content []byte) string {

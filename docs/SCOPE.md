@@ -1,10 +1,10 @@
-# 范围与冻结规则
+# 项目范围
 
-本文是 0.4 跨平台迁移的范围基线。功能分为“共享语义”和“平台实现”两层；判断一个功能是否应进入共享核心时，只看它是否改变用户意图，而不看当前 OpenWrt 恰好怎样实现。
+本文描述 Steer 0.10、schema 9 的职责边界。共享核心定义用户配置语义，平台适配器负责操作系统资源和服务生命周期。
 
 ## 第一层：共享语义
 
-以下内容已经实现并在 0.4 alpha 期间冻结：
+共享核心提供：
 
 - schema 9 Canonical Intent：主配置、Bootstrap、节点、订阅、逻辑路由、DNS Profile、本地代理和规则；
 - 严格解码：UCI 适配器拒绝未知 section/option 和 scalar/list 形态错误；Canonical JSON codec 拒绝未知字段与尾随数据；
@@ -16,7 +16,7 @@
 - HTTP(S) 订阅的抓取、解析、合并、稳定 ID、stale pin 和窄持久化接口；
 - HTTP/TLS 测量、连接测试和完整下载报告格式。
 
-共享核心不认识 UCI、procd、launchd、systemd、nftables、pf、路由表号或平台目录。`status` 的公共语义只有 `healthy` 和 `last_apply`；配置合法性由独立 `validate` 返回。
+共享核心不认识 UCI、procd、launchd、systemd、nftables、pf、路由表号或平台目录。`status` 返回当前运行配置身份、健康状态和最近 Apply 记录；配置合法性由独立 `validate` 返回。
 
 ## 第二层：平台实现
 
@@ -35,24 +35,14 @@ OpenWrt 适配器当前拥有：
 
 macOS 适配器当前拥有：
 
-- Canonical JSON 配置、Darwin TUN `auto_route`、静态 RFC1918/CGNAT/ULA 路由和显式 TCP/UDP 目标端口 53 capture；
+- Canonical JSON 配置、Darwin TUN `auto_route`、系统 DNS 接管与恢复，以及进入 TUN 的 TCP/UDP 目标端口 53 capture；
 - root LaunchDaemon、generation、Geo seed、Apply/health/status/cleanup；
 - SwiftUI GUI 配置与运维前端。GUI 与 LuCI、Linux Web 同级，只调用平台后端，不承载数据面。
 
-## 当前不做
+## 交付与运行边界
 
-- macOS 的签名发布包与自动化真机流量矩阵；Linux 的发行版安装包仍不在范围内；
-- 自动/人工回滚、配置历史、启动时选择旧 generation；
-- 节点故障转移、健康调度、隐藏 fallback；
-- 资源所有权协商或与第三方代理栈共存；
-- 故障注入测试矩阵；
-- DIRECT 内核旁路、flowtable、运行时 outbound 命中解释；
-- 新协议、新规则条件、订阅策略扩展或 LuCI 功能扩张。
+OpenWrt 提供签名 APK 软件源，Linux 提供通用 tar.zst，macOS 提供 ad-hoc 签名 DMG 和首次安装系统组件的授权流程。具体平台与发布要求见 [打包与发布](PACKAGING.md)。
 
-配置或运行环境不满足前提时应 fail-fast。只有正常使用中能够触发并影响正确性的缺陷、安全问题或被支持依赖的必要变更，可以打破冻结。
+Apply 在切换前完成配置和环境检查；切换后的失败返回错误并保留现场，供诊断和重试。配置保存、运行态应用和订阅库存更新是独立操作，前端分别展示其结果。
 
-## 冻结与晋级
-
-- `v0.4.0-alpha.1` 起功能边界硬冻结；共享接口进入候选冻结。
-- `v0.4.0` 起进入稳定版本线；`0.4.x` 只接受正常使用缺陷、安全问题和必要依赖适配，不增加公共功能。
-- 共享核心与 OpenWrt 功能边界保持冻结；Linux 与 macOS 适配器在各自平台边界内演进。
+新增共享字段需要同时更新 codec、校验、编译和三端表单。平台差异在适配器内实现；修改通过对应的行为测试和目标系统验证。

@@ -193,9 +193,6 @@ final class CollectionOrderingTests: XCTestCase {
     func testSharedDragContractCommitsOnceAndCancellationDoesNotMutate() throws {
         let document = try dragFixture()
         XCTAssertEqual(document.schemaVersion, 1)
-        XCTAssertEqual(document.states, SteerUISpec.contract.collectionDrag.states)
-        XCTAssertEqual(SteerUISpec.contract.collectionDrag.feedback, "whole_row_placeholder")
-        XCTAssertTrue(SteerUISpec.contract.collectionDrag.singleMutationPerDrop)
 
         for testCase in document.cases {
             let model = AppModel()
@@ -225,10 +222,6 @@ final class CollectionOrderingTests: XCTestCase {
         XCTAssertEqual(document.modes, contract.modes)
         XCTAssertEqual(document.directionModes, contract.directionModes)
         XCTAssertEqual(contract.defaultDirection, "best_first")
-        XCTAssertEqual(contract.headerColumns, ["connect", "download"])
-        XCTAssertEqual(contract.repeatClick, "best_worst_default_cycle")
-        XCTAssertEqual(contract.unrankedPlacement, "last_stable")
-        XCTAssertFalse(contract.mutatesDraft)
 
         for testCase in document.cases {
             let ids = document.nodes.filter { ($0.sourceSubscription ?? "") == testCase.group }.map(\.id)

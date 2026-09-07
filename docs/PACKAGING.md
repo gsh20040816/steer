@@ -223,7 +223,6 @@ python3 tests/check-luci-i18n.py
 python3 tests/check-package-boundaries.py
 python3 tests/check-build-cache.py
 python3 tests/check-linux-packaging.py
-python3 tests/check-macos-contract.py
 python3 tests/check-macos-packaging.py
 node tests/node/luci_view_test.js
 node tests/node/steer_helper_test.js

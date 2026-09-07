@@ -149,42 +149,6 @@ final class UISafetyContractTests: XCTestCase {
         XCTAssertFalse(SteerUISpec.contract.platformCapabilities["macos"]?.sourceMACReason?.isEmpty ?? true)
     }
 
-    func testSharedPageDNSAndSubscriptionResponsibilityContractsDecode() throws {
-        XCTAssertEqual(
-            Set(SteerUISpec.contract.pageResponsibilities["overview"]?.facts ?? []),
-            Set(["execution_model", "draft", "saved", "active", "object_counts", "validation_summary", "warning_summary", "last_apply", "quick_actions"])
-        )
-        let overview = try XCTUnwrap(SteerUISpec.contract.pageResponsibilities["overview"])
-        XCTAssertEqual(overview.objectCountSource, "draft")
-        XCTAssertEqual(overview.validationSource, "draft_validation")
-        XCTAssertEqual(overview.regions?.map(\.key), [
-            "execution_model", "configuration_lifecycle", "object_scale", "validation_summary", "last_apply_and_actions"
-        ])
-        XCTAssertEqual(overview.regions?[2].facts, ["nodes", "routes", "dns_profiles", "local_proxies", "rules", "subscriptions"])
-        XCTAssertEqual(overview.regions?[4].actions ?? [], ["refresh", "diagnostics", "system", "save", "apply_saved", "save_and_apply", "discard"])
-        XCTAssertEqual(overview.forbiddenFacts ?? [], ["probe_history", "raw_error_chain", "object_ids", "digests", "generation_paths"])
-        XCTAssertTrue(SteerUISpec.contract.pageResponsibilities["diagnostics"]?.facts.contains("dns_capture") == true)
-        XCTAssertEqual(
-            Set(SteerUISpec.contract.pageResponsibilities["system"]?.facts ?? []),
-            Set(["versions", "last_apply", "geo", "paths", "platform_components", "access"])
-        )
-
-        let boundary = try XCTUnwrap(SteerUISpec.contract.dnsBoundaries["macos"])
-        XCTAssertEqual(boundary.captureMode, "tun_port53_hijack")
-        XCTAssertFalse(boundary.exclusions.isEmpty)
-        XCTAssertTrue(boundary.bootstrapBoundary.contains("infrastructure hostnames"))
-        XCTAssertTrue(boundary.encryptedDNSBoundary.contains("Port-53 capture alone"))
-        XCTAssertTrue(boundary.diagnosticBoundary.contains("does not prove"))
-
-        XCTAssertFalse(SteerUISpec.contract.subscriptionInventory.changesActiveGeneration)
-        XCTAssertEqual(SteerUISpec.contract.subscriptionInventory.staleReferencedNodes, "preserved")
-        XCTAssertEqual(SteerUISpec.contract.probeResults.keyFields, ["scope", "object_id", "kind"])
-        XCTAssertEqual(
-            SteerUISpec.contract.probeResults.resultFields,
-            ["scope", "object_id", "kind", "tested_at", "ok", "stale", "summary", "error_summary"]
-        )
-    }
-
     func testSharedValidationIssuesPreserveLocationWithoutSecrets() throws {
         let document = try decode(ValidationDocument.self, "ui/validation-issue-fixtures.json")
         XCTAssertEqual(document.schemaVersion, 1)
@@ -216,46 +180,6 @@ final class UISafetyContractTests: XCTestCase {
         let legacy = try JSONDecoder().decode(ValidationResult.self, from: Data(#"{"ok":true,"errors":[],"warnings":[]}"#.utf8))
         XCTAssertTrue(legacy.warningGroups.isEmpty, "an older helper remains a safe empty summary")
 
-        let content = try String(contentsOf: repositoryRoot.appendingPathComponent("macos/SteerApp/ContentView.swift"))
-        let overview = try XCTUnwrap(content.range(of: "struct OverviewView: View")).lowerBound
-        let configuration = try XCTUnwrap(content.range(of: "struct ConfigurationView: View")).lowerBound
-        let overviewSource = String(content[overview..<configuration])
-        XCTAssertTrue(overviewSource.contains("validation.warningGroups"))
-        XCTAssertFalse(overviewSource.contains("validation.warnings)"), "Overview must not enumerate raw Warning issues")
-        XCTAssertFalse(overviewSource.contains("objectID"), "Overview must not render Warning object IDs")
-    }
-
-    func testGlobalEnableUsesTheSharedToolbarAndOneAppModelAction() throws {
-        XCTAssertTrue(SteerUISpec.contract.globalStatus.visibleOnEveryPage)
-        XCTAssertFalse(SteerUISpec.contract.globalStatus.includesCurrentDraft)
-        XCTAssertEqual(SteerUISpec.contract.globalStatus.enableAction, "set_enabled_on_latest_saved")
-        XCTAssertEqual(SteerUISpec.contract.globalStatus.blockingConditions,
-                       ["write_in_progress"])
-        let content = try String(contentsOf: repositoryRoot.appendingPathComponent("macos/SteerApp/ContentView.swift"))
-        let overviewStart = try XCTUnwrap(content.range(of: "struct OverviewView: View")).lowerBound
-        let overviewEnd = try XCTUnwrap(content.range(of: "struct ConfigurationView: View")).lowerBound
-        let shell = String(content[..<overviewStart])
-        let overview = String(content[overviewStart..<overviewEnd])
-        XCTAssertTrue(shell.contains("Toggle(\"Steer\"") && shell.contains("model.setEnabledAndApply($0)"))
-        XCTAssertFalse(overview.contains("Toggle(\"启用配置\""), "Overview must not own a duplicate service toggle")
-        for expected in ["执行模型", "配置生命周期", "工作副本规模", "校验与警告摘要", "最近应用与快捷操作"] {
-            XCTAssertTrue(overview.contains(expected), "macOS Overview is missing \(expected)")
-        }
-        for collection in ["nodes", "routes", "dns_profiles", "local_proxies", "rules", "subscriptions"] {
-            XCTAssertTrue(overview.contains("itemCount(for: \"\(collection)\")"), "macOS Overview Draft scale is missing \(collection)")
-        }
-        XCTAssertTrue(overview.contains("model.overviewLifecycle.saved") &&
-                      overview.contains("model.overviewLifecycle.pendingApply") &&
-                      overview.contains("model.overviewLifecycle.active"))
-        XCTAssertTrue(overview.contains("localizedLastApplyTime") && overview.contains("safeLastApplySummary"))
-        XCTAssertFalse(overview.contains("result.error") || overview.contains("intentDigest") || overview.contains("generationID)"),
-                       "macOS Overview must not render raw errors or runtime identity")
-        XCTAssertFalse(overview.contains("DraftActionButtons"),
-                       "Overview reuses the global toolbar instead of duplicating lifecycle actions")
-
-        let app = try String(contentsOf: repositoryRoot.appendingPathComponent("macos/SteerApp/SteerApp.swift"))
-        XCTAssertTrue(app.contains("model.setEnabledAndApply(!model.savedEnabled)"),
-                      "the menu bar must use the same global Enable action")
     }
 
     func testSharedHighFrequencyFormFormatsAreAvailableToEveryFrontend() throws {

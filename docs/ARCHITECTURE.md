@@ -1,6 +1,6 @@
 # 架构
 
-Steer 采用“共享意图核心 + 平台适配器”。共享编译器生成可直接交给 sing-box 的最终配置；平台适配器提供该平台所需的入站片段，并单独规划和应用操作系统资源。不存在公开 Execution Plan，也不存在 UCI 到其他平台配置的兼容桥。
+Steer 采用“共享意图核心 + 平台适配器”。共享编译器生成可直接交给 sing-box 的最终配置；平台适配器提供该平台所需的入站片段，并单独规划和应用操作系统资源。
 
 ## 代码边界
 
@@ -75,7 +75,7 @@ Steer 不写全局 `dns.strategy`，也不写 DNS rule action 的 query-level `s
 
 macOS 使用 LaunchDaemon 下的 sing-box Darwin TUN，不使用 pf 或 Network Extension。TUN 启用 `dns_mode: hijack`；`_run` 看护核心，在 IPv4/IPv6 UDP/TCP DNS 入口可用后，将物理网络服务的系统 DNS 指向派生地址 `198.18.0.2`、`fdfe:dcba:9876::2`。按服务 UUID 先持久保存原 DNS，区分自动与手动；停止、核心退出和卸载时恢复。独立 control daemon 每 5 秒恢复已停止运行态留下的 journal，覆盖 SIGKILL 和重启恢复。用户后续改变 DNS 时放弃该服务的所有权，不强行覆盖。VPN 专用服务和搜索域不修改。
 
-删除额外 RFC1918/CGNAT/ULA 大网段路由，仅保留默认公网路由和必要排除。已进入 TUN 的流量依次执行：① 明确 TCP/UDP 目标端口 53 `hijack-dns`；② 私网 Direct；③ sniff；④ resolve；⑤ 用户规则。不能保证应用硬编码的链路本地或直连 DNS 进入 TUN。网络轮询只接管新增物理服务，不读取 Saved、不创建 generation、不隐式 Apply。健康状态要求 DNS 地址经拥有 Steer 地址的本机 utun 路由、入口可用且当前 generation 的系统 DNS 接管已完成；这不代表所有 VPN 分域解析或加密 DNS 都经过 Steer。
+TUN 使用默认公网路由和必要排除。已进入 TUN 的流量依次执行：① 明确 TCP/UDP 目标端口 53 `hijack-dns`；② 私网 Direct；③ sniff；④ resolve；⑤ 用户规则。不能保证应用硬编码的链路本地或直连 DNS 进入 TUN。网络轮询只接管新增物理服务，不读取 Saved、不创建 generation、不隐式 Apply。健康状态要求 DNS 地址经拥有 Steer 地址的本机 utun 路由、入口可用且当前 generation 的系统 DNS 接管已完成；这不代表所有 VPN 分域解析或加密 DNS 都经过 Steer。
 
 ## Apply
 
@@ -132,6 +132,6 @@ OpenWrt `status` 同样从 `current` generation 返回 Active generation、Inten
 
 共享订阅逻辑只依赖窄 `Store`：替换一组订阅节点或删除一个节点。OpenWrt Store 生成单次 UCI batch；JSON Store 使用 revision-guarded 原子写入。订阅只改变 Saved 节点库，提交后不主动 Apply。合并时自动删除上游已移除且无 Route 引用的节点，只把仍被 Route 引用的节点保留为 stale 并产生 warning。三端状态都由 `subscription.Status` 生成：最近成功 snapshot 与最近失败独立保存，失败摘要不含 URL/响应内容，stale 节点携带阻止 clean 的 Route 引用。UI 更新响应也使用该状态 DTO，不返回包含节点凭据的内部 snapshot。
 
-共享 probe 负责 HTTP/TLS 测量、报告脱敏和受限持久化。原始 `Report` 是内部排错事实；普通控制面只公开按 `scope/object_id/kind` 唯一索引的 `LatestProbeResult`，字段限定为测试时间、成功/失败、后端计算的 stale、一个核心指标摘要和一个安全错误摘要。读取按每个持久化键无损返回，不做跨对象的全局条数截断；同键写入使用跨进程锁和原子替换，较旧时间戳不得覆盖较新结果。Linux HTTP、OpenWrt ubus/`_probe-results` 与 macOS control/helper 暴露语义一致的批量 latest-result capability，测试动作本身也返回同一个 DTO，业务失败仍能立即呈现刚持久化的失败摘要。
+共享 probe 负责 HTTP/TLS 测量、报告脱敏和受限持久化。原始 `Report` 是内部排错事实；普通控制面只公开按 `scope/object_id/kind` 唯一索引的 `LatestProbeResult`，字段限定为测试时间、成功/失败、后端计算的 stale、一个核心指标摘要、可选数值 `metric_value` 和一个安全错误摘要。读取按每个持久化键无损返回，不做跨对象的全局条数截断；同键写入使用跨进程锁和原子替换，较旧时间戳不得覆盖较新结果。Linux HTTP、OpenWrt ubus/`_probe-results` 与 macOS control/helper 暴露语义一致的批量 latest-result capability，测试动作本身也返回同一个 DTO，业务失败仍能立即呈现刚持久化的失败摘要。
 
-Saved/Active identity、阶段耗时、URL、attempts 和完整错误只存在于后端报告与 stale/摘要计算过程，不进入 latest-result DTO。三端前端只能本地化 `tested_at` 并选择平台原生样式，不得读取 `diagnostics.reports`、比较 digest/generation 或重算延迟/吞吐率。概览测试从各平台 Saved 配置读取三个固定 URL，直接使用设备当前网络环境访问，因此在 Steer 未启用时仍可运行；节点和路由测试读取 Saved 配置并临时启动环回 sing-box。概览请求只证明目标当时可达，不声称命中了某个 outbound 或 DNS resolver。测试结果不会进入配置或编译输入。
+Saved/Active identity、阶段耗时、URL、attempts 和完整错误只存在于后端报告与 stale/摘要计算过程，不进入 latest-result DTO。三端前端本地化 `tested_at`、显示摘要，并使用 `metric_value` 排序。连接指标单位为毫秒，下载指标单位为 Mbps；缺少指标的结果不参与数值排名。概览测试从各平台 Saved 配置读取三个固定 URL，直接使用设备当前网络环境访问，因此在 Steer 未启用时仍可运行；节点和路由测试读取 Saved 配置并临时启动环回 sing-box。概览请求只证明目标当时可达，不声称命中了某个 outbound 或 DNS resolver。测试结果不会进入配置或编译输入。

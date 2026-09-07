@@ -29,7 +29,7 @@ Steer 是一套严格、可解释的透明代理控制面。用户配置节点�
 
 ## 文档
 
-- [范围与冻结规则](docs/SCOPE.md)
+- [项目范围](docs/SCOPE.md)
 - [架构](docs/ARCHITECTURE.md)
 - [配置与使用](docs/CONFIGURATION.md)
 - [开发与验证](docs/DEVELOPMENT.md)

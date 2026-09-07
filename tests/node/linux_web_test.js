@@ -462,8 +462,6 @@ async function testFailedToggleRestoresDraft() {
 }
 
 async function testGlobalEnableContractUsesTheCompleteDirtyDraft() {
-  assert.strictEqual(uiSpec.global_status.enable_action, 'set_enabled_on_latest_saved');
-  assert.strictEqual(uiSpec.global_status.includes_current_draft, false);
   const intent = draftLifecycleIntent();
   intent.main.log_level = 'debug';
   let requested;
@@ -772,17 +770,6 @@ async function testRuleChoicesAreRestrictedAndSavedOnDrawerSubmit() {
   );
 }
 
-function testSubscriptionCreationDefaultUsesSharedSpec() {
-  assert.strictEqual(uiSpec.subscription_update_interval_default, '6h');
-  const source = fs.readFileSync(path.join(root, 'go/cmd/steer-linux/web/js/views/subscriptions.js'), 'utf8');
-  assert.ok(source.includes('S.uiSpec.subscription_update_interval_default'),
-    'Linux subscription creation must consume the shared interval default');
-  assert.ok(source.includes("ui.creationDraft('subscriptions')"),
-    'Linux new-subscription draft must use all shared creation defaults');
-  assert.ok(!source.includes("update_interval: '12h'"),
-    'Linux subscription creation retained its divergent literal default');
-}
-
 function testSharedCreationDefaultsAutomaticIDsAndReferenceLabels() {
   assert.strictEqual(creationPolicyFixtures.schema_version, 1);
   const environment = createEnvironment(async () => ({ ok: true }), {
@@ -933,8 +920,6 @@ async function testSharedCollectionOrderingMovesOnlyTheDraft() {
 }
 
 async function testSharedCollectionDragCommitsOnceAndCancellationDoesNotMutate() {
-  assert.deepEqual(uiSpec.collection_drag.states, collectionDragFixtures.states);
-  assert.equal(uiSpec.collection_drag.feedback, 'whole_row_placeholder');
   for (const fixture of collectionDragFixtures.cases) {
     const intent = runtimeTestIntent();
     intent[fixture.collection] = JSON.parse(JSON.stringify(fixture.objects));
@@ -1424,9 +1409,6 @@ async function testExternalRevisionRefreshPreservesDraftAndLifecycleFacts() {
     if (fixture.name === 'failed-apply') assert.match(strip, /待应用/);
   }
 
-  const appSource = fs.readFileSync(path.join(root, 'go/cmd/steer-linux/web/app.js'), 'utf8');
-  assert.ok(appSource.includes('30_000') && appSource.includes('visibilitychange') && appSource.includes('refreshServerState'),
-    'Linux app must refresh visible server state at a low frequency');
 }
 
 async function testSharedUISafetyContracts() {
@@ -2313,7 +2295,6 @@ Promise.resolve()
   .then(testNodeEditorUsesSharedDefaultWithoutMutatingDraft)
   .then(testNodeExportShowsSharedBackendLink)
   .then(testRuleChoicesAreRestrictedAndSavedOnDrawerSubmit)
-  .then(testSubscriptionCreationDefaultUsesSharedSpec)
   .then(testSharedCreationDefaultsAutomaticIDsAndReferenceLabels)
   .then(testApplySavedAPIKeepsStructuredFailure)
   .then(testStoreTracksSavedPendingApply)

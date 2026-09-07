@@ -72,8 +72,6 @@ func runtimePaths(runDirectory, stateDirectory string) Paths {
 		ConfigPath:           filepath.Join(root, "config", "config.json"),
 		GenerationsDirectory: filepath.Join(root, "generations"),
 		StateDirectory:       stateDirectory,
-		StatusDirectory:      filepath.Join(root, "status"),
-		StatusPath:           filepath.Join(root, "status", "current.json"),
 		LogsDirectory:        filepath.Join(root, "logs"),
 	}
 }

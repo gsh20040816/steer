@@ -1,6 +1,6 @@
 # 测试说明
 
-测试按共享核心、OpenWrt/Linux/macOS 适配器、LuCI/Linux Web/macOS GUI 和目标系统正常路径分层。当前范围不包含故障注入矩阵。
+测试按共享核心、OpenWrt/Linux/macOS 适配器、LuCI/Linux Web/macOS GUI 和目标系统正常路径分层。
 
 ## Go
 
@@ -14,7 +14,7 @@ go vet ./...
 
 Linux 适配器测试覆盖主机与转发流量 plan、原生 DNS 接管、本机目的地址 PREROUTING/OUTPUT 例外与受保护的 wildcard listener、1.14 原生 source-MAC、JSON 原子写入与 ETag 冲突、systemd/backend generation、Web bearer token/CSP/开关失败回滚、临时 probe 的 bypass mark 和静态 Linux 构建。
 
-macOS 适配器测试覆盖 Darwin TUN plan、TUN port-53 capture、JSON store、generation、launchd backend 和平台限制；`check-macos-contract.py` 约束 SwiftUI GUI 直接面向 helper，并确保旧数据面实验路径不会重新进入仓库。
+macOS 适配器测试覆盖 Darwin TUN plan、TUN port-53 capture、JSON store、generation、launchd backend 和平台限制。
 SwiftUI 工作副本行为由 `cd macos && swift test --disable-sandbox` 覆盖，包括规则 string-list 的无损逐行 round-trip 与 Default 固定不变量。
 
 ## LuCI 与静态边界
@@ -27,7 +27,6 @@ python3 tests/check-luci-i18n.py
 python3 tests/check-package-boundaries.py
 python3 tests/check-build-cache.py
 python3 tests/check-linux-packaging.py
-python3 tests/check-macos-contract.py
 python3 tests/check-macos-packaging.py
 python3 tests/check-ui-contract.py
 ```
@@ -48,11 +47,11 @@ swift test --disable-sandbox
 - `rule-summary-fixtures.json`：完整 Rule match 摘要与 DNS/连接阶段边界合同；
 - `form-input-fixtures.json`：三端共享的 Probe/Subscription URL、正 duration 与 DNS HTTP path 格式合同；
 - `macos-system-component-fixtures.json`：macOS helper、sing-box、plist、LaunchDaemon、config、Geo seed 与 control socket 的逐组件缺失/版本事实，并区分安装必需事实与 runtime 激活状态；
-- `luci_view_test.js`：表单语义、逐 RPC 权限、Local Proxy 暴露/认证门、detour 可清空、节点/路由测试按钮，以及 Overview 五区域与 1024/1280/1920 响应式布局契约；
+- `luci_view_test.js`：表单语义、逐 RPC 权限、Local Proxy 暴露/认证门、detour 可清空、节点/路由测试按钮，以及 Overview 渲染与响应式布局；
 - `steer_helper_test.js`：UCI commit 后的 Apply 阶段反馈、结构化错误本地化、独立 validate 与 session access；
 - `linux_web_test.js`：Linux Web 开关/冲突回滚、Overview 五区域与安全 Apply 摘要、Rules/Node chips 与 SSH 私钥、Local Proxy 认证 DOM 往返、Advanced JSON 单一 Draft、无效 JSON 导航保护及确认式 Discard；
 - Swift XCTest：共享 Local Proxy、订阅、Probe、Overview Saved/Active 生命周期、状态 fixture 与 macOS 提交门；
-- Python 检查：中文覆盖、包所有权/版本/已删除接口、官方 SDK 缓存与 Linux 交付约束。
+- Python 检查：生成规格与 LuCI 菜单一致性、中文覆盖、包所有权/版本、官方 SDK 缓存与 Linux 交付约束。
 
 ## OpenWrt VM
 

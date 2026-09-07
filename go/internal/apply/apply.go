@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Package apply fixes the cross-platform Apply order without implementing a
-// workflow engine. Backends remain synchronous and own their platform details.
+// Package apply coordinates the synchronous cross-platform Apply lifecycle.
+// Backends own platform resources and service operations.
 package apply
 
 import (

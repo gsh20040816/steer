@@ -1122,12 +1122,7 @@ struct DraftCollectionView: View {
     }
 
     private func rowDragEnabled(_ item: DraftItem) -> Bool {
-        let contract = SteerUISpec.contract.collectionDrag
-        guard descriptor.ordered, orderingEnabled, isMovable(item),
-              contract.feedback == "whole_row_placeholder",
-              contract.singleMutationPerDrop,
-              contract.orderingPolicySource == "collection_ordering" else { return false }
-        return true
+        descriptor.ordered && orderingEnabled && isMovable(item)
     }
 
     private func cycleNodeSort(_ mode: String) {

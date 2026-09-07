@@ -1336,29 +1336,6 @@
       ]
     }
   },
-  "collection_drag": {
-    "states": [
-      "idle",
-      "dragging",
-      "over",
-      "cancelled",
-      "committed"
-    ],
-    "feedback": "whole_row_placeholder",
-    "commit": "draft_move_on_drop",
-    "cancel": "restore_without_mutation",
-    "fallback_actions": [
-      "up",
-      "down"
-    ],
-    "pointer_inputs": [
-      "mouse",
-      "touch",
-      "pen"
-    ],
-    "ordering_policy_source": "collection_ordering",
-    "single_mutation_per_drop": true
-  },
   "domain_prefixes": [
     "full:",
     "domain:",
@@ -1456,131 +1433,6 @@
       ]
     }
   ],
-  "page_responsibilities": {
-    "diagnostics": {
-      "summary": "Validation, probes with latest safe results, port-53 capture inspection and logs",
-      "facts": [
-        "validation",
-        "probes",
-        "latest_results",
-        "dns_capture",
-        "last_apply",
-        "logs"
-      ]
-    },
-    "overview": {
-      "summary": "Execution model, Draft/Saved/Active lifecycle, Draft object scale and validation, last Apply and recovery actions",
-      "facts": [
-        "execution_model",
-        "draft",
-        "saved",
-        "active",
-        "object_counts",
-        "validation_summary",
-        "warning_summary",
-        "last_apply",
-        "quick_actions"
-      ],
-      "regions": [
-        {
-          "key": "execution_model",
-          "facts": [
-            "ordered_rule_match",
-            "dns_profile_resolution",
-            "route_selection",
-            "network_egress"
-          ],
-          "sources": [
-            "shared_ui_spec",
-            "draft"
-          ]
-        },
-        {
-          "key": "configuration_lifecycle",
-          "facts": [
-            "draft_dirty",
-            "saved_enabled",
-            "pending_apply",
-            "active_status",
-            "saved_active_difference"
-          ],
-          "sources": [
-            "draft",
-            "saved",
-            "active"
-          ]
-        },
-        {
-          "key": "object_scale",
-          "facts": [
-            "nodes",
-            "routes",
-            "dns_profiles",
-            "local_proxies",
-            "rules",
-            "subscriptions"
-          ],
-          "sources": [
-            "draft"
-          ]
-        },
-        {
-          "key": "validation_summary",
-          "facts": [
-            "error_count",
-            "warning_group_count",
-            "warning_groups"
-          ],
-          "sources": [
-            "draft_validation"
-          ],
-          "actions": [
-            "view_affected_items"
-          ]
-        },
-        {
-          "key": "last_apply_and_actions",
-          "facts": [
-            "localized_time",
-            "result",
-            "safe_summary"
-          ],
-          "sources": [
-            "active.last_apply"
-          ],
-          "actions": [
-            "refresh",
-            "diagnostics",
-            "system",
-            "save",
-            "apply_saved",
-            "save_and_apply",
-            "discard"
-          ]
-        }
-      ],
-      "object_count_source": "draft",
-      "validation_source": "draft_validation",
-      "forbidden_facts": [
-        "probe_history",
-        "raw_error_chain",
-        "object_ids",
-        "digests",
-        "generation_paths"
-      ]
-    },
-    "system": {
-      "summary": "Versions, Geo data, platform components, paths and access actions",
-      "facts": [
-        "versions",
-        "last_apply",
-        "geo",
-        "paths",
-        "platform_components",
-        "access"
-      ]
-    }
-  },
   "dns_boundaries": {
     "linux": {
       "capture_mode": "native_hijack_with_local_shim",
@@ -1624,31 +1476,9 @@
     "stale_referenced_nodes": "preserved",
     "notice": "Subscription inventory updated; current Active configuration was not changed. Removed unreferenced nodes are deleted automatically, while nodes still referenced by Routes are preserved as stale."
   },
-  "probe_results": {
-    "key_fields": [
-      "scope",
-      "object_id",
-      "kind"
-    ],
-    "result_fields": [
-      "scope",
-      "object_id",
-      "kind",
-      "tested_at",
-      "ok",
-      "stale",
-      "summary",
-      "error_summary"
-    ],
-    "frontend_role": "Localize tested_at and render native style only; stale, metric and error summaries are backend facts"
-  },
   "node_display_sorting": {
     "modes": [
       "default",
-      "connect",
-      "download"
-    ],
-    "header_columns": [
       "connect",
       "download"
     ],
@@ -1657,44 +1487,7 @@
       "worst_first"
     ],
     "default_direction": "best_first",
-    "repeat_click": "best_worst_default_cycle",
-    "result_source": "probe_results.latest_results",
-    "metric_field": "summary",
-    "connect_metric_suffix": "ms",
-    "download_metric_suffix": "Mbps",
     "connect_direction": "ascending",
-    "download_direction": "descending",
-    "unranked_states": [
-      "missing",
-      "failed",
-      "stale",
-      "invalid_metric"
-    ],
-    "unranked_placement": "last_stable",
-    "tie_breaker": "original_index",
-    "scope": "visible_group",
-    "ordering_actions_mode": "default_only",
-    "mutates_draft": false
-  },
-  "global_status": {
-    "visible_on_every_page": true,
-    "enable_action": "set_enabled_on_latest_saved",
-    "includes_current_draft": false,
-    "blocking_conditions": [
-      "write_in_progress"
-    ],
-    "facts": [
-      "draft",
-      "saved_enabled",
-      "active",
-      "pending_apply"
-    ],
-    "actions": [
-      "enable",
-      "save",
-      "apply_saved",
-      "save_and_apply",
-      "discard"
-    ]
+    "download_direction": "descending"
   }
 }; })();

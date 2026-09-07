@@ -87,21 +87,6 @@ type CollectionOrderingPolicy struct {
 	SourceOwnedRefresh     string   `json:"source_owned_refresh,omitempty"`
 }
 
-// CollectionDragContract defines the shared lifecycle for native row drag
-// interactions. Platform frontends own gesture and animation details, while
-// every completed drop reuses CollectionOrdering and every cancellation is a
-// no-op against the current working copy.
-type CollectionDragContract struct {
-	States                []string `json:"states"`
-	Feedback              string   `json:"feedback"`
-	Commit                string   `json:"commit"`
-	Cancel                string   `json:"cancel"`
-	FallbackActions       []string `json:"fallback_actions"`
-	PointerInputs         []string `json:"pointer_inputs"`
-	OrderingPolicySource  string   `json:"ordering_policy_source"`
-	SingleMutationPerDrop bool     `json:"single_mutation_per_drop"`
-}
-
 type NavigationItem struct {
 	Key   string `json:"key"`
 	Label string `json:"label"`
@@ -120,22 +105,6 @@ type IDPolicy struct {
 	CollectionPrefixes map[string]string `json:"collection_prefixes"`
 }
 
-type PageResponsibility struct {
-	Summary           string       `json:"summary"`
-	Facts             []string     `json:"facts"`
-	Regions           []PageRegion `json:"regions,omitempty"`
-	ObjectCountSource string       `json:"object_count_source,omitempty"`
-	ValidationSource  string       `json:"validation_source,omitempty"`
-	ForbiddenFacts    []string     `json:"forbidden_facts,omitempty"`
-}
-
-type PageRegion struct {
-	Key     string   `json:"key"`
-	Facts   []string `json:"facts"`
-	Sources []string `json:"sources"`
-	Actions []string `json:"actions,omitempty"`
-}
-
 type DNSBoundary struct {
 	CaptureMode          string   `json:"capture_mode"`
 	CaptureScope         string   `json:"capture_scope"`
@@ -152,39 +121,12 @@ type SubscriptionInventoryContract struct {
 	Notice                  string `json:"notice"`
 }
 
-type ProbeResultsContract struct {
-	KeyFields    []string `json:"key_fields"`
-	ResultFields []string `json:"result_fields"`
-	FrontendRole string   `json:"frontend_role"`
-}
-
 type NodeDisplaySortingContract struct {
-	Modes                []string `json:"modes"`
-	HeaderColumns        []string `json:"header_columns"`
-	DirectionModes       []string `json:"direction_modes"`
-	DefaultDirection     string   `json:"default_direction"`
-	RepeatClick          string   `json:"repeat_click"`
-	ResultSource         string   `json:"result_source"`
-	MetricField          string   `json:"metric_field"`
-	ConnectMetricSuffix  string   `json:"connect_metric_suffix"`
-	DownloadMetricSuffix string   `json:"download_metric_suffix"`
-	ConnectDirection     string   `json:"connect_direction"`
-	DownloadDirection    string   `json:"download_direction"`
-	UnrankedStates       []string `json:"unranked_states"`
-	UnrankedPlacement    string   `json:"unranked_placement"`
-	TieBreaker           string   `json:"tie_breaker"`
-	Scope                string   `json:"scope"`
-	OrderingActionsMode  string   `json:"ordering_actions_mode"`
-	MutatesDraft         bool     `json:"mutates_draft"`
-}
-
-type GlobalStatusContract struct {
-	VisibleOnEveryPage   bool     `json:"visible_on_every_page"`
-	EnableAction         string   `json:"enable_action"`
-	IncludesCurrentDraft bool     `json:"includes_current_draft"`
-	BlockingConditions   []string `json:"blocking_conditions"`
-	Facts                []string `json:"facts"`
-	Actions              []string `json:"actions"`
+	Modes             []string `json:"modes"`
+	DirectionModes    []string `json:"direction_modes"`
+	DefaultDirection  string   `json:"default_direction"`
+	ConnectDirection  string   `json:"connect_direction"`
+	DownloadDirection string   `json:"download_direction"`
 }
 
 type Contract struct {
@@ -209,17 +151,13 @@ type Contract struct {
 	RuleConnectionOnlyFields          []string                            `json:"rule_connection_only_fields"`
 	CollectionReferences              []CollectionReference               `json:"collection_references"`
 	CollectionOrdering                map[string]CollectionOrderingPolicy `json:"collection_ordering"`
-	CollectionDrag                    CollectionDragContract              `json:"collection_drag"`
 	DomainPrefixes                    []string                            `json:"domain_prefixes"`
 	IPPrefixes                        []string                            `json:"ip_prefixes"`
 	PlatformCapabilities              map[string]PlatformCapabilities     `json:"platform_capabilities"`
 	Navigation                        []NavigationGroup                   `json:"navigation"`
-	PageResponsibilities              map[string]PageResponsibility       `json:"page_responsibilities"`
 	DNSBoundaries                     map[string]DNSBoundary              `json:"dns_boundaries"`
 	SubscriptionInventory             SubscriptionInventoryContract       `json:"subscription_inventory"`
-	ProbeResults                      ProbeResultsContract                `json:"probe_results"`
 	NodeDisplaySorting                NodeDisplaySortingContract          `json:"node_display_sorting"`
-	GlobalStatus                      GlobalStatusContract                `json:"global_status"`
 }
 
 func choices(values ...string) []Choice {
@@ -300,16 +238,6 @@ func ContractValue() Contract {
 			},
 			"subscriptions": {StableIDField: "id", MoveActions: []string{"up", "down"}},
 		},
-		CollectionDrag: CollectionDragContract{
-			States:                []string{"idle", "dragging", "over", "cancelled", "committed"},
-			Feedback:              "whole_row_placeholder",
-			Commit:                "draft_move_on_drop",
-			Cancel:                "restore_without_mutation",
-			FallbackActions:       []string{"up", "down"},
-			PointerInputs:         []string{"mouse", "touch", "pen"},
-			OrderingPolicySource:  "collection_ordering",
-			SingleMutationPerDrop: true,
-		},
 		InputFormats: map[string]InputFormat{
 			"probe_url":         {Kind: "url", Schemes: []string{"https"}, Absolute: true, ForbidCredentials: true, ForbidFragment: true},
 			"subscription_url":  {Kind: "url", Schemes: []string{"http", "https"}, Absolute: true},
@@ -367,33 +295,6 @@ func ContractValue() Contract {
 			}},
 			{Key: "advanced", Label: "Advanced", Items: []NavigationItem{{Key: "advanced", Label: "Advanced Configuration"}}},
 		},
-		PageResponsibilities: map[string]PageResponsibility{
-			"overview": {
-				Summary: "Execution model, Draft/Saved/Active lifecycle, Draft object scale and validation, last Apply and recovery actions",
-				Facts: []string{
-					"execution_model", "draft", "saved", "active", "object_counts", "validation_summary",
-					"warning_summary", "last_apply", "quick_actions",
-				},
-				Regions: []PageRegion{
-					{Key: "execution_model", Facts: []string{"ordered_rule_match", "dns_profile_resolution", "route_selection", "network_egress"}, Sources: []string{"shared_ui_spec", "draft"}},
-					{Key: "configuration_lifecycle", Facts: []string{"draft_dirty", "saved_enabled", "pending_apply", "active_status", "saved_active_difference"}, Sources: []string{"draft", "saved", "active"}},
-					{Key: "object_scale", Facts: []string{"nodes", "routes", "dns_profiles", "local_proxies", "rules", "subscriptions"}, Sources: []string{"draft"}},
-					{Key: "validation_summary", Facts: []string{"error_count", "warning_group_count", "warning_groups"}, Sources: []string{"draft_validation"}, Actions: []string{"view_affected_items"}},
-					{Key: "last_apply_and_actions", Facts: []string{"localized_time", "result", "safe_summary"}, Sources: []string{"active.last_apply"}, Actions: []string{"refresh", "diagnostics", "system", "save", "apply_saved", "save_and_apply", "discard"}},
-				},
-				ObjectCountSource: "draft",
-				ValidationSource:  "draft_validation",
-				ForbiddenFacts:    []string{"probe_history", "raw_error_chain", "object_ids", "digests", "generation_paths"},
-			},
-			"diagnostics": {
-				Summary: "Validation, probes with latest safe results, port-53 capture inspection and logs",
-				Facts:   []string{"validation", "probes", "latest_results", "dns_capture", "last_apply", "logs"},
-			},
-			"system": {
-				Summary: "Versions, Geo data, platform components, paths and access actions",
-				Facts:   []string{"versions", "last_apply", "geo", "paths", "platform_components", "access"},
-			},
-		},
 		DNSBoundaries: map[string]DNSBoundary{
 			"linux": dnsBoundary(
 				"native_hijack_with_local_shim",
@@ -417,37 +318,12 @@ func ContractValue() Contract {
 			StaleReferencedNodes:    "preserved",
 			Notice:                  "Subscription inventory updated; current Active configuration was not changed. Removed unreferenced nodes are deleted automatically, while nodes still referenced by Routes are preserved as stale.",
 		},
-		ProbeResults: ProbeResultsContract{
-			KeyFields:    []string{"scope", "object_id", "kind"},
-			ResultFields: []string{"scope", "object_id", "kind", "tested_at", "ok", "stale", "summary", "error_summary"},
-			FrontendRole: "Localize tested_at and render native style only; stale, metric and error summaries are backend facts",
-		},
 		NodeDisplaySorting: NodeDisplaySortingContract{
-			Modes:                []string{"default", "connect", "download"},
-			HeaderColumns:        []string{"connect", "download"},
-			DirectionModes:       []string{"best_first", "worst_first"},
-			DefaultDirection:     "best_first",
-			RepeatClick:          "best_worst_default_cycle",
-			ResultSource:         "probe_results.latest_results",
-			MetricField:          "summary",
-			ConnectMetricSuffix:  "ms",
-			DownloadMetricSuffix: "Mbps",
-			ConnectDirection:     "ascending",
-			DownloadDirection:    "descending",
-			UnrankedStates:       []string{"missing", "failed", "stale", "invalid_metric"},
-			UnrankedPlacement:    "last_stable",
-			TieBreaker:           "original_index",
-			Scope:                "visible_group",
-			OrderingActionsMode:  "default_only",
-			MutatesDraft:         false,
-		},
-		GlobalStatus: GlobalStatusContract{
-			VisibleOnEveryPage:   true,
-			EnableAction:         "set_enabled_on_latest_saved",
-			IncludesCurrentDraft: false,
-			BlockingConditions:   []string{"write_in_progress"},
-			Facts:                []string{"draft", "saved_enabled", "active", "pending_apply"},
-			Actions:              []string{"enable", "save", "apply_saved", "save_and_apply", "discard"},
+			Modes:             []string{"default", "connect", "download"},
+			DirectionModes:    []string{"best_first", "worst_first"},
+			DefaultDirection:  "best_first",
+			ConnectDirection:  "ascending",
+			DownloadDirection: "descending",
 		},
 	}
 
@@ -531,13 +407,4 @@ func (contract Contract) FieldsForNodeType(nodeType string) []Field {
 		}
 	}
 	return result
-}
-
-func RequiredForType(field Field, nodeType string) bool {
-	for _, candidate := range field.RequiredTypes {
-		if candidate == nodeType {
-			return true
-		}
-	}
-	return false
 }

@@ -73,7 +73,7 @@ Canonical Intent / Validate / Compiler
 - Warning 必须先按候选配置或 Active 配置的实际可达运行图过滤，完全未被使用的节点、路由、DNS Profile 等实体不产生运行 Warning；普通界面按稳定类型聚合并显示数量，不逐条铺开同类问题。Error 仍保持严格校验，不得借此隐藏。
 - 共享校验结果必须输出 `warning_groups`，其稳定分组键为 `code/object_type/option`，并携带受影响实体数、安全摘要和共享页面目标。三端 Overview 只能本地化这些分组和执行页面跳转，不得读取 `object_id`、raw `message` 或自行重建 Rule → DNS Profile/Route → Node/Detour 可达图；`main.enabled=false` 时实体运行 Warning 为空。
 - probe 后端可以保留完成测试所需的结构化事实，但普通界面不展示连续历史报告。每个 overview/node/route 测试入口只持久显示对应 kind 的最近时间、结果和一个核心指标；配置身份变化后只标记“已过期”。
-- 最近测试结果必须由共享 Go 层生成 `scope/object_id/kind/tested_at/ok/stale/summary/error_summary` DTO，并由三端独立的批量读取 capability 提供。普通前端只能本地化时间和选择原生样式；源码不得引用 `diagnostics.reports`、Saved/Active digest、阶段耗时或下载字节来计算结果。未保存的 Draft 本身不改变测试所依据的 Saved identity，不能由前端擅自标记 stale。测试失败后仍必须立即安装动作返回的 DTO，或按键重新读取后端结果。
+- 最近测试结果必须由共享 Go 层生成 `scope/object_id/kind/tested_at/ok/stale/summary/metric_value/error_summary` DTO，并由三端独立的批量读取 capability 提供。前端本地化时间、展示摘要，并用可选的 `metric_value` 排序：连接为毫秒，下载为 Mbps。未保存的 Draft 本身不改变测试所依据的 Saved identity，不能由前端擅自标记 stale。测试失败后仍必须立即安装动作返回的 DTO，或按键重新读取后端结果。
 - 全局状态区域只显示运行状态、工作副本/Saved/Active 的必要差异和可执行操作，不显示 digest、generation、candidate 路径或内部 apply 阶段。状态必须与操作位于同一清晰容器，不能退化成贴边的小字遥测行。
 - 相同事实只保留一个主呈现位置。总览给摘要和跳转，实体页承载实体结果，系统页承载安装与运行事实，高级页承载明确请求的高级数据；不得在多个页面复制完整明细。
 
@@ -134,11 +134,11 @@ Code review 和契约测试必须拒绝以下实现：把后端对象直接传�
 - macOS 不支持 `source_mac_address`，UI 必须说明原因，不能伪造支持；
 - Canonical JSON 原文编辑只适用于 JSON 真相源；OpenWrt 提供 Canonical 只读预览，UCI 仍是唯一真相；
 - macOS 系统组件安装/升级只属于 macOS；
-- macOS 的私网 Do53 捕获使用静态平台 plan：RFC1918、CGNAT 与 ULA 固定按“目标端口 53 劫持 → 私网 Direct → sniff/用户规则”排序，接口/DHCP 变化不触发 Apply；
+- macOS 接管物理网络服务的系统 DNS；进入 TUN 的流量按“目标端口 53 劫持 → 私网 Direct → sniff → resolve → 用户规则”处理，网络服务变化由平台 DNS 看护处理；
 - LuCI ACL、Linux Bearer token 和 macOS peer credential 是 transport 权限，不进入共享 Intent；
 - 日志来源和订阅调度器属于平台实现，但用户操作和结果合同保持一致。
 
-生成规格中的 `page_responsibilities` 固定上述页面事实，`dns_boundaries` 固定三端 capture scope/exclusions 与 Bootstrap/加密 DNS/诊断声明，`subscription_inventory` 固定库存更新不改变 Active generation、自动删除无引用的消失节点并保留被 Route 引用的 stale 节点。页面级测试必须验证三端消费这些字段，不能各自重新发明绝对承诺。
+生成规格保存前端实际使用的字段、默认值、导航、引用关系和能力信息。页面行为由 Node 和 Swift 测试验证；生成文件和 LuCI 菜单通过一致性检查。
 
 UI 不得显示后端未声明的操作。不可用能力应隐藏或禁用并给出稳定原因；不得用一段说明文字冒充已实现功能。
 

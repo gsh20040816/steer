@@ -276,6 +276,7 @@ struct ProbeLatestResult: Decodable, Sendable, Identifiable {
     let ok: Bool
     let stale: Bool
     let summary: String
+    let metricValue: Double?
     let errorSummary: String
 
     var id: String { scope == "overview" ? "overview:\(kind)" : "\(scope):\(objectID ?? ""):\(kind)" }
@@ -285,11 +286,12 @@ struct ProbeLatestResult: Decodable, Sendable, Identifiable {
         case objectID = "object_id"
         case testedAt = "tested_at"
         case errorSummary = "error_summary"
+        case metricValue = "metric_value"
     }
 
     init(
         scope: String, objectID: String?, kind: String, testedAt: String,
-        ok: Bool, stale: Bool, summary: String, errorSummary: String
+        ok: Bool, stale: Bool, summary: String, errorSummary: String, metricValue: Double? = nil
     ) {
         self.scope = scope
         self.objectID = objectID
@@ -298,6 +300,7 @@ struct ProbeLatestResult: Decodable, Sendable, Identifiable {
         self.ok = ok
         self.stale = stale
         self.summary = summary
+        self.metricValue = metricValue
         self.errorSummary = errorSummary
     }
 
@@ -315,13 +318,8 @@ enum NodeDisplaySorting {
     static func metric(_ result: ProbeLatestResult?, mode: String) -> Double? {
         guard let result, result.scope == "nodes", result.kind == mode,
               result.ok, !result.stale else { return nil }
-        let contract = SteerUISpec.contract.nodeDisplaySorting
-        let suffix = mode == "connect" ? contract.connectMetricSuffix : contract.downloadMetricSuffix
-        let summary = result.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard summary.lowercased().hasSuffix(suffix.lowercased()) else { return nil }
-        let number = String(summary.dropLast(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard number.range(of: #"^[0-9]+(?:\.[0-9]+)?$"#, options: .regularExpression) != nil else { return nil }
-        return Double(number)
+        guard let value = result.metricValue, value.isFinite, value >= 0 else { return nil }
+        return value
     }
 
     static func sortedIDs(

@@ -172,3 +172,49 @@ func TestSafeErrorKeepsOnlyStableDiagnosticCategories(t *testing.T) {
 		}
 	}
 }
+
+func TestLatestMetricPreservesPrecisionAndOmitsUnmeasuredValues(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		kind   string
+		ok     bool
+		result Result
+		want   *float64
+	}{
+		{"first byte", "connect", true, Result{OK: true, FirstByteMilliseconds: 42, TLSMilliseconds: 10}, metricPointer(42)},
+		{"TLS fallback", "connect", true, Result{OK: true, TLSMilliseconds: 10}, metricPointer(10)},
+		{"connection fallback", "connect", true, Result{OK: true, ConnectMilliseconds: 7}, metricPointer(7)},
+		{"download precision", "download", true, Result{OK: true, DownloadedBytes: 1001, DownloadMilliseconds: 8}, metricPointer(1.001)},
+		{"HTTP only", "connect", true, Result{OK: true, Status: 204}, nil},
+		{"empty", "connect", true, Result{OK: true}, nil},
+		{"failed", "connect", false, Result{OK: true, FirstByteMilliseconds: 42}, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := PresentLatestProbeResult(Report{Kind: test.kind, OK: test.ok, Results: []Result{test.result}}, Identity{})
+			if test.want == nil {
+				if result.MetricValue != nil {
+					t.Fatalf("unexpected metric: %v", *result.MetricValue)
+				}
+			} else if result.MetricValue == nil || *result.MetricValue != *test.want {
+				t.Fatalf("metric = %v, want %v", result.MetricValue, *test.want)
+			}
+			encoded, err := json.Marshal(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(encoded, &payload); err != nil {
+				t.Fatal(err)
+			}
+			value, exists := payload["metric_value"]
+			if exists != (test.want != nil) {
+				t.Fatalf("unexpected metric presence: %s", encoded)
+			}
+			if test.want != nil && value != *test.want {
+				t.Fatalf("metric must serialize as a number: %s", encoded)
+			}
+		})
+	}
+}
+
+func metricPointer(value float64) *float64 { return &value }

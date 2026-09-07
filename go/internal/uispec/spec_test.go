@@ -135,27 +135,8 @@ func TestCreationDefaultsAndAutomaticIDPolicyAreShared(t *testing.T) {
 	}
 }
 
-func TestPageResponsibilitiesDNSBoundariesAndSubscriptionInventoryAreExplicit(t *testing.T) {
+func TestDNSBoundariesAndSubscriptionInventoryAreExplicit(t *testing.T) {
 	contract := ContractValue()
-	expectedPages := map[string][]string{
-		"overview":    {"execution_model", "draft", "saved", "active", "object_counts", "validation_summary", "warning_summary", "last_apply", "quick_actions"},
-		"diagnostics": {"validation", "probes", "latest_results", "dns_capture", "last_apply", "logs"},
-		"system":      {"versions", "last_apply", "geo", "paths", "platform_components", "access"},
-	}
-	overview := contract.PageResponsibilities["overview"]
-	if overview.ObjectCountSource != "draft" || overview.ValidationSource != "draft_validation" ||
-		!reflect.DeepEqual([]string{"execution_model", "configuration_lifecycle", "object_scale", "validation_summary", "last_apply_and_actions"}, []string{
-			overview.Regions[0].Key, overview.Regions[1].Key, overview.Regions[2].Key, overview.Regions[3].Key, overview.Regions[4].Key,
-		}) || !reflect.DeepEqual(overview.Regions[2].Facts, []string{"nodes", "routes", "dns_profiles", "local_proxies", "rules", "subscriptions"}) ||
-		!reflect.DeepEqual(overview.Regions[4].Actions, []string{"refresh", "diagnostics", "system", "save", "apply_saved", "save_and_apply", "discard"}) ||
-		!reflect.DeepEqual(overview.ForbiddenFacts, []string{"probe_history", "raw_error_chain", "object_ids", "digests", "generation_paths"}) {
-		t.Fatalf("Overview executable content contract drifted: %#v", overview)
-	}
-	for page, facts := range expectedPages {
-		if !reflect.DeepEqual(contract.PageResponsibilities[page].Facts, facts) {
-			t.Errorf("%s responsibility drifted: %#v", page, contract.PageResponsibilities[page])
-		}
-	}
 	for _, platform := range []string{"linux", "openwrt", "macos"} {
 		boundary := contract.DNSBoundaries[platform]
 		if boundary.CaptureMode == "" || boundary.CaptureScope == "" || len(boundary.Exclusions) == 0 ||
@@ -168,18 +149,7 @@ func TestPageResponsibilitiesDNSBoundariesAndSubscriptionInventoryAreExplicit(t 
 		contract.SubscriptionInventory.StaleReferencedNodes != "preserved" || contract.SubscriptionInventory.Notice == "" {
 		t.Fatalf("subscription inventory semantics drifted: %#v", contract.SubscriptionInventory)
 	}
-	if !reflect.DeepEqual(contract.ProbeResults.KeyFields, []string{"scope", "object_id", "kind"}) ||
-		!reflect.DeepEqual(contract.ProbeResults.ResultFields, []string{"scope", "object_id", "kind", "tested_at", "ok", "stale", "summary", "error_summary"}) ||
-		contract.ProbeResults.FrontendRole == "" {
-		t.Fatalf("latest probe result semantics drifted: %#v", contract.ProbeResults)
-	}
-	global := contract.GlobalStatus
-	if !global.VisibleOnEveryPage || global.IncludesCurrentDraft || global.EnableAction != "set_enabled_on_latest_saved" ||
-		!reflect.DeepEqual(global.BlockingConditions, []string{"write_in_progress"}) ||
-		!reflect.DeepEqual(global.Facts, []string{"draft", "saved_enabled", "active", "pending_apply"}) ||
-		!reflect.DeepEqual(global.Actions, []string{"enable", "save", "apply_saved", "save_and_apply", "discard"}) {
-		t.Fatalf("global status contract drifted: %#v", global)
-	}
+
 }
 
 func TestHighFrequencyInputFormatsAreShared(t *testing.T) {

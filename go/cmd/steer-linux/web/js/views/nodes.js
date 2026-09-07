@@ -15,13 +15,8 @@
   function probeMetric(result, mode) {
     if (!result || result.scope !== 'nodes' || result.kind !== mode || result.ok !== true || result.stale === true)
       return null;
-    const contract = S.uiSpec.node_display_sorting || {};
-    const suffix = mode === 'connect' ? contract.connect_metric_suffix : contract.download_metric_suffix;
-    const escaped = String(suffix || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const match = String(result.summary || '').trim().match(new RegExp(`^([0-9]+(?:\\.[0-9]+)?)\\s*${escaped}$`, 'i'));
-    if (!match) return null;
-    const value = Number(match[1]);
-    return Number.isFinite(value) ? value : null;
+    const value = result.metric_value;
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
   }
 
   function sortNodesForDisplay(nodes, mode, direction, probeResults) {

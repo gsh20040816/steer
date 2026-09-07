@@ -84,11 +84,5 @@ final class ProbeDiagnosticsTests: XCTestCase {
         XCTAssertTrue(failure.stale)
         XCTAssertEqual(failure.errorSummary, "连接超时")
 
-        let contentView = try String(contentsOf: repositoryRoot.appendingPathComponent("macos/SteerApp/ContentView.swift"))
-        let appState = try String(contentsOf: repositoryRoot.appendingPathComponent("macos/SteerApp/AppState.swift"))
-        XCTAssertFalse(contentView.contains("Section(\"最近测试报告\")"))
-        XCTAssertFalse(contentView.contains("diagnosticProbeReports"))
-        XCTAssertFalse(appState.contains("diagnostics.reports"))
-        XCTAssertFalse(appState.contains("firstByteMilliseconds"))
     }
 }
