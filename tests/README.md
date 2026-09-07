@@ -107,3 +107,7 @@ python3 check-native-dns.py openwrt.json openwrt.nft
 脚本先创建独立 network/mount namespace，并屏蔽宿主 D-Bus；不会改宿主路由、DNS 或现有 Steer 服务。覆盖本机/转发 IPv4/IPv6 UDP/TCP53、本机目的地址兼容 shim（含本机查询 127.0.0.1、127.0.0.53、::1 和自身 IPv4/IPv6 地址），以及同一 UDP 源端口从 DNS 复用到 STUN 的回归测试。需要 Python 3、ip-full、nft、dig、mount 和支持 namespace/TUN 的内核。
 
 macOS 的 DNS journal 测试覆盖自动/手动 DNS 恢复、服务重命名、新增服务、用户后续修改、部分写入失败、恢复失败重试和核心退出/取消。`STEER_TEST_SYSTEM_DNS_READ=1 go test ./internal/platform/macos -run TestReadSystemDNSPreferences -v` 可只读验证本机物理网络服务发现；此检查不修改系统 DNS。
+
+## OpenWrt netlink 故障恢复
+
+`check-netlink-guard.py <steer-openwrt> <sing-box>` 使用独立网络和挂载命名空间，暂停测试核心并注入路由通知积压，验证持续烧核后的自动恢复、十分钟冷却和停止时子进程退出。它不使用生产配置。非初始命名空间的 `rmem_default` 通常只读，此时仍验证降级恢复；接收缓冲提升需另在可写环境检查 netlink diag 返回的实际 socket 缓冲及系统默认值恢复。CI 将此测试与 DNS 集成一起执行。

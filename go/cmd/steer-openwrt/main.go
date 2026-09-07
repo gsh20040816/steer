@@ -46,6 +46,8 @@ func run(args []string) error {
 		return usage()
 	}
 	switch args[0] {
+	case "_supervise":
+		return runSupervise(args[1:])
 	case "version":
 		fmt.Println(version)
 		return nil

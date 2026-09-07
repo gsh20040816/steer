@@ -135,3 +135,9 @@ OpenWrt `status` 同样从 `current` generation 返回 Active generation、Inten
 共享 probe 负责 HTTP/TLS 测量、报告脱敏和受限持久化。原始 `Report` 是内部排错事实；普通控制面只公开按 `scope/object_id/kind` 唯一索引的 `LatestProbeResult`，字段限定为测试时间、成功/失败、后端计算的 stale、一个核心指标摘要、可选数值 `metric_value` 和一个安全错误摘要。读取按每个持久化键无损返回，不做跨对象的全局条数截断；同键写入使用跨进程锁和原子替换，较旧时间戳不得覆盖较新结果。Linux HTTP、OpenWrt ubus/`_probe-results` 与 macOS control/helper 暴露语义一致的批量 latest-result capability，测试动作本身也返回同一个 DTO，业务失败仍能立即呈现刚持久化的失败摘要。
 
 Saved/Active identity、阶段耗时、URL、attempts 和完整错误只存在于后端报告与 stale/摘要计算过程，不进入 latest-result DTO。三端前端本地化 `tested_at`、显示摘要，并使用 `metric_value` 排序。连接指标单位为毫秒，下载指标单位为 Mbps；缺少指标的结果不参与数值排名。概览测试从各平台 Saved 配置读取三个固定 URL，直接使用设备当前网络环境访问，因此在 Steer 未启用时仍可运行；节点和路由测试读取 Saved 配置并临时启动环回 sing-box。概览请求只证明目标当时可达，不声称命中了某个 outbound 或 DNS resolver。测试结果不会进入配置或编译输入。
+
+### OpenWrt netlink 恢复保护
+
+procd 通过 `steer _supervise` 运行原版 sing-box。启动前临时将 `net.core.rmem_default` 提升至至少 4 MiB，五秒后恢复原值；已创建的 socket 保留较大的接收缓冲。调整失败时记录告警，核心仍可运行。
+
+看护每五秒只检查子进程拥有的 IPv4/IPv6 路由通知 socket。单核 CPU 使用率至少 80%、接收队列至少 128 KiB 且连续不变、已有丢包，三项证据持续一分钟才恢复核心。十分钟冷却保存在 `/run/steer/netlink-recovery.json`，避免看护重启绕过限制。恢复使用当前运行配置，不读取或应用未生效的 Saved 修改；恢复原因写入系统日志。该保护是上游订阅失效的规避措施，不改变 sing-box 二进制。
