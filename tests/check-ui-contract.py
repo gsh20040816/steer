@@ -161,7 +161,7 @@ if [item.get("name") for item in state_lifecycle_fixtures.get("cases", [])] != [
 if probe_diagnostics_fixtures.get("schema_version") != 2:
     raise SystemExit("check-ui-contract: invalid probe diagnostics fixture schema")
 dns_capture_fixture = probe_diagnostics_fixtures.get("diagnostics", {}).get("dns_capture", {})
-if not dns_capture_fixture.get("configured") or dns_capture_fixture.get("mode") != "dedicated_shim":
+if not dns_capture_fixture.get("configured") or dns_capture_fixture.get("mode") != "native_hijack_with_local_shim":
     raise SystemExit("check-ui-contract: probe diagnostics DNS capture fixture drift")
 latest_probe_results = probe_diagnostics_fixtures.get("probe_results", {}).get("latest_results", [])
 if [result.get("scope") for result in latest_probe_results] != ["overview", "nodes", "routes"]:

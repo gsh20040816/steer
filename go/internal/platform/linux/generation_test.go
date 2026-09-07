@@ -44,7 +44,7 @@ func TestPrepareWritesLinuxGenerationFiles(t *testing.T) {
 		}
 	}
 	firewall, err := os.ReadFile(filepath.Join(candidate.Directory, "firewall.nft"))
-	if err != nil || !strings.Contains(string(firewall), "hook output") {
+	if err != nil || !strings.Contains(string(firewall), "fib daddr type != local return") {
 		t.Fatalf("unexpected Linux firewall: %s (%v)", firewall, err)
 	}
 }

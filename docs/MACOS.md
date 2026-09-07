@@ -58,10 +58,12 @@ GUI 每次 Load 同时保存配置内容的 SHA-256 revision；Save 与 Apply �
 
 ## DNS 路径
 
+TUN 启用 `dns_mode: hijack`；macOS CLI 不会自行配置系统 DNS，因此 `_run` 在核心 DNS 可用后用 `networksetup` 管理物理网络服务 DNS。按服务 UUID 保存原设置，自动 DNS 恢复为 `Empty`，手动 DNS 恢复原地址。每 5 秒接管新增服务；对用户后续修改放弃所有权。VPN 专用服务和搜索域不修改。
+
 macOS 不复制 Linux 的 nftables `PREROUTING`/`OUTPUT` shim，也不引入 SmartDNS。DNS 由同一份 sing-box DNS Router 处理，Steer 在 TUN inbound 上只对明确的 TCP/UDP 目标端口 53 生成 `hijack-dns` 规则：
 
 ```text
-应用 / 系统 resolver
+应用 / 系统 resolver → 198.18.0.2 / fdfe:dcba:9876::2
         ↓
 macOS utun
         ↓
@@ -72,7 +74,7 @@ sing-box DNS Router
 DNS Profile → Route / outbound
 ```
 
-这不会把普通 UDP session 当成 DNS。DNS Profile、缓存、detour 和上游协议继续由 sing-box 内部实现。Bootstrap 只解析 DNS 上游等基础设施主机名；Direct UDP/TCP Bootstrap 可产生明文 53，但不携带原始业务查询名。应用自带 DoH/DoT/DoQ 是普通业务流量，只有进入 Steer TUN 且另有可验证策略时才可能控制；port-53 hijack 本身不能识别或重定向它。
+明确端口规则在 1.14 的 TUN 预匹配阶段进入逐包 DNS 处理；不使用协议嗅探作为 DNS 劫持条件。DNS Profile、缓存、detour 和上游协议继续由 sing-box 内部实现。Bootstrap 只解析 DNS 上游等基础设施主机名；Direct UDP/TCP Bootstrap 可产生明文 53，但不携带原始业务查询名。应用自带 DoH/DoT/DoQ 是普通业务流量，只有进入 Steer TUN 且另有可验证策略时才可能控制；port-53 hijack 本身不能识别或重定向它。
 
 GUI 的 Diagnostics 只检查当前发布 generation 是否包含预期 `inbound=steer-tun + tcp/udp + destination port 53 + hijack-dns` 配置，并显示静态 exclusions。它不是抓包观测，也不证明零泄漏。loopback、link-local、multicast、文档和其他保留地址继续排除；为保证网络稳定，不扩大为无差别本地链路劫持。
 
@@ -85,7 +87,8 @@ GUI 的 Diagnostics 只检查当前发布 generation 是否包含预期 `inbound
 - sing-box version/capability/check；
 - generation prepare/publish；
 - launchd stop/bootstrap；
-- utun 地址和 LaunchDaemon health；
+- utun 地址、LaunchDaemon 和当前 generation 的 DNS 接管 health；
+- `_run` 看护 sing-box，先恢复 DNS 再结束核心；control daemon 回收崩溃后遗留的 `state/dns-restore.json`，卸载在删除 helper/state 前再次恢复；
 - atomic Apply record、status 和 cleanup。
 
 默认运行目录为：
@@ -164,3 +167,5 @@ sudo /usr/local/libexec/steer/steer-macos status
 Geo 表达式可以使用。正式 DMG 内置与当前 tag workflow 匹配并完整验证的 `geodata-seed/`；Geo 转换在 CI/release 阶段完成，目标机不安装 geoview，也不读取 DAT。
 
 当前分发不声称 Developer ID 签名或 notarization；如果未来取得签名凭据，可以在不改变 embedded payload、control IPC 和 canonical 配置语义的前提下加入正式签名与公证。
+
+系统 DNS 接管的边界：管理启用的 Ethernet/IEEE80211 网络服务；不抢占 VPN 的专用 resolver。启动先验证 IPv4/IPv6 DNS 地址路由到具有 Steer 地址的本机 utun，再验证 DNS 回复和默认 resolver 使用 Steer 地址；未生效则撤销接管并报告失败。避免路由器 DNS 劫持导致的远端回复被误判为本机核心就绪。DNS 入口连续三次健康探测失败也会恢复原设置并退出。系统 DNS 的持久 journal 保证异常退出后可恢复；独立控制后台被同时停止时，需要重新启动或运行 `steer-macos cleanup` 执行恢复。

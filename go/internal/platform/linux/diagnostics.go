@@ -17,12 +17,12 @@ func ReadDiagnostics(configPath, runDirectory, stateDirectory string) probe.Diag
 		_, resolved, _, _, err := readCurrentIdentity(BackendOptions{RunDirectory: runDirectory})
 		if err == nil {
 			diagnostics.DNSCapture = probe.InspectDNSCapture(
-				"dedicated_shim", identity.ActiveGeneration, filepath.Join(resolved, "sing-box.json"), filepath.Join(resolved, "firewall.nft"),
+				"native_hijack_with_local_shim", identity.ActiveGeneration, filepath.Join(resolved, "sing-box.json"), filepath.Join(resolved, "firewall.nft"),
 			)
 			return diagnostics
 		}
 	}
-	diagnostics.DNSCapture = probe.InspectDNSCapture("dedicated_shim", "", "", "")
+	diagnostics.DNSCapture = probe.InspectDNSCapture("native_hijack_with_local_shim", "", "", "")
 	return diagnostics
 }
 

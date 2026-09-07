@@ -140,7 +140,7 @@ uci commit steer
 # trigger before LuCI can edit an already running configuration.
 	/usr/sbin/steer apply > "$TEST_DIR/initial-apply.json"
 	[ "$(jsonfilter -q -i "$TEST_DIR/initial-apply.json" -e '@.ok')" = 'true' ]
-	grep -Fq '"dns_mode": "disabled"' /run/steer/current/sing-box.json
+	grep -Fq '"dns_mode": "hijack"' /run/steer/current/sing-box.json
 grep -Fq '"initial_path"' /run/steer/current/sing-box.json
 grep -Fq '"type": "remote"' /run/steer/current/sing-box.json
 [ -s /var/lib/steer/cache.db ]

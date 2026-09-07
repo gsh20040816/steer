@@ -1586,8 +1586,8 @@ enum GeneratedUISpec {
   },
   "dns_boundaries": {
     "linux": {
-      "capture_mode": "dedicated_shim",
-      "capture_scope": "Host and forwarded TCP/UDP destination port 53 is redirected by nftables to dedicated IPv4/IPv6 DNS inbounds.",
+      "capture_mode": "native_hijack_with_local_shim",
+      "capture_scope": "sing-box handles host and forwarded port-53 DNS; a dedicated shim covers host and LAN queries addressed to this host.",
       "exclusions": [
         "TUN routing excludes non-global destinations",
         "marked Steer DNS and TUN traffic is excluded from recapture"
@@ -1598,7 +1598,7 @@ enum GeneratedUISpec {
     },
     "macos": {
       "capture_mode": "tun_port53_hijack",
-      "capture_scope": "TCP/UDP destination port 53 is hijacked only after traffic enters the Steer TUN, including static private ranges.",
+      "capture_scope": "Steer manages physical network services’ system DNS and restores original settings on stop. Additional port-53 interception applies only to traffic entering TUN.",
       "exclusions": [
         "loopback",
         "link-local",
@@ -1610,8 +1610,8 @@ enum GeneratedUISpec {
       "diagnostic_boundary": "The diagnostic verifies port-53 artifacts in the published Active generation; it is not packet observation and does not prove encrypted-DNS blocking or zero leakage."
     },
     "openwrt": {
-      "capture_mode": "dedicated_shim",
-      "capture_scope": "Router and LAN TCP/UDP destination port 53 is redirected by nftables to the dedicated DNS inbound.",
+      "capture_mode": "native_hijack_with_local_shim",
+      "capture_scope": "sing-box handles router and LAN port-53 DNS; a dedicated shim covers queries addressed to the router itself.",
       "exclusions": [
         "TUN routing excludes non-global destinations",
         "marked Steer DNS and TUN traffic is excluded from recapture"

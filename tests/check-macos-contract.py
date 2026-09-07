@@ -38,7 +38,7 @@ def main() -> None:
 
     assert 'DNSCaptureInboundHijack' in compiler
     assert 'DNSCaptureTUNPort53Hijack' in macos_plan
-    assert '"dns_mode": "disabled"' in macos_plan
+    assert '"dns_mode": "hijack"' in macos_plan
     assert 'DirectRouteAddress' in macos_plan
     for private_prefix in ("10.0.0.0/8", "100.64.0.0/10", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"):
         assert private_prefix in macos_plan
@@ -266,7 +266,6 @@ def main() -> None:
         "macos/scripts/build-steercore-xcframework.sh",
         "go/pkg/steermacos",
         "go/internal/platform/macos/bridge.go",
-        "go/internal/platform/macos/dns.go",
         "macos/SteerAgent",
     )
     for relative in removed_paths:

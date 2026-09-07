@@ -20,7 +20,7 @@ func ReadDiagnostics(configPath, runDirectory, stateDirectory string) probe.Diag
 	}
 	currentPath := filepath.Join(runDirectory, "current")
 	diagnostics.DNSCapture = probe.InspectDNSCapture(
-		"dedicated_shim", identity.ActiveGeneration,
+		"native_hijack_with_local_shim", identity.ActiveGeneration,
 		filepath.Join(currentPath, "sing-box.json"), filepath.Join(currentPath, "firewall.nft"),
 	)
 	return diagnostics

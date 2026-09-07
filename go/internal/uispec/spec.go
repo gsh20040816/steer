@@ -396,18 +396,18 @@ func ContractValue() Contract {
 		},
 		DNSBoundaries: map[string]DNSBoundary{
 			"linux": dnsBoundary(
-				"dedicated_shim",
-				"Host and forwarded TCP/UDP destination port 53 is redirected by nftables to dedicated IPv4/IPv6 DNS inbounds.",
+				"native_hijack_with_local_shim",
+				"sing-box handles host and forwarded port-53 DNS; a dedicated shim covers host and LAN queries addressed to this host.",
 				[]string{"TUN routing excludes non-global destinations", "marked Steer DNS and TUN traffic is excluded from recapture"},
 			),
 			"openwrt": dnsBoundary(
-				"dedicated_shim",
-				"Router and LAN TCP/UDP destination port 53 is redirected by nftables to the dedicated DNS inbound.",
+				"native_hijack_with_local_shim",
+				"sing-box handles router and LAN port-53 DNS; a dedicated shim covers queries addressed to the router itself.",
 				[]string{"TUN routing excludes non-global destinations", "marked Steer DNS and TUN traffic is excluded from recapture"},
 			),
 			"macos": dnsBoundary(
 				"tun_port53_hijack",
-				"TCP/UDP destination port 53 is hijacked only after traffic enters the Steer TUN, including static private ranges.",
+				"Steer manages physical network services’ system DNS and restores original settings on stop. Additional port-53 interception applies only to traffic entering TUN.",
 				[]string{"loopback", "link-local", "multicast", "document and reserved special-use ranges"},
 			),
 		},

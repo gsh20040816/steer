@@ -29,8 +29,8 @@ func TestPlanStaticallyCapturesPrivateNetworksAndUsesPort53DNSCapture(t *testing
 	if tun["auto_route"] != true {
 		t.Fatal("macOS launchd runtime must let sing-box own auto_route")
 	}
-	if tun["dns_mode"] != "disabled" {
-		t.Fatal("macOS DNS ownership must come from destination-port-53 capture, not system DNS mutation")
+	if tun["dns_mode"] != "hijack" {
+		t.Fatal("macOS must enable native DNS hijacking")
 	}
 	if _, exists := tun["auto_redirect"]; exists {
 		t.Fatal("macOS target must not use Linux auto_redirect")
@@ -55,10 +55,13 @@ func TestPlanStaticallyCapturesPrivateNetworksAndUsesPort53DNSCapture(t *testing
 		}
 	}
 	routeAddress := tun["route_address"].([]string)
-	for _, required := range append(append([]string{}, defaultRouteAddress...), privateRouteAddress...) {
+	for _, required := range defaultRouteAddress {
 		if !contains(routeAddress, required) {
 			t.Fatalf("TUN route_address is missing %s: %#v", required, routeAddress)
 		}
+	}
+	if !reflect.DeepEqual(routeAddress, defaultRouteAddress) {
+		t.Fatalf("unnecessary private routes: %#v", routeAddress)
 	}
 	if !reflect.DeepEqual(target.DirectRouteAddress, privateRouteAddress) {
 		t.Fatalf("static private Direct rule drifted: %#v", target.DirectRouteAddress)

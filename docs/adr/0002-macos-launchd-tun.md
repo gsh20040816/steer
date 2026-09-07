@@ -21,7 +21,7 @@ launchctl bootstrap
         ↓
 steer-macos _run
         ↓
-exec sing-box run -c current/sing-box.json
+supervise sing-box + system DNS lease
         ↓
 Darwin utun + auto_route
 ```
@@ -30,13 +30,13 @@ Darwin utun + auto_route
 
 - TUN inbound 不设置 `interface_name`，让 Darwin/utun 自动选择设备；
 - 设置 `auto_route`、`stack=system`、MTU 和地址；
-- 静态把 IPv4 RFC1918、CGNAT 与 IPv6 ULA 全部加入 TUN `route_address`；
+- 不再追加 IPv4 RFC1918、CGNAT 与 IPv6 ULA 大网段路由；
 - `route_exclude_address` 继续保留回环、链路本地、组播和文档/保留地址，但不再排除上述私网；
 - 不设置 Linux-only `auto_redirect`、iproute2 mark、nftables 或 pf。
 
-DNS 由同一份 sing-box DNS Router 负责。TUN 使用 `dns_mode=disabled`，不修改系统 DNS；route 的第一条规则严格匹配 `inbound=steer-tun + network=[tcp,udp] + port=[53]` 后执行 `hijack-dns`。`port` 是目标端口，规则禁止使用 `source_port` 或 `protocol=dns` 嗅探。第二条规则将 RFC1918、CGNAT 与 ULA 固定路由到 Direct，之后才是 sniff 和用户公网规则。因此这些范围内的 DHCP DNS 与应用硬编码 Do53 都先被截获；其他私网单播流量会经过用户态核心但保持 Direct。DoH/DoT 不属于端口 53 劫持范围。普通 global IPv6 on-link 地址不作为私网特殊处理。
+DNS 由同一份 sing-box DNS Router 负责。TUN 使用 `dns_mode=hijack`，不显式填写 `dns_address`，让核心派生 `198.18.0.2` 与 `fdfe:dcba:9876::2` 并自动处理发往这些地址的 DNS。macOS CLI 缺少原生系统 DNS 设置，所以 `_run` 在 DNS 健康后按物理网络服务 UUID 保存并接管系统 DNS，退出时恢复；独立 control daemon 回收崩溃遗留 journal。恢复仅处理当前仍等于 Steer 写入值的服务，不覆盖用户后续修改；VPN 专用服务和搜索域保持不变。
 
-plan 完全由静态平台常量和 Canonical Intent 决定。control LaunchDaemon 不监控 LAN prefix；接口、Wi-Fi 和 DHCP 变化不会重新生成配置，更不会把仅保存但尚未 Apply 的业务修改带入运行态。
+route 第一条仍明确匹配 `inbound=steer-tun + network=[tcp,udp] + port=[53]` 执行 `hijack-dns`，第二条为私网 Direct。此规则只覆盖已经进入 TUN 的请求，不能修复直连/作用域路由绕过；系统 DNS 接管承担默认解析路径的修复。网络轮询只处理 OS DNS，不重新生成配置或隐式 Apply 草稿。
 
 ## 生命周期
 

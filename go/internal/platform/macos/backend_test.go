@@ -41,6 +41,9 @@ func (runner *launchdFakeRunner) Output(_ context.Context, name string, args ...
 		runner.loaded = false
 		runner.running = false
 		return nil, nil
+	case name == "/test/launchctl" && len(args) >= 3 && args[0] == "kill":
+		runner.running = false
+		return nil, nil
 	case name == "/test/launchctl" && len(args) >= 3 && args[0] == "bootstrap":
 		runner.bootstrapCalls++
 		if runner.loaded {
@@ -61,7 +64,7 @@ func TestBackendBootsOutRegisteredInactiveLaunchDaemon(t *testing.T) {
 	backend := NewBackend(runner, value, BackendOptions{
 		RunDirectory: root + "/run", StateDirectory: root + "/state", SingBoxBinary: "/test/sing-box",
 		LaunchctlBinary: "/test/launchctl", LaunchDaemonLabel: DefaultLaunchDaemonLabel,
-		LaunchDaemonPlist: root + "/steer.plist", CheckTUN: func([]string) error { return nil },
+		LaunchDaemonPlist: root + "/steer.plist", CheckTUN: func([]string) error { return nil }, CheckDNS: func() error { return nil },
 	})
 	candidate, err := backend.Prepare(context.Background(), value, compiler.Compile(value, backend.CompilerOptions()))
 	if err != nil {
@@ -82,7 +85,7 @@ func TestReadStatusReportsActualRuntimeProjectionDigest(t *testing.T) {
 	backend := NewBackend(runner, value, BackendOptions{
 		RunDirectory: root + "/run", StateDirectory: root + "/state", SingBoxBinary: "/test/sing-box",
 		LaunchctlBinary: "/test/launchctl", LaunchDaemonLabel: DefaultLaunchDaemonLabel,
-		LaunchDaemonPlist: root + "/steer.plist", CheckTUN: func([]string) error { return nil },
+		LaunchDaemonPlist: root + "/steer.plist", CheckTUN: func([]string) error { return nil }, CheckDNS: func() error { return nil },
 	})
 	compiled := compiler.Compile(value, backend.CompilerOptions())
 	candidate, err := backend.Prepare(context.Background(), value, compiled)
@@ -106,7 +109,7 @@ func TestBackendUsesLaunchdGenerationLifecycle(t *testing.T) {
 	backend := NewBackend(runner, value, BackendOptions{
 		RunDirectory: root + "/run", StateDirectory: root + "/state", SingBoxBinary: "/test/sing-box",
 		LaunchctlBinary: "/test/launchctl", LaunchDaemonLabel: DefaultLaunchDaemonLabel,
-		LaunchDaemonPlist: root + "/steer.plist", CheckTUN: func([]string) error { return nil },
+		LaunchDaemonPlist: root + "/steer.plist", CheckTUN: func([]string) error { return nil }, CheckDNS: func() error { return nil },
 	})
 	compiled := compiler.Compile(value, backend.CompilerOptions())
 	candidate, err := backend.Prepare(context.Background(), value, compiled)

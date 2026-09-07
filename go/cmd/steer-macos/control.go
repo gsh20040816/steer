@@ -209,6 +209,9 @@ func runControlService(args []string) error {
 		return fmt.Errorf("set control socket mode: %w", err)
 	}
 	service := &controlService{configPath: *configPath, adminGID: adminGID, options: options.value()}
+	watchCtx, stopWatch := context.WithCancel(context.Background())
+	defer stopWatch()
+	go watchDNSRecovery(watchCtx, options.value())
 	connections := make(chan struct{}, maxControlConnections)
 	for {
 		connection, err := listener.AcceptUnix()
@@ -761,4 +764,23 @@ func decodeStrictJSON(data []byte, target any) error {
 		return err
 	}
 	return nil
+}
+
+// This separate launchd job remains available if the runtime is killed.
+func watchDNSRecovery(ctx context.Context, options macosplatform.BackendOptions) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		operationCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		backend := macosplatform.NewBackend(macosplatform.ExecRunner{}, model.Intent{}, options)
+		if err := backend.RecoverDNSIfStopped(operationCtx); err != nil {
+			fmt.Fprintln(os.Stderr, "DNS recovery:", err)
+		}
+		cancel()
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }

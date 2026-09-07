@@ -130,7 +130,7 @@ func TestReadDiagnosticsInspectsCurrentGenerationDNSCaptureArtifacts(t *testing.
 
 	diagnostics := ReadDiagnostics(configPath, runDirectory, filepath.Join(root, "state"))
 	if !diagnostics.DNSCapture.Configured || diagnostics.DNSCapture.ActiveGeneration != filepath.Base(candidate.Directory) ||
-		diagnostics.DNSCapture.Mode != "dedicated_shim" {
+		diagnostics.DNSCapture.Mode != "native_hijack_with_local_shim" {
 		t.Fatalf("current OpenWrt DNS capture artifacts were not diagnosed: %#v", diagnostics.DNSCapture)
 	}
 }

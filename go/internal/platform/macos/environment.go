@@ -22,6 +22,9 @@ type Runner interface {
 
 type ExecRunner struct {
 	Timeout time.Duration
+	// DNS mutations must stay in launchd's process group so a killed owner
+	// cannot leave a late networksetup write racing recovery.
+	JoinProcessGroup bool
 }
 
 const (
@@ -37,10 +40,13 @@ func (runner ExecRunner) Output(ctx context.Context, name string, args ...string
 	commandCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	command := exec.CommandContext(commandCtx, name, args...)
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: !runner.JoinProcessGroup}
 	command.Cancel = func() error {
 		if command.Process == nil {
 			return os.ErrProcessDone
+		}
+		if runner.JoinProcessGroup {
+			return command.Process.Kill()
 		}
 		if err := syscall.Kill(-command.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 			return err

@@ -216,7 +216,7 @@ chain_packets() {
 wait_healthy
 ip link show dev steer0 >/dev/null
 nft list table inet steer >/dev/null
-grep -Fq '"dns_mode": "disabled"' /run/steer/current/sing-box.json || fail "TUN native DNS ownership was not disabled"
+grep -Fq '"dns_mode": "hijack"' /run/steer/current/sing-box.json || fail "TUN native DNS ownership was not enabled"
 grep -Fq '"initial_path"' /run/steer/current/sing-box.json || fail "compiled Geo rule-set has no initial_path"
 grep -Fq '"type": "remote"' /run/steer/current/sing-box.json || fail "compiled Geo rule-set is not remote"
 mac_rule_count=$(grep -c '"source_mac_address"' /run/steer/current/sing-box.json)
@@ -225,13 +225,8 @@ grep -Fq '02:00:00:00:00:77' /run/steer/current/sing-box.json || fail "native so
 [ -s /var/lib/steer/cache.db ] || fail "sing-box cache database was not created"
 
 systemctl is-active --quiet systemd-resolved || fail "systemd-resolved is not active"
-if resolvectl dns steer0 | grep -Eq ':[[:space:]]+[^[:space:]]'; then
-	fail "steer0 was registered with systemd-resolved DNS servers"
-fi
-if resolvectl domain steer0 | grep -Eq ':[[:space:]]+[^[:space:]]'; then
-	fail "steer0 was registered with systemd-resolved domains"
-fi
-resolvectl default-route steer0 | grep -Eq ':[[:space:]]+no$' || fail "steer0 became a systemd-resolved default route"
+resolvectl dns steer0 | grep -Fq '198.18.0.2' || fail "native IPv4 DNS was not registered"
+resolvectl dns steer0 | grep -Fq 'fdfe:dcba:9876::2' || fail "native IPv6 DNS was not registered"
 
 curl --fail --silent --show-error --max-time 5 http://11.77.0.2:18080/ >/dev/null
 curl --fail --silent --show-error --max-time 5 'http://[2001:4860:77::2]:18080/' >/dev/null
@@ -242,20 +237,30 @@ expect_udp host 6 2001:4860:77::2
 expect_udp steer-client 4 11.77.0.2
 expect_udp steer-client 6 2001:4860:77::2
 
-host_dns_packets_before=$(chain_packets dns_output)
 expect_dns host "" 11.77.0.99 steer.test 11.77.0.2
-host_dns_packets_after=$(chain_packets dns_output)
-[ "$host_dns_packets_after" -gt "$host_dns_packets_before" ] || fail "host DNS did not traverse Steer's DNS output shim"
 expect_dns host +tcp 11.77.0.99 steer.test 11.77.0.2
 expect_dns host "" 2001:4860:77::99 steer.test 11.77.0.2
 expect_dns host +tcp 2001:4860:77::99 steer.test 11.77.0.2
-client_dns_packets_before=$(chain_packets dns_prerouting)
 expect_dns steer-client "" 11.77.0.99 steer.test 11.77.0.2
-client_dns_packets_after=$(chain_packets dns_prerouting)
-[ "$client_dns_packets_after" -gt "$client_dns_packets_before" ] || fail "forwarded DNS did not traverse Steer's DNS prerouting shim"
 expect_dns steer-client +tcp 11.77.0.99 steer.test 11.77.0.2
 expect_dns steer-client "" 2001:4860:77::99 steer.test 11.77.0.2
 expect_dns steer-client +tcp 2001:4860:77::99 steer.test 11.77.0.2
+
+# Non-local DNS above must use native interception. The compatibility shim is
+# only for packets addressed to the host itself.
+local_dns_before=$(chain_packets dns_prerouting)
+expect_dns steer-client "" 10.77.0.1 steer.test 11.77.0.2
+expect_dns steer-client +tcp 10.77.0.1 steer.test 11.77.0.2
+local_dns_after=$(chain_packets dns_prerouting)
+[ "$local_dns_after" -gt "$local_dns_before" ] || fail "local-destination DNS missed the compatibility shim"
+
+local_output_before=$(chain_packets dns_output)
+for local_dns in 127.0.0.1 127.0.0.53 ::1 10.77.0.1; do
+    expect_dns host "" "$local_dns" steer.test 11.77.0.2
+    expect_dns host +tcp "$local_dns" steer.test 11.77.0.2
+done
+local_output_after=$(chain_packets dns_output)
+[ "$local_output_after" -gt "$local_output_before" ] || fail "host-local DNS missed OUTPUT interception"
 
 python3 -c 'import socket
 s = socket.socket()

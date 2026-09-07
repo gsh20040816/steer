@@ -31,13 +31,39 @@ func (backend *Backend) launchDaemonLoaded(ctx context.Context) (bool, error) {
 
 func (backend *Backend) stopLaunchDaemon(ctx context.Context) error {
 	loaded, err := backend.launchDaemonLoaded(ctx)
-	if err != nil || !loaded {
+	if err != nil {
 		return err
+	}
+	if !loaded {
+		return backend.DNSManager().Restore(ctx)
+	}
+	output, err := backend.runner.Output(ctx, backend.options.LaunchctlBinary, "print", "system/"+backend.options.LaunchDaemonLabel)
+	if err == nil && launchdOutputIsRunning(string(output)) {
+		// Signal the supervisor first so it can restore DNS while the core is
+		// still alive. bootout may terminate the whole process group at once.
+		if _, err := backend.runner.Output(ctx, backend.options.LaunchctlBinary, "kill", "SIGTERM", "system/"+backend.options.LaunchDaemonLabel); err != nil {
+			return fmt.Errorf("request graceful macOS shutdown: %w", err)
+		}
+		deadline := time.Now().Add(25 * time.Second)
+		for {
+			output, err := backend.runner.Output(ctx, backend.options.LaunchctlBinary, "print", "system/"+backend.options.LaunchDaemonLabel)
+			if err != nil || !launchdOutputIsRunning(string(output)) {
+				break
+			}
+			if time.Now().After(deadline) {
+				return fmt.Errorf("macOS supervisor did not finish DNS restoration before shutdown")
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
 	}
 	if _, err := backend.runner.Output(ctx, backend.options.LaunchctlBinary, "bootout", "system/"+backend.options.LaunchDaemonLabel); err != nil {
 		return fmt.Errorf("stop macOS LaunchDaemon: %w", err)
 	}
-	return nil
+	return backend.DNSManager().Restore(ctx)
 }
 
 func (backend *Backend) startLaunchDaemon(ctx context.Context) error {
@@ -101,7 +127,7 @@ func (backend *Backend) checkHealthyOnce(ctx context.Context, expectedDirectory 
 			}
 		}
 	}
-	return nil
+	return backend.checkDNSReady(ctx, expectedDirectory)
 }
 
 func (backend *Backend) ReadStatus(ctx context.Context) Status {

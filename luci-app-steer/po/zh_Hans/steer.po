@@ -1227,8 +1227,8 @@ msgstr "状态目录"
 msgid "Warnings"
 msgstr "警告"
 
-msgid "Router and LAN TCP/UDP destination port 53 is redirected by nftables to the dedicated DNS inbound."
-msgstr "路由器与局域网 TCP/UDP 的目标端口 53 会由 nftables 重定向到专用 DNS 入站。"
+msgid "sing-box handles router and LAN port-53 DNS; a dedicated shim covers queries addressed to the router itself."
+msgstr "sing-box 接管路由器和局域网的 53 端口 DNS；专用补充规则处理发往路由器自身地址的查询。"
 
 msgid "TUN routing excludes non-global destinations"
 msgstr "TUN 路由排除非全球目的地址"

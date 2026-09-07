@@ -65,7 +65,7 @@ func (plan Plan) CompilerTarget() compiler.Target {
 	inbounds := []any{
 		map[string]any{
 			"type": "tun", "tag": "steer-tun", "interface_name": plan.Resources.TunInterface,
-			"address": plan.Resources.TunAddresses, "mtu": 9000, "dns_mode": "disabled", "auto_route": true,
+			"address": plan.Resources.TunAddresses, "mtu": 9000, "dns_mode": "hijack", "auto_route": true,
 			"strict_route": true, "auto_redirect": true, "stack": "system",
 			"iproute2_table_index": plan.Resources.TunTable, "iproute2_rule_index": plan.Resources.TunPriority,
 			"auto_redirect_iproute2_fallback_rule_index": plan.Resources.TunFallbackPriority,

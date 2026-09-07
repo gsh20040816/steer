@@ -71,6 +71,11 @@ while /bin/launchctl print system/com.steer.steer >/dev/null 2>&1 \
 	/bin/sleep 0.1
 done
 
+# Recover a journal left by a killed runtime before deleting the helper/state.
+if [ -x "$helper_directory/steer-macos" ]; then
+	"$helper_directory/steer-macos" cleanup
+fi
+
 /bin/rm -f "$runtime_plist_path" "$control_plist_path" "$subscription_plist_path"
 /bin/rm -rf "$helper_directory"
 /bin/rm -f "$socket_directory/control.sock"

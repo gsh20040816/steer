@@ -31,6 +31,7 @@ type BackendOptions struct {
 	IfconfigBinary    string
 	HealthTimeout     time.Duration
 	CheckTUN          func([]string) error
+	CheckDNS          func() error
 }
 
 type Backend struct {
@@ -111,7 +112,7 @@ func (backend *Backend) Activate(ctx context.Context, candidate generation.Candi
 }
 
 // ActivateForServiceStart publishes a cold-start candidate without asking
-// launchd to start itself recursively. The LaunchDaemon then execs sing-box.
+// launchd to start itself recursively. The LaunchDaemon then supervises sing-box and system DNS.
 func (backend *Backend) ActivateForServiceStart(_ context.Context, candidate generation.Candidate) error {
 	return backend.publishCandidate(candidate)
 }
@@ -206,7 +207,7 @@ func normalizeBackendOptions(options BackendOptions) BackendOptions {
 		options.IfconfigBinary = "/sbin/ifconfig"
 	}
 	if options.HealthTimeout <= 0 {
-		options.HealthTimeout = 10 * time.Second
+		options.HealthTimeout = 30 * time.Second
 	}
 	return options
 }

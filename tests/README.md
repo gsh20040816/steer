@@ -12,7 +12,7 @@ go vet ./...
 
 覆盖 schema 9、严格 JSON/UCI 解码、引用和前置链校验、确定性编译、Route 私有出站、DNS 路径、remote SRS/seed manifest、共享 Apply 生命周期、generation、订阅合并/Store、probe 测量，以及 OpenWrt 计划、nftables、激活、健康和日志。
 
-Linux 适配器测试覆盖主机与转发流量 plan、OUTPUT/PREROUTING DNS shim 与受保护的 wildcard listener、1.14 原生 source-MAC、JSON 原子写入与 ETag 冲突、systemd/backend generation、Web bearer token/CSP/开关失败回滚、临时 probe 的 bypass mark 和静态 Linux 构建。
+Linux 适配器测试覆盖主机与转发流量 plan、原生 DNS 接管、本机目的地址 PREROUTING/OUTPUT 例外与受保护的 wildcard listener、1.14 原生 source-MAC、JSON 原子写入与 ETag 冲突、systemd/backend generation、Web bearer token/CSP/开关失败回滚、临时 probe 的 bypass mark 和静态 Linux 构建。
 
 macOS 适配器测试覆盖 Darwin TUN plan、TUN port-53 capture、JSON store、generation、launchd backend 和平台限制；`check-macos-contract.py` 约束 SwiftUI GUI 直接面向 helper，并确保旧数据面实验路径不会重新进入仓库。
 SwiftUI 工作副本行为由 `cd macos && swift test --disable-sandbox` 覆盖，包括规则 string-list 的无损逐行 round-trip 与 Default 固定不变量。
@@ -66,7 +66,7 @@ swift test --disable-sandbox
 
 CI 只对容器基础设施启动做有限重试：镜像只构建一次，容器最多重建 3 次，每次最多等待 30 秒，必须等到 systemd 可响应且 `systemd-resolved` active；每次失败输出容器状态、failed units 和本次 boot journal。真正的 `run-linux-system.sh` 产品集成只运行一次，失败不会重试或被掩盖。
 
-脚本建立 upstream/client 两个 netns，固定 client MAC 后先验证隔离拓扑，再把默认路由切到无公网出口的 upstream。启用配置实际引用 `geosite:cn` 和 native `source_mac_address`，所以服务在 Pages 不可达时仍必须通过包内 `initial_path` 启动；随后覆盖主机和转发流量的 IPv4/IPv6 TCP、UDP、UDP/TCP53。DNS 请求使用不存在的原目标地址，只有经过 Steer redirect 和独立 DNS upstream 才能成功；测试同时检查 nft DNS counter 增长，并确认 `steer0` 没有被注册为 systemd-resolved DNS route。它还确认 1053/1054 不能被直接当作 LAN resolver 访问，并覆盖服务重启、`nftables.service` 重启、禁用和重新启用。
+脚本建立 upstream/client 两个 netns，固定 client MAC 后先验证隔离拓扑，再把默认路由切到无公网出口的 upstream。启用配置实际引用 `geosite:cn` 和 native `source_mac_address`，所以服务在 Pages 不可达时仍必须通过包内 `initial_path` 启动；随后覆盖主机和转发流量的 IPv4/IPv6 TCP、UDP、UDP/TCP53。DNS 请求使用不存在的原目标地址，只有经过 Steer redirect 和独立 DNS upstream 才能成功；测试同时检查本机目的地址的 nft DNS counter 增长，并确认 `steer0` 已注册原生 systemd-resolved DNS。它还确认 1053/1054 不能被直接当作 LAN resolver 访问，并覆盖服务重启、`nftables.service` 重启、禁用和重新启用。
 
 ## 发布前完整检查
 
@@ -86,3 +86,25 @@ git diff --check
 ```
 
 所有分支 commit 与 PR 都运行 Ubuntu/Linux/OpenWrt 测试、Linux systemd 容器集成，以及 arm64/x86_64 原生 macOS Go/Swift 测试；CI 不设置 concurrency 限制，也不保存正式发布包。tag commit 必须进入 master；稳定版另要求同一 SHA 的 master CI push run 成功，Actions 服务降级时预发布可使用完整本地发布门。tag push 事件丢失时允许显式 dispatch 同一 tag，但 branch ref 会被 source gate 拒绝。OpenWrt SDK、Linux 归档、原生 macOS DMG、attestation 和发布仍全部在同一次 tag workflow 中完成。
+
+### 隔离验证原生 DNS 接管
+
+导出由当前 Linux/OpenWrt plan 生成的测试配置和防火墙（仅使用内置 hosts 数据，不访问公网）：
+
+```sh
+cd go
+STEER_DNS_FIXTURE_DIR=/tmp/steer-dns-fixtures go test ./internal/platform -run TestExportNativeDNSFixtures
+```
+
+把相应平台的 `.json`、`.nft` 和 `tests/integration/check-native-dns.py` 放到测试机后运行：
+
+```sh
+# Linux 用户命名空间，无需 sudo
+unshare -Ur python3 check-native-dns.py linux.json linux.nft
+# OpenWrt root
+python3 check-native-dns.py openwrt.json openwrt.nft
+```
+
+脚本先创建独立 network/mount namespace，并屏蔽宿主 D-Bus；不会改宿主路由、DNS 或现有 Steer 服务。覆盖本机/转发 IPv4/IPv6 UDP/TCP53、本机目的地址兼容 shim（含本机查询 127.0.0.1、127.0.0.53、::1 和自身 IPv4/IPv6 地址），以及同一 UDP 源端口从 DNS 复用到 STUN 的回归测试。需要 Python 3、ip-full、nft、dig、mount 和支持 namespace/TUN 的内核。
+
+macOS 的 DNS journal 测试覆盖自动/手动 DNS 恢复、服务重命名、新增服务、用户后续修改、部分写入失败、恢复失败重试和核心退出/取消。`STEER_TEST_SYSTEM_DNS_READ=1 go test ./internal/platform/macos -run TestReadSystemDNSPreferences -v` 可只读验证本机物理网络服务发现；此检查不修改系统 DNS。

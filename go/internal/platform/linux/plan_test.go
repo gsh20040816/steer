@@ -26,8 +26,8 @@ func TestLinuxPlanCapturesHostAndForwardedTraffic(t *testing.T) {
 		t.Fatalf("Linux DNS listeners do not cover redirected IPv4 and IPv6 traffic: %#v %#v", dns4, dns6)
 	}
 	tun := target.Inbounds[0].(map[string]any)
-	if tun["dns_mode"] != "disabled" {
-		t.Fatalf("Linux TUN must leave DNS ownership to the dedicated shim: %#v", tun)
+	if tun["dns_mode"] != "hijack" {
+		t.Fatalf("Linux TUN must enable native DNS hijacking: %#v", tun)
 	}
 	if _, restricted := tun["include_interface"]; restricted {
 		t.Fatal("Linux TUN unexpectedly restricts interception to a host interface")
@@ -53,7 +53,7 @@ func TestLinuxCompilerTargetUsesSharedLocalProxyResolve(t *testing.T) {
 
 func TestLinuxFirewallCapturesHostAndForwardedDNS(t *testing.T) {
 	text := RenderFirewall(NewPlan(model.Intent{}))
-	if !strings.Contains(text, "hook output") || !strings.Contains(text, "hook prerouting") {
+	if !strings.Contains(text, "hook output") || !strings.Contains(text, "hook prerouting") || strings.Count(text, "fib daddr type != local return") != 2 {
 		t.Fatalf("Linux firewall does not cover host and forwarded DNS:\n%s", text)
 	}
 	for _, required := range []string{
@@ -61,6 +61,10 @@ func TestLinuxFirewallCapturesHostAndForwardedDNS(t *testing.T) {
 		"meta nfproto ipv6 meta l4proto { tcp, udp } th dport 53 counter redirect to :1054",
 		"iifname \"steer0\" return",
 		"meta mark 0x2024 counter return",
+		"dnat ip to 127.0.0.1:1053",
+		"dnat ip6 to [::1]:1054",
+		"snat ip to 127.0.0.1",
+		"snat ip6 to ::1",
 		"th dport { 1053, 1054 } ct status dnat counter accept",
 		"th dport { 1053, 1054 } counter reject",
 	} {

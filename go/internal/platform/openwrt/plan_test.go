@@ -24,8 +24,8 @@ func TestPlanOwnsOpenWrtResourcesAndCompilerTarget(t *testing.T) {
 		t.Fatalf("compiler target omitted OpenWrt native inbounds: %s", encoded)
 	}
 	tun := target.Inbounds[0].(map[string]any)
-	if tun["dns_mode"] != "disabled" {
-		t.Fatalf("OpenWrt TUN must leave DNS ownership to the dedicated shim: %#v", tun)
+	if tun["dns_mode"] != "hijack" {
+		t.Fatalf("OpenWrt TUN must enable native DNS hijacking: %#v", tun)
 	}
 	for _, retired := range []string{`"type":"tproxy"`, `"mac_bindings"`, `"steer-mac-"`} {
 		if strings.Contains(string(encoded), retired) {

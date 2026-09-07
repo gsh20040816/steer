@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"syscall"
 	"time"
@@ -336,7 +337,9 @@ func runService(args []string) error {
 	if err != nil {
 		return err
 	}
-	return syscall.Exec(options.singBoxBinary, []string{filepath.Base(options.singBoxBinary), "run", "-c", current}, os.Environ())
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer cancel()
+	return macosplatform.NewBackend(macosplatform.ExecRunner{}, model.Intent{}, options.value()).RunSupervised(ctx, current)
 }
 
 func prepareColdStart(configPath string, options macosplatform.BackendOptions) error {

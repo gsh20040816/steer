@@ -25,7 +25,7 @@
   },
   "diagnostics": {
     "dns_capture": {
-      "mode": "dedicated_shim",
+      "mode": "native_hijack_with_local_shim",
       "active_generation": "generation-a",
       "configured": true,
       "detail": "the published Active generation contains the expected port-53 capture artifacts"

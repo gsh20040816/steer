@@ -17,6 +17,9 @@ func TestRenderMinimalDNSShim(t *testing.T) {
 			t.Fatalf("missing %q:\n%s", required, config)
 		}
 	}
+	if strings.Count(config, "fib daddr type != local return") != 2 {
+		t.Fatal("both external DNS hooks must be restricted to local destinations")
+	}
 	for _, retired := range []string{"ether saddr", "tproxy to", "mac_tproxy", "0x2026", "redirect to :20001"} {
 		if strings.Contains(config, retired) {
 			t.Fatalf("firewall retained pre-1.14 MAC shim %q:\n%s", retired, config)

@@ -47,18 +47,17 @@ func NewPlan(_ model.Intent) Plan {
 
 // CompilerTarget is the supported no-Apple-Developer runtime path. sing-box
 // owns the Darwin utun device and auto_route; macOS does not use Linux's
-// auto_redirect, nftables, or pf. RFC1918, CGNAT and ULA are always routed into
-// the TUN. The compiler then hijacks destination port 53 first and routes the
-// remaining private unicast traffic through Direct before sniffing or
-// evaluating user Internet rules.
+// auto_redirect, nftables, or pf. System DNS is managed by the supervisor;
+// extra private routes are unnecessary. Private packets that do enter TUN
+// are sent Direct after the explicit port-53 rule.
 func (plan Plan) CompilerTarget() compiler.Target {
-	routes := append(append([]string{}, defaultRouteAddress...), privateRouteAddress...)
+	routes := append([]string{}, defaultRouteAddress...)
 	excluded := append(append([]string{}, routeExcludeIPv4...), routeExcludeIPv6...)
 	return compiler.Target{
 		Inbounds: []any{
 			map[string]any{
 				"type": "tun", "tag": "steer-tun", "address": plan.Resources.TunAddresses,
-				"mtu": TunMTU, "dns_mode": "disabled", "auto_route": true, "stack": "system",
+				"mtu": TunMTU, "dns_mode": "hijack", "auto_route": true, "stack": "system",
 				"route_address": routes, "route_exclude_address": excluded,
 			},
 		},

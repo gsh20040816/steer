@@ -40,6 +40,9 @@ func InspectDNSCapture(mode, generation, singBoxPath, firewallPath string) DNSCa
 	}
 	result.Configured = true
 	result.Detail = "the published Active generation contains the expected port-53 capture artifacts"
+	if mode == "native_hijack_with_local_shim" {
+		result.Detail = "the Active generation enables native DNS hijacking and retains the local-destination compatibility shim"
+	}
 	return result
 }
 
@@ -47,6 +50,19 @@ func hasDNSHijackRule(content []byte, mode string) bool {
 	var document map[string]any
 	if json.Unmarshal(content, &document) != nil {
 		return false
+	}
+	if mode == "native_hijack_with_local_shim" {
+		inbounds, _ := document["inbounds"].([]any)
+		found := false
+		for _, value := range inbounds {
+			inbound, _ := value.(map[string]any)
+			if inbound["type"] == "tun" && inbound["dns_mode"] == "hijack" && inbound["auto_redirect"] == true {
+				found = true
+			}
+		}
+		if !found {
+			return false
+		}
 	}
 	route, _ := document["route"].(map[string]any)
 	rules, _ := route["rules"].([]any)
@@ -60,7 +76,7 @@ func hasDNSHijackRule(content []byte, mode string) bool {
 			if containsPort53(rule["port"]) && containsString(rule["network"], "tcp") && containsString(rule["network"], "udp") {
 				return true
 			}
-		case "dedicated_shim":
+		case "dedicated_shim", "native_hijack_with_local_shim":
 			if containsStringPrefix(rule["inbound"], "steer-dns") {
 				return true
 			}

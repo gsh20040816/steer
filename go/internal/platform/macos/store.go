@@ -188,13 +188,22 @@ func atomicWriteMode(path string, content []byte, mode os.FileMode) error {
 		temporary.Close()
 		return err
 	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
 	if err := temporary.Close(); err != nil {
 		return err
 	}
 	if err := os.Rename(temporaryPath, path); err != nil {
 		return err
 	}
-	return nil
+	directory, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
 }
 
 func readJSON(path string) ([]byte, error) {
