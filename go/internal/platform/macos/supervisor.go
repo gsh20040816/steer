@@ -107,48 +107,14 @@ func (backend *Backend) runSupervised(ctx context.Context, config string, manage
 			}
 		}
 	}()
-	deadline := time.Now().Add(backend.options.HealthTimeout)
-	for {
-		if err := probe(ctx); err == nil {
-			break
-		} else if time.Now().After(deadline) {
-			return fmt.Errorf("DNS entrance not ready: %w", err)
-		}
-		select {
-		case err := <-done:
-			exited = true
-			return fmt.Errorf("core exited before DNS takeover: %v", err)
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(200 * time.Millisecond):
-		}
-	}
-	acquireCtx, cancelAcquire := context.WithTimeout(ctx, backend.options.HealthTimeout)
-	defer cancelAcquire()
-	if err := manager.Acquire(acquireCtx); err != nil {
-		return err
-	}
-	for {
-		if err := systemDNS(acquireCtx); err == nil {
-			break
-		} else if acquireCtx.Err() != nil {
-			return err
-		}
-		select {
-		case <-acquireCtx.Done():
-			return acquireCtx.Err()
-		case <-time.After(200 * time.Millisecond):
-		}
-	}
+	// Readiness is diagnostic, not permission for the core to keep running.
+	// Retry DNS takeover after transient failures without tearing down traffic.
 	data, _ := json.Marshal(struct {
 		Config string `json:"config"`
 	}{Config: config})
-	if err := atomicWriteMode(readyPath, data, 0o644); err != nil {
-		return err
-	}
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-	failures := 0
+	lastError := ""
+	timer := time.NewTimer(0)
+	defer timer.Stop()
 	for {
 		select {
 		case err := <-done:
@@ -156,23 +122,39 @@ func (backend *Backend) runSupervised(ctx context.Context, config string, manage
 			return err
 		case <-ctx.Done():
 			return nil
-		case <-ticker.C:
-			// This only reconciles OS DNS settings, never saved application
-			// configuration and never creates or applies a new generation.
-			if err := probe(ctx); err != nil {
-				failures++
-				if failures >= 3 {
-					return fmt.Errorf("DNS entrance stopped responding: %w", err)
-				}
-				continue
+		case <-timer.C:
+			checkCtx, cancel := context.WithTimeout(ctx, backend.options.HealthTimeout)
+			err := probe(checkCtx)
+			if err == nil {
+				// Never point system DNS at an entrance we have not verified.
+				err = manager.Acquire(checkCtx)
 			}
-			failures = 0
-			updateCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			err := manager.Acquire(updateCtx)
+			if err == nil {
+				err = systemDNS(checkCtx)
+			}
 			cancel()
-			if err != nil {
-				return err
+			if err == nil {
+				err = atomicWriteMode(readyPath, data, 0o644)
+			} else {
+				failure, _ := json.Marshal(struct {
+					Config string `json:"config"`
+					Error  string `json:"error"`
+				}{config, err.Error()})
+				if writeErr := atomicWriteMode(readyPath, failure, 0o644); writeErr != nil {
+					_ = os.Remove(readyPath)
+					err = errors.Join(err, writeErr)
+				}
 			}
+			if err != nil {
+				if err.Error() != lastError {
+					fmt.Fprintf(os.Stderr, "DNS health check failed (core remains running): %v\n", err)
+				}
+				lastError = err.Error()
+			} else if lastError != "" {
+				fmt.Fprintln(os.Stderr, "DNS health check recovered")
+				lastError = ""
+			}
+			timer.Reset(5 * time.Second)
 		}
 	}
 }
@@ -184,13 +166,38 @@ func (backend *Backend) checkSystemDNS(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// Verify the default (unscoped) resolver, rather than merely searching all
-	// scoped VPN resolvers for an address that might never be selected.
-	first := strings.SplitN(string(output), "resolver #2", 2)[0]
-	for _, server := range SystemDNSServers {
-		if !strings.Contains(first, ": "+server+"\n") {
-			return fmt.Errorf("system default DNS does not use %s", server)
+	return validateSystemDNS(string(output))
+}
+
+func validateSystemDNS(output string) error {
+	// Only inspect resolver #1 in the unscoped section. macOS can omit the
+	// IPv6 server on IPv4-only networks even when both servers are configured.
+	inDefault := false
+	found := false
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "DNS configuration (") {
+			break
 		}
+		if strings.HasPrefix(line, "resolver #") {
+			if inDefault || line != "resolver #1" {
+				break
+			}
+			inDefault = true
+			continue
+		}
+		if !inDefault || !strings.HasPrefix(line, "nameserver[") {
+			continue
+		}
+		_, server, ok := strings.Cut(line, " : ")
+		server = strings.TrimSpace(server)
+		if !ok || (server != SystemDNSServers[0] && server != SystemDNSServers[1]) {
+			return fmt.Errorf("system default DNS contains unmanaged server %q", server)
+		}
+		found = true
+	}
+	if !found {
+		return errors.New("system default DNS has no Steer nameserver")
 	}
 	return nil
 }
@@ -261,9 +268,13 @@ func (backend *Backend) checkDNSReady(ctx context.Context, expectedDirectory str
 	}
 	var marker struct {
 		Config string `json:"config"`
+		Error  string `json:"error"`
 	}
 	if json.Unmarshal(data, &marker) != nil || marker.Config != filepath.Join(expectedDirectory, "sing-box.json") {
 		return errors.New("DNS takeover belongs to a different generation")
+	}
+	if marker.Error != "" {
+		return fmt.Errorf("DNS health check failed: %s", marker.Error)
 	}
 	if err := backend.checkDNSRouting(ctx); err != nil {
 		return err

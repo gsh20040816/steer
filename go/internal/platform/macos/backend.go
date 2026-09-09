@@ -18,6 +18,8 @@ import (
 	model "github.com/gsh20040816/steer/go/internal/intent"
 )
 
+const DefaultHealthTimeout = 30 * time.Second
+
 const DefaultLaunchDaemonLabel = "com.steer.steer"
 
 type BackendOptions struct {
@@ -207,7 +209,7 @@ func normalizeBackendOptions(options BackendOptions) BackendOptions {
 		options.IfconfigBinary = "/sbin/ifconfig"
 	}
 	if options.HealthTimeout <= 0 {
-		options.HealthTimeout = 30 * time.Second
+		options.HealthTimeout = DefaultHealthTimeout
 	}
 	return options
 }

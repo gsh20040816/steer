@@ -59,3 +59,5 @@ LaunchDaemon 使用 `RunAtLoad=true`、`KeepAlive=false`。禁用时由 `cleanup
 - 不引入 SmartDNS；
 - 不让 macOS 复用 Linux 的 forwarded DNS PREROUTING 逻辑；
 - 不让 GUI 绕过 helper 直接写 generation 或启动 sing-box。
+
+健康检查只报告状态，不因失败或超时停止核心。DNS 入口尚未验证时暂缓接管，后台每 5 秒重试；接管后的检查失败保留核心和 DNS 设置，恢复后清除错误状态。系统默认解析器允许只显示受管 IPv4 或 IPv6 DNS，但不得混入其他 DNS；作用域 VPN 解析器不能用来证明默认 DNS 已接管。显式停止或核心退出时仍执行 DNS 恢复。

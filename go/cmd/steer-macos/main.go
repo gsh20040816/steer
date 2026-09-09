@@ -385,7 +385,7 @@ func bindBackendFlags(flags *flag.FlagSet) *backendFlags {
 	flags.StringVar(&value.launchctlBinary, "launchctl", defaultLaunchctl, "launchctl binary")
 	flags.StringVar(&value.label, "label", macosplatform.DefaultLaunchDaemonLabel, "LaunchDaemon label")
 	flags.StringVar(&value.plist, "launchd-plist", defaultLaunchDaemon, "LaunchDaemon plist")
-	flags.DurationVar(&value.healthTimeout, "timeout", 10*time.Second, "health deadline")
+	flags.DurationVar(&value.healthTimeout, "timeout", macosplatform.DefaultHealthTimeout, "health deadline")
 	return value
 }
 
