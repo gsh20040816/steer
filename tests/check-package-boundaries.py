@@ -76,10 +76,10 @@ for retired_migration in (
         fail(f"package retained removed migration behavior: {retired_migration}")
 if "PKG_NAME:=steer" not in makefile or "define Package/steer" not in makefile:
     fail("the OpenWrt controller package must be named steer")
-if "PKG_VERSION:=0.10.2\n" not in makefile or "PKG_RELEASE:=1\n" not in makefile:
-	fail("steer package version must be 0.10.2-r1")
-if "PKG_VERSION:=0.10.2\n" not in luci_makefile or "PKG_RELEASE:=1\n" not in luci_makefile:
-	fail("LuCI packages must use 0.10.2-r1")
+if "PKG_VERSION:=0.10.3\n" not in makefile or "PKG_RELEASE:=1\n" not in makefile:
+	fail("steer package version must be 0.10.3-r1")
+if "PKG_VERSION:=0.10.3\n" not in luci_makefile or "PKG_RELEASE:=1\n" not in luci_makefile:
+	fail("LuCI packages must use 0.10.3-r1")
 if 'extra_command "stop_runtime"' not in init_script or 'ubus call service state \'{"name":"steer","spawn":false}\'' not in init_script:
 	fail("OpenWrt disable path must preserve the procd config trigger")
 if "github.com/gsh20040816/steer/go" not in makefile or "$(CURDIR)/../go/." not in makefile:
