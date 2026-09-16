@@ -84,7 +84,7 @@ sh -n tests/integration/run-linux-system.sh
 git diff --check
 ```
 
-所有分支 commit 与 PR 都运行 Ubuntu/Linux/OpenWrt 测试、Linux systemd 容器集成，以及 arm64/x86_64 原生 macOS Go/Swift 测试；CI 不设置 concurrency 限制，也不保存正式发布包。tag commit 必须进入 master；稳定版另要求同一 SHA 的 master CI push run 成功，Actions 服务降级时预发布可使用完整本地发布门。tag push 事件丢失时允许显式 dispatch 同一 tag，但 branch ref 会被 source gate 拒绝。OpenWrt SDK、Linux 归档、原生 macOS DMG、attestation 和发布仍全部在同一次 tag workflow 中完成。
+所有分支 commit 与 PR 都运行 Ubuntu/Linux/OpenWrt 测试、Linux systemd 容器集成，以及 arm64 原生 macOS Go/Swift 测试（Xcode 27.0/macOS 27 SDK）；CI 不设置 concurrency 限制，也不保存正式发布包。tag commit 必须进入 master；稳定版另要求同一 SHA 的 master CI push run 成功，Actions 服务降级时预发布可使用完整本地发布门。tag push 事件丢失时允许显式 dispatch 同一 tag，但 branch ref 会被 source gate 拒绝。OpenWrt SDK、Linux 归档、原生 macOS DMG、attestation 和发布仍全部在同一次 tag workflow 中完成。
 
 ### 隔离验证原生 DNS 接管
 

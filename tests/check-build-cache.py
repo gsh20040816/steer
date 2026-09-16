@@ -39,9 +39,8 @@ for fragment in (
     "name: Test Linux system integration",
     "macos:",
     "name: Test macOS (${{ matrix.arch }})",
-    "runner: macos-26",
-    "runner: macos-26-intel",
-    "DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer",
+    "runner: xcode-27",
+    "DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer",
     "xcrun vtool -show-build",
     "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
     "go-version-file: go/go.mod",
@@ -64,6 +63,8 @@ if "branches:" in ci_trigger or "tags:" in ci_trigger:
     fail("CI push trigger must cover every branch commit")
 if "concurrency:" in CI:
     fail("CI must not impose a concurrency group or cancel older commits")
+if "macos-26-intel" in CI or "arch: x86_64" in CI:
+    fail("macOS CI must only build the supported arm64 target")
 
 for fragment in (
     "max_start_attempts=3",

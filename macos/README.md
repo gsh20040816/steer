@@ -31,11 +31,10 @@ GUI 与 OpenWrt LuCI、Linux Web 同级：它编辑同一份 Canonical Intent，
 
 ## 正式 DMG
 
-tag workflow 在原生 Apple Silicon 和 Intel runner 上分别生成：
+tag workflow 在 GitHub `xcode-27` Apple Silicon runner 上使用 Xcode 27.0/macOS 27 SDK 生成：
 
 ```text
 steer-macos-arm64.dmg
-steer-macos-x86_64.dmg
 ```
 
 将 App 拖入 `/Applications` 后，首次在“系统”页安装系统组件并输入一次管理员密码。之后 GUI Save/Apply 与订阅更新/清理经 `root:admin 0660` socket 和 Darwin peer credentials 保护的结构化 IPC 完成，不执行任意 shell 命令，也不再请求密码。

@@ -97,7 +97,7 @@ macOS 使用 launchd、Darwin utun 和管理员授权；SwiftUI GUI 与 LuCI、L
 发布门：
 
 1. 全部本地检查通过；
-2. 稳定版要求 commit CI 的 Ubuntu、Linux systemd、macOS arm64 与 macOS x86_64 jobs 全部通过；Actions 服务降级时，预发布可由完整本地发布门替代这项独立 CI 前置条件；
+2. 稳定版要求 commit CI 的 Ubuntu、Linux systemd、macOS arm64 job 全部通过；Actions 服务降级时，预发布可由完整本地发布门替代这项独立 CI 前置条件；
 3. tag workflow 使用官方 OpenWrt SDK 构建 Steer/LuCI 三个 APK，并校验、重签官方 sing-box APK；Linux 并行构建两个通用 tar.zst；macOS 原生构建两个 DMG；
 4. release bundle 中全部产物来自拟发布 commit；
 5. 安装后运行 `validate`、`health`、`status` 和显式测试；

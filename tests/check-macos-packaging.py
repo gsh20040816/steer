@@ -34,25 +34,20 @@ for path in (
         fail(f"missing required file: {path.relative_to(ROOT)}")
 
 for fragment in (
-    "runner: macos-26",
+    "runner: xcode-27",
     "arch: arm64",
-    "runner: macos-26-intel",
-    "arch: x86_64",
-    "DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer",
-    "xcodebuild -version | grep -Fqx 'Xcode 26.6'",
+    "DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer",
+    "xcodebuild -version | grep -Fqx 'Xcode 27.0'",
     "xcrun vtool -show-build",
     "grep -E '^(macOS SDK|Xcode|Swift|Go): '",
     "CGO_ENABLED=0 GOOS=darwin GOARCH=${{ matrix.goarch }} go build",
     "swift build -c release --disable-sandbox",
     "sing-box-$SING_BOX_MACOS_VERSION-darwin-${{ matrix.upstream_arch }}.tar.gz",
     "a150c94012ff768b7261939cd236b9c8554127f45137230295d23a5660225cc9",
-    "6cf26fc3501f3117cf781e9405cf5338f60add6da5affae39421af6800ebbcb4",
     'arm64) expected_sha256="$SING_BOX_DARWIN_ARM64_SHA256"',
-    'x86_64) expected_sha256="$SING_BOX_DARWIN_AMD64_SHA256"',
     'STEER_SING_BOX_ARCHIVE_SHA256: ${{ steps.sing_box.outputs.sha256 }}',
     "macos/scripts/build-app-bundle.sh",
     "steer-macos-arm64.dmg",
-    "steer-macos-x86_64.dmg",
     "codesign --verify --deep --strict",
     "plutil -extract CFBundleExecutable raw",
     "name: macos-${{ matrix.arch }}",
@@ -62,6 +57,10 @@ for fragment in (
         fail(f"tag workflow is missing macOS contract: {fragment}")
 
 for forbidden in (
+    "macos-26-intel",
+    "steer-macos-x86_64.dmg",
+    "SING_BOX_DARWIN_AMD64_SHA256",
+    "Xcode_26.6.app",
     "GOOS=darwin GOARCH=amd64 swift",
     "notarytool",
     "altool",
@@ -74,6 +73,9 @@ for forbidden in (
 ):
     if forbidden in WORKFLOW or forbidden in BUNDLER:
         fail(f"unsupported macOS release behavior present: {forbidden}")
+
+if 'arm64|x86_64)' in BUNDLER:
+    fail("macOS release bundler must only accept the supported arm64 target")
 
 for fragment in (
     'app="$work_directory/Steer.app"',
@@ -97,7 +99,7 @@ for fragment in (
     "com.steer.steer.subscription.plist",
     "lipo -archs",
     "xcrun vtool -show-build",
-    "SteerApp must be linked against the macOS 26 SDK",
+    "SteerApp must be linked against the macOS 27 SDK",
     "codesign --force --sign - --timestamp=none",
     "codesign --verify --deep --strict",
     "hdiutil create",

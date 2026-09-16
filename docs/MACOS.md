@@ -105,18 +105,17 @@ GUI 的 Diagnostics 只检查当前发布 generation 是否包含预期 `inbound
 
 ## Release 安装
 
-稳定或预发布 tag 在两个原生 GitHub macOS runner 上分别构建：
+稳定或预发布 tag 在 GitHub `xcode-27` Apple Silicon runner 上使用 Xcode 27.0/macOS 27 SDK 构建：
 
 ```text
 steer-macos-arm64.dmg
-steer-macos-x86_64.dmg
 ```
 
 DMG 内的 `Steer.app` 包含同架构 Swift GUI、`steer-macos`、SagerNet 官方 sing-box、运行/control/订阅调度三个 LaunchDaemon plist、完整 Geo seed、许可证和 embedded installer。构建过程严格校验上游 archive SHA、Mach-O 架构、版本/tags/revision、Geo manifest、helper validate/parse-nodes、bundle 布局与可执行权限，然后对嵌套二进制和 App 做 ad-hoc 签名并运行 `codesign --verify --deep --strict`。
 
 项目目前没有付费 Apple Developer/Developer ID，因此 DMG **没有公证**。ad-hoc 签名只保证 bundle 在构建后未被意外改写，不能让 Gatekeeper 自动放行。用户流程是：
 
-1. 从 GitHub Release 下载与本机架构匹配的 DMG，并校验 `SHA256SUMS`；可选运行 `gh attestation verify steer-macos-arm64.dmg -R gsh20040816/steer`。
+1. 从 GitHub Release 下载 Apple Silicon（arm64）DMG，并校验 `SHA256SUMS`；可选运行 `gh attestation verify steer-macos-arm64.dmg -R gsh20040816/steer`。
 2. 把 `Steer.app` 拖入 `/Applications`，按 macOS 的“未认证开发者”流程手动确认首次打开。
 3. 在“系统”页点击“安装系统组件”，输入一次管理员密码。
 4. 后续从 GUI 保存、Apply、启停和升级配置时不再重复输入密码。

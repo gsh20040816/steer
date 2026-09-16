@@ -23,7 +23,7 @@ swift_version="${STEER_SWIFT_VERSION:?STEER_SWIFT_VERSION is required}"
 go_version="${STEER_GO_VERSION:?STEER_GO_VERSION is required}"
 
 case "$target_arch" in
-	arm64|x86_64) ;;
+	arm64) ;;
 	*)
 		printf 'Unsupported target architecture: %s\n' "$target_arch" >&2
 		exit 1
@@ -95,8 +95,8 @@ app_sdk="$(printf '%s\n' "$app_build_version" | awk '$1 == "sdk" {print $2; exit
 	printf 'SteerApp deployment target must be macOS 13.0, found %s\n' "$app_minos" >&2
 	exit 1
 }
-[ "${app_sdk%%.*}" = "26" ] || {
-	printf 'SteerApp must be linked against the macOS 26 SDK, found %s\n' "$app_sdk" >&2
+[ "${app_sdk%%.*}" = "27" ] || {
+	printf 'SteerApp must be linked against the macOS 27 SDK, found %s\n' "$app_sdk" >&2
 	exit 1
 }
 

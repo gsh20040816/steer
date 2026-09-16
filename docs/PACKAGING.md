@@ -4,7 +4,7 @@ Steer 采用三条相互校验的交付链：定时 Geo 工作流发布当前 SR
 
 ## 共同规则
 
-1. 主仓库发布 source tag、x86_64/aarch64 Linux tar.zst、OpenWrt 25.12.5 x86_64 APK，以及 arm64/x86_64 原生 macOS DMG；不构建 deb、rpm、pkg.tar 或 Nix 包。
+1. 主仓库发布 source tag、x86_64/aarch64 Linux tar.zst、OpenWrt 25.12.5 x86_64 APK，以及 Apple Silicon（arm64）原生 macOS DMG；不构建 deb、rpm、pkg.tar 或 Nix 包。
 2. Geo 工作流每 6 小时检查 Loyalsoldier 最新 release，以固定版本的生成器和 sing-box 把完整 GeoSite/GeoIP 转换成 SRS，并只保留 Pages 上的 `geodata/latest`。
 3. 每份 seed 都有严格 manifest，记录上游版本、DAT SHA-256、转换工具版本以及每个 selector 对应 SRS 的路径、大小和 SHA-256。
 4. 设备 Apply 只校验所引用的 seed 文件；sing-box 通过 `initial_path` 立即启动，并使用 direct HTTP client 每 24 小时后台检查同名 remote SRS。
@@ -122,11 +122,10 @@ steer-linux-<arch>/
 
 ## macOS DMG
 
-GitHub Release 提供两个由对应原生 runner 构建的 DMG：
+GitHub Release 仅提供 Apple Silicon 的原生 DMG：
 
 ```text
-steer-macos-arm64.dmg       # macos-26 / arm64 / Xcode 26.6
-steer-macos-x86_64.dmg      # macos-26-intel / x86_64 / Xcode 26.6
+steer-macos-arm64.dmg       # xcode-27 / arm64 / Xcode 27.0
 ```
 
 Swift GUI 不交叉编译。每个 job 构建 release Swift package 和同架构 `steer-macos`，下载 SagerNet 官方 `sing-box 1.14.0` Darwin archive并严格校验固定 SHA，然后调用唯一的 `macos/scripts/build-app-bundle.sh`。DMG 内固定包含：
@@ -151,7 +150,7 @@ Steer.app/
         └── LICENSES/{Steer-GPL-3.0.txt,sing-box-GPL-3.0.txt}
 ```
 
-`Info.plist` 在组装时写入真实版本、纯数字 build number、`CFBundleExecutable=SteerApp`、`CFBundleIdentifier=com.steer.steer` 与 `LSMinimumSystemVersion=13.0`，不得残留 Xcode build setting。Swift GUI 固定由 Xcode 26.6/macOS 26 SDK 构建，同时保持最低部署目标 13.0；构建会检查 SDK、deployment target、Mach-O 单一架构、权限、helper validate/parse-nodes、sing-box version/tags/revision、Geo manifest、禁止文件，并先 ad-hoc 签嵌套二进制再签 App。项目没有 Developer ID，`Notarization: none`；DMG 与 App 不得宣传为 notarized，Gatekeeper 首次手动确认属于预期行为。
+`Info.plist` 在组装时写入真实版本、纯数字 build number、`CFBundleExecutable=SteerApp`、`CFBundleIdentifier=com.steer.steer` 与 `LSMinimumSystemVersion=13.0`，不得残留 Xcode build setting。Swift GUI 固定由 Xcode 27.0/macOS 27 SDK 构建，同时保持最低部署目标 13.0；构建会检查 SDK、deployment target、Mach-O 单一架构、权限、helper validate/parse-nodes、sing-box version/tags/revision、Geo manifest、禁止文件，并先 ad-hoc 签嵌套二进制再签 App。项目没有 Developer ID，`Notarization: none`；DMG 与 App 不得宣传为 notarized，Gatekeeper 首次手动确认属于预期行为。
 
 正式 App 的 embedded installer/受控 uninstaller 只从 `Bundle.resources/Installer` 读取普通、非 symlink、带 SHA 清单的 payload，不依赖 PATH，也不现场编译。首次安装输入一次管理员密码，安装 root-owned helper/sing-box、运行数据面、control 与订阅调度三个 LaunchDaemon。control 只在 `/var/run/steer/control.sock` 接受经过 peer credential 校验的 `save`、`apply` 和订阅更新/清理请求，因此日常 GUI 写操作不再重复授权；Repair 与默认卸载保留用户 config/state/logs，删除用户数据必须独立二次确认。
 
@@ -194,7 +193,7 @@ all-commit / PR CI（无 concurrency 限制）
   ├── i18n、包边界、workflow/Linux/macOS 打包契约
   ├── Go 平台命令 smoke build
   ├── Linux systemd 容器集成测试
-  └── arm64/x86_64 原生 Go + Swift debug/release 测试
+  └── arm64 原生 Go + Swift debug/release 测试
         ↓ tag source gate（master 祖先 + 版本一致；稳定版另需同 SHA 成功 CI）
 v* tag workflow
         ↓
@@ -203,7 +202,7 @@ verified Pages Geo seed
   │     + 校验并重签官方 sing-box APK
   │     + 签名 packages.adb
   ├── CGO_ENABLED=0 构建两份 Linux tar.zst
-  └── 原生 runner 构建两个 macOS DMG
+  └── 原生 arm64 runner 构建一个 macOS DMG
         ↓
 macOS bundle/DMG 与各平台产物验收
         ↓
@@ -241,4 +240,4 @@ tag 流程：
 4. bundle job 只下载本次 run 的 OpenWrt/Linux/macOS artifacts，逐层校验后生成统一元数据和校验和。
 5. attestation 完成后创建 GitHub Release；稳定 tag 才更新 Pages OpenWrt 软件源，预发布只创建 prerelease。
 
-最终 Release 包含四个 APK、两个 Linux tar.zst、两个 macOS DMG、`BUILD-METADATA.txt` 和 `SHA256SUMS`。publish job 不得下载 master 或其他 run 的正式构件。
+最终 Release 包含四个 APK、两个 Linux tar.zst、一个 macOS arm64 DMG、`BUILD-METADATA.txt` 和 `SHA256SUMS`。publish job 不得下载 master 或其他 run 的正式构件。

@@ -22,7 +22,6 @@ env:
   SING_BOX_MACOS_VERSION: 1.14.0
   SING_BOX_MACOS_REVISION: 0b8995879f29a9b98ee027bc17b75e101445b238
   SING_BOX_DARWIN_ARM64_SHA256: a150c94012ff768b7261939cd236b9c8554127f45137230295d23a5660225cc9
-  SING_BOX_DARWIN_AMD64_SHA256: 6cf26fc3501f3117cf781e9405cf5338f60add6da5affae39421af6800ebbcb4
 
 jobs:
   source-gate:
@@ -404,18 +403,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-26
+          - runner: xcode-27
             arch: arm64
             goarch: arm64
             upstream_arch: arm64
-          - runner: macos-26-intel
-            arch: x86_64
-            goarch: amd64
-            upstream_arch: amd64
     runs-on: ${{ matrix.runner }}
     env:
       STEER_VERSION: ${{ needs.source-gate.outputs.version }}
-      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
 
     steps:
       - name: Check out tagged source
@@ -432,7 +427,7 @@ jobs:
       - name: Confirm native runner and record toolchains
         run: |
           test "$(uname -m)" = "${{ matrix.arch }}"
-          xcodebuild -version | grep -Fqx 'Xcode 26.6'
+          xcodebuild -version | grep -Fqx 'Xcode 27.0'
           xcodebuild -version
           swift --version
           go version
@@ -465,7 +460,6 @@ jobs:
         run: |
           case '${{ matrix.arch }}' in
             arm64) expected_sha256="$SING_BOX_DARWIN_ARM64_SHA256" ;;
-            x86_64) expected_sha256="$SING_BOX_DARWIN_AMD64_SHA256" ;;
             *) echo 'Unsupported macOS architecture' >&2; exit 1 ;;
           esac
           archive="$RUNNER_TEMP/sing-box-darwin.tar.gz"
@@ -527,7 +521,7 @@ jobs:
           test "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "$marketing_version"
           test "$(plutil -extract LSMinimumSystemVersion raw "$app/Contents/Info.plist")" = 13.0
           test "$(xcrun vtool -show-build "$app/Contents/MacOS/SteerApp" | awk '$1 == "minos" {print $2; exit}')" = 13.0
-          test "$(xcrun vtool -show-build "$app/Contents/MacOS/SteerApp" | awk '$1 == "sdk" {print $2; exit}' | cut -d. -f1)" = 26
+          test "$(xcrun vtool -show-build "$app/Contents/MacOS/SteerApp" | awk '$1 == "sdk" {print $2; exit}' | cut -d. -f1)" = 27
           test "$(lipo -archs "$app/Contents/MacOS/SteerApp")" = '${{ matrix.arch }}'
           test "$(lipo -archs "$app/Contents/Resources/Installer/steer-macos")" = '${{ matrix.arch }}'
           test "$(lipo -archs "$app/Contents/Resources/Installer/sing-box")" = '${{ matrix.arch }}'
@@ -568,7 +562,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p input/openwrt input/linux input/macos-arm64 input/macos-x86_64
+          mkdir -p input/openwrt input/linux input/macos-arm64
           gh run download "$GITHUB_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
             --name openwrt-25.12.5-x86_64-packages \
@@ -581,10 +575,6 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --name macos-arm64 \
             --dir input/macos-arm64
-          gh run download "$GITHUB_RUN_ID" \
-            --repo "$GITHUB_REPOSITORY" \
-            --name macos-x86_64 \
-            --dir input/macos-x86_64
 
       - name: Verify and assemble exact release assets
         run: |
@@ -597,26 +587,19 @@ jobs:
           set -- $(find input/macos-arm64 -type f -name SHA256SUMS)
           [ "$#" -eq 1 ]
           macos_arm64_dist="$(dirname "$1")"
-          set -- $(find input/macos-x86_64 -type f -name SHA256SUMS)
-          [ "$#" -eq 1 ]
-          macos_x86_64_dist="$(dirname "$1")"
           (cd "$openwrt_dist" && sha256sum -c SHA256SUMS)
           (cd "$linux_dist" && sha256sum -c SHA256SUMS)
           (cd "$macos_arm64_dist" && sha256sum -c SHA256SUMS)
-          (cd "$macos_x86_64_dist" && sha256sum -c SHA256SUMS)
           grep -Fqx "Source revision: $GITHUB_SHA" "$openwrt_dist/BUILD-METADATA.txt"
           grep -Fqx "Source revision: $GITHUB_SHA" "$linux_dist/BUILD-METADATA.txt"
           grep -Fqx "Source revision: $GITHUB_SHA" "$macos_arm64_dist/BUILD-METADATA.txt"
-          grep -Fqx "Source revision: $GITHUB_SHA" "$macos_x86_64_dist/BUILD-METADATA.txt"
           grep -Fqx "Source tag: $GITHUB_REF_NAME" "$macos_arm64_dist/BUILD-METADATA.txt"
-          grep -Fqx "Source tag: $GITHUB_REF_NAME" "$macos_x86_64_dist/BUILD-METADATA.txt"
 
           release_dir=release-artifact/dist
           mkdir -p "$release_dir"
           cp "$openwrt_dist"/*.apk "$release_dir/"
           cp "$linux_dist"/*.tar.zst "$release_dir/"
           cp "$macos_arm64_dist"/steer-macos-arm64.dmg "$release_dir/"
-          cp "$macos_x86_64_dist"/steer-macos-x86_64.dmg "$release_dir/"
           {
             echo "Steer version: $STEER_VERSION"
             echo "Source tag: $GITHUB_REF_NAME"
@@ -630,16 +613,13 @@ jobs:
             echo "macOS bundled sing-box revision: $SING_BOX_MACOS_REVISION"
             echo "Linux targets: x86_64 aarch64"
             echo "Linux build mode: CGO_ENABLED=0"
-            echo "macOS targets: arm64 x86_64"
+            echo "macOS targets: arm64"
             echo "Minimum macOS: 13.0"
             echo "macOS signing: ad-hoc"
             echo "macOS notarization: none"
             echo "macOS arm64 sing-box archive SHA256: $SING_BOX_DARWIN_ARM64_SHA256"
-            echo "macOS x86_64 sing-box archive SHA256: $SING_BOX_DARWIN_AMD64_SHA256"
             echo "macOS arm64 toolchains:"
             grep -E '^(macOS SDK|Xcode|Swift|Go): ' "$macos_arm64_dist/BUILD-METADATA.txt"
-            echo "macOS x86_64 toolchains:"
-            grep -E '^(macOS SDK|Xcode|Swift|Go): ' "$macos_x86_64_dist/BUILD-METADATA.txt"
           } > "$release_dir/BUILD-METADATA.txt"
 
           for pattern in \
@@ -649,8 +629,7 @@ jobs:
             'luci-i18n-steer-zh-cn-*.apk' \
             'steer-linux-x86_64.tar.zst' \
             'steer-linux-aarch64.tar.zst' \
-            'steer-macos-arm64.dmg' \
-            'steer-macos-x86_64.dmg'; do
+            'steer-macos-arm64.dmg'; do
             set -- "$release_dir"/$pattern
             [ "$#" -eq 1 ] && [ -f "$1" ] || {
               echo "Expected exactly one release asset matching $pattern, found $#" >&2
@@ -694,7 +673,6 @@ jobs:
         with:
           subject-path: |
             release-artifact/steer-macos-arm64.dmg
-            release-artifact/steer-macos-x86_64.dmg
             release-artifact/SHA256SUMS
 
   publish:
@@ -730,8 +708,7 @@ jobs:
             'luci-i18n-steer-zh-cn-*.apk' \
             'steer-linux-x86_64.tar.zst' \
             'steer-linux-aarch64.tar.zst' \
-            'steer-macos-arm64.dmg' \
-            'steer-macos-x86_64.dmg'; do
+            'steer-macos-arm64.dmg'; do
             set -- $pattern
             [ "$#" -eq 1 ] && [ -f "$1" ] || {
               echo "Expected exactly one release asset matching $pattern, found $#" >&2
