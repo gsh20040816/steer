@@ -58,6 +58,15 @@ chown root:wheel "$helper_directory/steer-macos" "$runtime_binary" "$plist_path"
 chmod 0755 "$helper_directory/steer-macos" "$runtime_binary"
 chmod 0644 "$plist_path" "$control_plist_path" "$subscription_plist_path"
 
+# Source archives may also carry download metadata. launchd on macOS 27
+# rejects quarantined plists; leave executable and unrelated metadata intact.
+for installed_plist in "$plist_path" "$control_plist_path" "$subscription_plist_path"; do
+	attributes="$(/usr/bin/xattr "$installed_plist")"
+	if printf '%s\n' "$attributes" | /usr/bin/grep -Fxq com.apple.quarantine; then
+		/usr/bin/xattr -d com.apple.quarantine "$installed_plist"
+	fi
+done
+
 launchctl bootout system/com.steer.steer 2>/dev/null || true
 launchctl bootout system/com.steer.steer.control 2>/dev/null || true
 launchctl bootout system/com.steer.steer.subscription 2>/dev/null || true

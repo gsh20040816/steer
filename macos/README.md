@@ -42,6 +42,8 @@ steer-macos-x86_64.dmg
 
 系统页逐项验收 helper、sing-box、三个 LaunchDaemon plist/注册状态、config、Geo seed 与 control socket。任何缺失或版本不一致都会显示 Repair；卸载默认保留 config/state/logs，删除用户数据必须再经过一次独立确认。
 
+macOS 27 会拒绝加载带有 `com.apple.quarantine` 下载隔离标记的 LaunchDaemon plist，并报告 `155: Refusing to execute/trust quarantined program/file`。安装器在校验 App 签名与 payload 校验和后，仅清除三个已安装 Steer plist 上的此标记，再注册服务；不会递归清理 App、可执行文件或其他扩展属性。旧安装器会在 Repair 时重新复制该标记，需使用包含此修复的 App 再执行“修复系统组件”。
+
 当前只有 ad-hoc 签名，没有 Developer ID 和 notarization。用户仍需按 macOS 未认证开发者流程首次确认；GitHub artifact attestation 可验证来源，但不会让 Gatekeeper 自动放行。
 
 ## 源码安装和运行

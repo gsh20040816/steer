@@ -187,6 +187,9 @@ jobs:
           test "$(uname -m)" = "${{ matrix.arch }}"
           xcodebuild -version | grep -Fqx 'Xcode 26.6'
 
+      - name: Test native macOS packaging and plist quarantine handling
+        run: python3 tests/check-macos-packaging.py
+
       - name: Test shared Go core and native macOS adapter
         working-directory: go
         run: |

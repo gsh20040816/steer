@@ -110,6 +110,16 @@ done
 /usr/bin/install -o root -g wheel -m 0644 "$control_plist_payload" "$control_plist_path"
 /usr/bin/install -o root -g wheel -m 0644 "$subscription_plist_payload" "$subscription_plist_path"
 
+# install preserves download metadata. macOS 27 launchd rejects quarantined
+# plists (error 155), even after the App and payload above have been verified.
+# Clear only this attribute on the three installed service definitions.
+for installed_plist in "$runtime_plist_path" "$control_plist_path" "$subscription_plist_path"; do
+	attributes="$(/usr/bin/xattr "$installed_plist")"
+	if printf '%s\n' "$attributes" | /usr/bin/grep -Fxq com.apple.quarantine; then
+		/usr/bin/xattr -d com.apple.quarantine "$installed_plist"
+	fi
+done
+
 if [ -f "$support_directory/config/config.json" ]; then
 	/usr/sbin/chown root:admin "$support_directory/config/config.json"
 	/bin/chmod 0640 "$support_directory/config/config.json"
