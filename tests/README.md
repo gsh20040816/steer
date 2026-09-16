@@ -15,7 +15,7 @@ go vet ./...
 Linux 适配器测试覆盖主机与转发流量 plan、原生 DNS 接管、本机目的地址 PREROUTING/OUTPUT 例外与受保护的 wildcard listener、1.14 原生 source-MAC、JSON 原子写入与 ETag 冲突、systemd/backend generation、Web bearer token/CSP/开关失败回滚、临时 probe 的 bypass mark 和静态 Linux 构建。
 
 macOS 适配器测试覆盖 Darwin TUN plan、TUN port-53 capture、JSON store、generation、launchd backend 和平台限制。
-SwiftUI 工作副本行为由 `cd macos && swift test --disable-sandbox` 覆盖，包括规则 string-list 的无损逐行 round-trip 与 Default 固定不变量。
+SwiftUI 工作副本行为由 `cd macos && swift test --disable-sandbox --build-system native` 覆盖，包括规则 string-list 的无损逐行 round-trip 与 Default 固定不变量。
 
 ## LuCI 与静态边界
 
@@ -35,7 +35,7 @@ macOS 原生表单还包含 Swift XCTest：
 
 ```sh
 cd macos
-swift test --disable-sandbox
+swift test --disable-sandbox --build-system native
 ```
 
 - `internal/subscription` Go 测试：三端共享的代理 URI、多行与 Base64 解析，以及逐协议非丢失导出闭环；

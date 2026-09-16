@@ -427,7 +427,7 @@ jobs:
       - name: Confirm native runner and record toolchains
         run: |
           test "$(uname -m)" = "${{ matrix.arch }}"
-          xcodebuild -version | grep -Fqx 'Xcode 27.0'
+          xcodebuild -version | grep -Fx 'Xcode 27.0'
           xcodebuild -version
           swift --version
           go version
@@ -442,8 +442,8 @@ jobs:
         run: |
           (
             cd macos
-            swift build -c release --disable-sandbox
-            swift build -c release --show-bin-path > "$RUNNER_TEMP/swift-bin-path"
+            swift build -c release --disable-sandbox --build-system native
+            swift build -c release --show-bin-path --build-system native > "$RUNNER_TEMP/swift-bin-path"
           )
           mkdir -p "$RUNNER_TEMP/steer-macos-binaries"
           (

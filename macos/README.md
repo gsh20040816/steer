@@ -66,8 +66,8 @@ sudo /usr/local/libexec/steer/steer-macos health
 
 ```sh
 cd macos
-swift build --disable-sandbox
-swift run SteerApp
+swift build --disable-sandbox --build-system native
+swift run --build-system native SteerApp
 ```
 
 安装器把配置设为 `root:admin 0640`，运行配置继续保持 root 私有；GUI 启动及状态刷新通过受限 control socket 获取权威 Saved/Active 摘要，读取失败会明确显示异常，Validate、探测和 Geo catalog 也不会弹出管理员授权。概览探测经受限 control socket 从 Saved 配置读取目标，并直接使用 Mac 当前网络环境；没有 Active 时仍可运行。报告绑定 Saved digest、测试时可用的 Active identity 和 tested_at，Saved 或网络环境改变后旧结果显示为过期。开发安装脚本会根据 `command -v sing-box` 自动处理 Apple Silicon 与 Intel Homebrew 前缀，把选中的构件复制为 root-owned `/usr/local/libexec/steer/sing-box`，并安装 control 与订阅调度服务；后续 Save/Apply、探测与订阅更新/清理和正式 App 使用同一受限免密 IPC。

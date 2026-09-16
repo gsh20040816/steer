@@ -51,8 +51,9 @@ for fragment in (
     "CGO_ENABLED=0 GOOS=darwin GOARCH=${{ matrix.goarch }} go build",
     "/workspace/tests/integration/run-linux-system.sh",
     "tests/integration/start-linux-system-container.sh",
-    "swift test --disable-sandbox",
-    "swift build -c release --disable-sandbox",
+    "swift test --disable-sandbox --build-system native",
+    "swift build -c release --disable-sandbox --build-system native",
+    "swift build -c release --show-bin-path --build-system native",
     "python3 tests/check-macos-packaging.py",
 ):
     if fragment not in CI:

@@ -141,8 +141,8 @@ sudo macos/scripts/install-launchdaemon.sh
 
 ```sh
 cd macos
-swift build --disable-sandbox
-swift run SteerApp
+swift build --disable-sandbox --build-system native
+swift run --build-system native SteerApp
 ```
 
 也可以直接使用 helper：

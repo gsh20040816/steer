@@ -182,7 +182,7 @@ jobs:
       - name: Confirm native architecture
         run: |
           test "$(uname -m)" = "${{ matrix.arch }}"
-          xcodebuild -version | grep -Fqx 'Xcode 27.0'
+          xcodebuild -version | grep -Fx 'Xcode 27.0'
 
       - name: Test native macOS packaging and plist quarantine handling
         run: python3 tests/check-macos-packaging.py
@@ -200,9 +200,10 @@ jobs:
         working-directory: macos
         run: |
           plutil -lint launchd/com.steer.steer.plist launchd/com.steer.steer.control.plist
-          swift test --disable-sandbox
-          swift build -c debug --disable-sandbox
-          swift build -c release --disable-sandbox
-          app_binary="$(swift build -c release --show-bin-path)/SteerApp"
+          swift test --disable-sandbox --build-system native
+          swift build -c debug --disable-sandbox --build-system native
+          swift build -c release --disable-sandbox --build-system native
+          app_binary="$(swift build -c release --show-bin-path --build-system native)/SteerApp"
+          xcrun vtool -show-build "$app_binary"
           test "$(xcrun vtool -show-build "$app_binary" | awk '$1 == "minos" {print $2; exit}')" = 13.0
           test "$(xcrun vtool -show-build "$app_binary" | awk '$1 == "sdk" {print $2; exit}' | cut -d. -f1)" = 27
