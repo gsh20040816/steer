@@ -97,6 +97,25 @@ struct RuntimeApplyRecord: Decodable, Sendable {
     let sequence: String
     let timestamp: String?
     let result: RuntimeApplyResult
+
+    var appliedAt: Date? {
+        if let timestamp {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = formatter.date(from: timestamp) ?? ISO8601DateFormatter().date(from: timestamp) {
+                return date
+            }
+        }
+        // Older records use Unix nanoseconds as their sequence. Preserve the
+        // millisecond fallback, but do not interpret arbitrary sequence IDs as dates.
+        guard sequence.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }),
+              let value = Int64(sequence) else { return nil }
+        switch sequence.count {
+        case 19: return Date(timeIntervalSince1970: Double(value) / 1_000_000_000)
+        case 13: return Date(timeIntervalSince1970: Double(value) / 1_000)
+        default: return nil
+        }
+    }
 }
 
 struct RuntimeApplyResult: Decodable, Sendable {

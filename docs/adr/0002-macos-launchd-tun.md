@@ -36,7 +36,7 @@ Darwin utun + auto_route
 
 DNS 由同一份 sing-box DNS Router 负责。TUN 使用 `dns_mode=hijack`，不显式填写 `dns_address`，让核心派生 `198.18.0.2` 与 `fdfe:dcba:9876::2` 并自动处理发往这些地址的 DNS。macOS CLI 缺少原生系统 DNS 设置，所以 `_run` 在 DNS 健康后按物理网络服务 UUID 保存并接管系统 DNS，退出时恢复；独立 control daemon 回收崩溃遗留 journal。恢复仅处理当前仍等于 Steer 写入值的服务，不覆盖用户后续修改；VPN 专用服务和搜索域保持不变。
 
-route 第一条仍明确匹配 `inbound=steer-tun + network=[tcp,udp] + port=[53]` 执行 `hijack-dns`，第二条为私网 Direct。此规则只覆盖已经进入 TUN 的请求，不能修复直连/作用域路由绕过；系统 DNS 接管承担默认解析路径的修复。网络轮询只处理 OS DNS，不重新生成配置或隐式 Apply 草稿。
+route 第一条仍明确匹配 `inbound=steer-tun + network=[tcp,udp] + port=[53]` 执行 `hijack-dns`，随后对 `icmp` bypass，再是私网 Direct。此规则只覆盖已经进入 TUN 的请求，不能修复直连/作用域路由绕过；系统 DNS 接管承担默认解析路径的修复。网络轮询只处理 OS DNS，不重新生成配置或隐式 Apply 草稿。
 
 ## 生命周期
 

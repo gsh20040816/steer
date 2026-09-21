@@ -114,7 +114,7 @@ func TestPlanCompilerOutputRetainsDedicatedDNSHijack(t *testing.T) {
 		t.Fatalf("macOS route unexpectedly contains auto_redirect: %s", encoded)
 	}
 	rules := bundle.SingBox["route"].(map[string]any)["rules"].([]any)
-	if len(rules) < 5 {
+	if len(rules) < 6 {
 		t.Fatalf("macOS route rules are incomplete: %#v", rules)
 	}
 	first := rules[0].(map[string]any)
@@ -124,20 +124,24 @@ func TestPlanCompilerOutputRetainsDedicatedDNSHijack(t *testing.T) {
 	if _, exists := first["source_port"]; exists {
 		t.Fatalf("macOS DNS hijack accidentally matches the reusable UDP source port: %#v", first)
 	}
-	direct := rules[1].(map[string]any)
+	icmp := rules[1].(map[string]any)
+	if icmp["action"] != "bypass" || !reflect.DeepEqual(icmp["network"], []string{"icmp"}) || icmp["outbound"] != "steer-route-direct" {
+		t.Fatalf("ICMP must leave the capture path before private Direct: %#v", rules)
+	}
+	direct := rules[2].(map[string]any)
 	if direct["action"] != "route" || direct["outbound"] != "steer-route-direct" ||
 		!reflect.DeepEqual(direct["ip_cidr"], privateRouteAddress) ||
 		!reflect.DeepEqual(direct["inbound"], []string{"steer-tun"}) {
 		t.Fatalf("private unicast must route Direct after DNS capture: %#v", rules)
 	}
-	if rules[2].(map[string]any)["action"] != "sniff" {
+	if rules[3].(map[string]any)["action"] != "sniff" {
 		t.Fatalf("sniff must run after DNS and LAN classification: %#v", rules)
 	}
-	resolve := rules[3].(map[string]any)
+	resolve := rules[4].(map[string]any)
 	if resolve["action"] != "resolve" || !reflect.DeepEqual(resolve["inbound"], []string{"steer-tun", "steer-local-local"}) {
 		t.Fatalf("macOS target lost shared local proxy resolve semantics: %#v", rules)
 	}
-	if rules[4].(map[string]any)["outbound"] != "steer-route-direct" {
+	if rules[5].(map[string]any)["outbound"] != "steer-route-direct" {
 		t.Fatalf("local proxy route must run after domain resolution: %#v", rules)
 	}
 }

@@ -6,7 +6,7 @@ Linux 第一版面向 systemd 发行版，覆盖 Linux 主机以及由该主机�
 
 - 配置：严格 Canonical JSON schema 9 的用户 Intent 位于 `/etc/steer/config.json`；没有第二份 Linux platform settings。
 - 数据面：无版本锁定的 sing-box 提供 TUN `auto_route + strict_route + auto_redirect`；Apply 用 native config check 判断当前构建是否支持所用字段，源 MAC 使用被接受时的 `source_mac_address` 原生匹配。
-- DNS：TUN 启用 `dns_mode: hijack` 和 `auto_redirect`，由 sing-box 处理普通 TCP/UDP 53 重定向及 systemd-resolved 接口 DNS。Steer 仅保留发往主机自身地址的 DNS shim：`PREROUTING` 覆盖 LAN/VM/Docker 查询本机，`OUTPUT` DNAT 加必要 SNAT 覆盖本机查询回环或自身网卡地址。两条拦截链均由 `fib daddr type != local return` 限定范围；普通目的地址交给原生接管。IPv4/IPv6 专用入口仍监听 1053/1054，`input` 只允许 DNAT 后访问。应用自带加密 DNS 不在此范围内。
+- DNS：TUN 启用 `dns_mode: hijack` 和 `auto_redirect`，由 sing-box 处理普通 TCP/UDP 53 重定向及 systemd-resolved 接口 DNS。ICMP echo（ping）在 `auto_redirect` 预匹配阶段执行内核 bypass，已进入 TUN 的请求走 Direct。Steer 仅保留发往主机自身地址的 DNS shim：`PREROUTING` 覆盖 LAN/VM/Docker 查询本机，`OUTPUT` DNAT 加必要 SNAT 覆盖本机查询回环或自身网卡地址。两条拦截链均由 `fib daddr type != local return` 限定范围；普通目的地址交给原生接管。IPv4/IPv6 专用入口仍监听 1053/1054，`input` 只允许 DNAT 后访问。应用自带加密 DNS 不在此范围内。
 - 生命周期：systemd `steer.service`，`_run` 完成准备后直接 exec sing-box；`cleanup` 由 `ExecStopPost` 调用。`steer.service` 是 `nftables.service` 的 `PartOf`，正常重启 nftables 时会在其后重启并重建 Steer 数据面。
 - 管理：统一 CLI `steer` 和只监听 loopback 的 `steer web`。
 - 订阅：systemd timer 更新 JSON 配置，不自动 Apply；更新失败或 HTTP 200 但没有有效节点时保留旧配置。

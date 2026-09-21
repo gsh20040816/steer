@@ -392,16 +392,8 @@ struct OverviewView: View {
 
     private var localizedLastApplyTime: String {
         guard let record = model.runtime.lastApply else { return "—" }
-        if let timestamp = record.timestamp {
-            let formatter = ISO8601DateFormatter()
-            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            let date = formatter.date(from: timestamp) ?? ISO8601DateFormatter().date(from: timestamp)
-            if let date {
-                return date.formatted(date: .abbreviated, time: .standard)
-            }
-        }
-        if let milliseconds = Double(record.sequence), record.sequence.count >= 13 {
-            return Date(timeIntervalSince1970: milliseconds / 1000).formatted(date: .abbreviated, time: .standard)
+        if let date = record.appliedAt {
+            return date.formatted(date: .abbreviated, time: .standard)
         }
         return "时间未知"
     }

@@ -251,6 +251,24 @@ func TestCompileNativeMACRulesAndNoForbiddenFeatures(t *testing.T) {
 	}
 }
 
+func TestCompileDoesNotHijackICMP(t *testing.T) {
+	bundle := Compile(representativeIntent(), testOptions())
+	rules := bundle.SingBox["route"].(map[string]any)["rules"].([]any)
+	icmp := icmpBypassRule(rules)
+	if icmp == nil {
+		t.Fatalf("ICMP must leave the capture path before sniff: %#v", rules)
+	}
+	if icmp["action"] != "bypass" || !reflect.DeepEqual(icmp["network"], []string{"icmp"}) || icmp["outbound"] != "steer-route-direct" {
+		t.Fatalf("ICMP bypass is wrong: %#v", icmp)
+	}
+	if _, exists := icmp["inbound"]; exists {
+		t.Fatalf("ICMP bypass must apply to auto_redirect pre-match, not only TUN: %#v", icmp)
+	}
+	if icmpIndex(rules) >= sniffIndex(rules) {
+		t.Fatalf("ICMP bypass must run before sniff: %#v", rules)
+	}
+}
+
 func TestCompileKeepsDedicatedDNSHijackBoundary(t *testing.T) {
 	bundle := Compile(representativeIntent(), testOptions())
 	route := bundle.SingBox["route"].(map[string]any)
@@ -623,4 +641,31 @@ func hasString(values []string, expected string) bool {
 		}
 	}
 	return false
+}
+
+func icmpBypassRule(rules []any) map[string]any {
+	index := icmpIndex(rules)
+	if index < 0 {
+		return nil
+	}
+	return rules[index].(map[string]any)
+}
+
+func icmpIndex(rules []any) int {
+	for index, raw := range rules {
+		rule := raw.(map[string]any)
+		if reflect.DeepEqual(rule["network"], []string{"icmp"}) {
+			return index
+		}
+	}
+	return -1
+}
+
+func sniffIndex(rules []any) int {
+	for index, raw := range rules {
+		if raw.(map[string]any)["action"] == "sniff" {
+			return index
+		}
+	}
+	return -1
 }

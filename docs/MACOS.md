@@ -60,7 +60,7 @@ GUI 每次 Load 同时保存配置内容的 SHA-256 revision；Save 与 Apply �
 
 TUN 启用 `dns_mode: hijack`；macOS CLI 不会自行配置系统 DNS，因此 `_run` 在核心 DNS 可用后用 `networksetup` 管理物理网络服务 DNS。按服务 UUID 保存原设置，自动 DNS 恢复为 `Empty`，手动 DNS 恢复原地址。每 5 秒接管新增服务；对用户后续修改放弃所有权。VPN 专用服务和搜索域不修改。
 
-macOS 不复制 Linux 的 nftables `PREROUTING`/`OUTPUT` shim，也不引入 SmartDNS。DNS 由同一份 sing-box DNS Router 处理，Steer 在 TUN inbound 上只对明确的 TCP/UDP 目标端口 53 生成 `hijack-dns` 规则：
+macOS 不复制 Linux 的 nftables `PREROUTING`/`OUTPUT` shim，也不引入 SmartDNS。DNS 由同一份 sing-box DNS Router 处理，Steer 在 TUN inbound 上只对明确的 TCP/UDP 目标端口 53 生成 `hijack-dns` 规则；进入 TUN 的 ICMP echo（ping）走 Direct：
 
 ```text
 应用 / 系统 resolver → 198.18.0.2 / fdfe:dcba:9876::2
@@ -83,7 +83,7 @@ GUI 的 Diagnostics 只检查当前发布 generation 是否包含预期 `inbound
 `go/internal/platform/macos` 负责：
 
 - Darwin TUN plan：地址、MTU、`auto_route` 和非全球地址排除；`198.18.0.0/15` 包含 system stack 自身的 IPv4 对端，不能加入排除表；
-- 显式 TCP/UDP 53 DNS capture；
+- 显式 TCP/UDP 53 DNS capture，进入 TUN 的 ICMP echo（ping）走 Direct；
 - sing-box version/capability/check；
 - generation prepare/publish；
 - launchd stop/bootstrap；

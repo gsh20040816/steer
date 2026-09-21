@@ -134,7 +134,7 @@ Code review 和契约测试必须拒绝以下实现：把后端对象直接传�
 - macOS 不支持 `source_mac_address`，UI 必须说明原因，不能伪造支持；
 - Canonical JSON 原文编辑只适用于 JSON 真相源；OpenWrt 提供 Canonical 只读预览，UCI 仍是唯一真相；
 - macOS 系统组件安装/升级只属于 macOS；
-- macOS 接管物理网络服务的系统 DNS；进入 TUN 的流量按“目标端口 53 劫持 → 私网 Direct → sniff → resolve → 用户规则”处理，网络服务变化由平台 DNS 看护处理；
+- macOS 接管物理网络服务的系统 DNS；进入 TUN 的流量按“目标端口 53 劫持 → ICMP bypass → 私网 Direct → sniff → resolve → 用户规则”处理，网络服务变化由平台 DNS 看护处理；
 - LuCI ACL、Linux Bearer token 和 macOS peer credential 是 transport 权限，不进入共享 Intent；
 - 日志来源和订阅调度器属于平台实现，但用户操作和结果合同保持一致。
 

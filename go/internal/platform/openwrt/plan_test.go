@@ -43,10 +43,12 @@ func TestOpenWrtCompilerTargetUsesSharedLocalProxyResolve(t *testing.T) {
 	value.Rules = append([]model.Rule{{ID: "local", Enabled: true, DNSProfile: "direct_dns", Route: "direct", Inbound: []string{"local"}}}, value.Rules...)
 	bundle := compiler.Compile(value, compiler.Options{Target: NewPlan(value).CompilerTarget()})
 	rules := bundle.SingBox["route"].(map[string]any)["rules"].([]any)
-	if len(rules) < 4 || rules[0].(map[string]any)["action"] != "hijack-dns" ||
-		rules[1].(map[string]any)["action"] != "sniff" || rules[2].(map[string]any)["action"] != "resolve" ||
-		!reflect.DeepEqual(rules[2].(map[string]any)["inbound"], []string{"steer-tun", "steer-local-local"}) ||
-		rules[3].(map[string]any)["outbound"] != "steer-route-direct" {
+	if len(rules) < 5 || rules[0].(map[string]any)["action"] != "hijack-dns" ||
+		!reflect.DeepEqual(rules[1].(map[string]any)["network"], []string{"icmp"}) ||
+		rules[1].(map[string]any)["action"] != "bypass" ||
+		rules[2].(map[string]any)["action"] != "sniff" || rules[3].(map[string]any)["action"] != "resolve" ||
+		!reflect.DeepEqual(rules[3].(map[string]any)["inbound"], []string{"steer-tun", "steer-local-local"}) ||
+		rules[4].(map[string]any)["outbound"] != "steer-route-direct" {
 		t.Fatalf("OpenWrt target lost shared sniff/resolve/route semantics: %#v", rules)
 	}
 }

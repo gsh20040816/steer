@@ -57,13 +57,13 @@ macOS GUI/JSON ──────────┤
 
 ## OpenWrt 数据面
 
-主路径由 sing-box 1.14 TUN 的 `auto_route`、`strict_route`、`auto_redirect` 和 `dns_mode: hijack` 接管，包括普通 DNS 重定向。Steer 仅保留本机目的地址的 DNS 例外：PREROUTING 拦截 LAN 查询路由器自身，OUTPUT/SNAT 保留路由器本机查询本地 DNS 的原有覆盖。其他 DNS 重定向交给 sing-box，删除未使用的 nft 地址集合。路由器本机 UDP/123 仍明确直连。
+主路径由 sing-box 1.14 TUN 的 `auto_route`、`strict_route`、`auto_redirect` 和 `dns_mode: hijack` 接管，包括普通 DNS 重定向。Steer 仅保留本机目的地址的 DNS 例外：PREROUTING 拦截 LAN 查询路由器自身，OUTPUT/SNAT 保留路由器本机查询本地 DNS 的原有覆盖。其他 DNS 重定向交给 sing-box，删除未使用的 nft 地址集合。路由器本机 UDP/123 仍明确直连。ICMP echo（ping）不交给业务代理规则：编译器在 sniff 之前发出 `network=icmp` 的 `bypass`，Linux `auto_redirect` 预匹配阶段把它留在内核，已进入 TUN 的请求回退到 Direct。
 
 源 MAC 条件由 sing-box 1.14 的 `source_mac_address` route/DNS rule 原生匹配，不再创建专用 TProxy/MAC DNS 入口或策略路由。TUN 名称、地址、table、priority、mark、NFQUEUE 和兼容 DNS 端口由平台管理，不出现在 Canonical Intent。
 
 ## Linux 数据面
 
-Linux 支持 systemd 主机及其 VM/Docker 转发流量，不设置 `include_interface` 限制。TUN 启用 `dns_mode: hijack`，sing-box 负责普通 TCP/UDP 53 重定向和 systemd-resolved link DNS。Steer 将外部 PREROUTING/OUTPUT DNS 规则收窄到本机目的地址，并保留必要 SNAT 及专用入口访问保护，覆盖本机和 LAN 查询本地 DNS。源 MAC 条件由原生邻居解析匹配。不改 NetworkManager connection、`/etc/resolv.conf` 或 systemd-resolved drop-in，也不生成 MAC 策略路由。
+Linux 支持 systemd 主机及其 VM/Docker 转发流量，不设置 `include_interface` 限制。TUN 启用 `dns_mode: hijack`，sing-box 负责普通 TCP/UDP 53 重定向和 systemd-resolved link DNS。Steer 将外部 PREROUTING/OUTPUT DNS 规则收窄到本机目的地址，并保留必要 SNAT 及专用入口访问保护，覆盖本机和 LAN 查询本地 DNS。ICMP echo（ping）不交给业务代理规则：`auto_redirect` 预匹配对 `icmp` 执行内核 bypass，已进入 TUN 的请求回退到 Direct。这条规则不代表已验证 PMTUD。源 MAC 条件由原生邻居解析匹配。不改 NetworkManager connection、`/etc/resolv.conf` 或 systemd-resolved drop-in，也不生成 MAC 策略路由。
 
 `platform/linux` 固定自己的 TUN、DNS、table、priority、mark 和 NFQUEUE 资源；这些只保存在 generation 内部的 `platform.json`，不进入 Canonical Intent，也不存在用户可编辑的 `/etc/steer/platform.json`。Geo category 是共享 Intent 语义；两个 adapter 都使用包内 `/usr/share/steer/geodata-seed`。`internal/geodata` 以严格 manifest 精确解析 selector，并在切换运行态前校验所需 SRS 的普通文件类型、大小和 SHA-256。
 
@@ -75,7 +75,7 @@ Steer 不写全局 `dns.strategy`，也不写 DNS rule action 的 query-level `s
 
 macOS 使用 LaunchDaemon 下的 sing-box Darwin TUN，不使用 pf 或 Network Extension。TUN 启用 `dns_mode: hijack`；`_run` 看护核心，在 IPv4/IPv6 UDP/TCP DNS 入口可用后，将物理网络服务的系统 DNS 指向派生地址 `198.18.0.2`、`fdfe:dcba:9876::2`。按服务 UUID 先持久保存原 DNS，区分自动与手动；停止、核心退出和卸载时恢复。独立 control daemon 每 5 秒恢复已停止运行态留下的 journal，覆盖 SIGKILL 和重启恢复。用户后续改变 DNS 时放弃该服务的所有权，不强行覆盖。VPN 专用服务和搜索域不修改。
 
-TUN 使用默认公网路由和必要排除。已进入 TUN 的流量依次执行：① 明确 TCP/UDP 目标端口 53 `hijack-dns`；② 私网 Direct；③ sniff；④ resolve；⑤ 用户规则。不能保证应用硬编码的链路本地或直连 DNS 进入 TUN。网络轮询只接管新增物理服务，不读取 Saved、不创建 generation、不隐式 Apply。健康状态要求 DNS 地址经拥有 Steer 地址的本机 utun 路由、入口可用且当前 generation 的系统 DNS 接管已完成；这不代表所有 VPN 分域解析或加密 DNS 都经过 Steer。
+TUN 使用默认公网路由和必要排除。已进入 TUN 的流量依次执行：① 明确 TCP/UDP 目标端口 53 `hijack-dns`；② ICMP bypass/Direct；③ 私网 Direct；④ sniff；⑤ resolve；⑥ 用户规则。不能保证应用硬编码的链路本地或直连 DNS 进入 TUN。网络轮询只接管新增物理服务，不读取 Saved、不创建 generation、不隐式 Apply。健康状态要求 DNS 地址经拥有 Steer 地址的本机 utun 路由、入口可用且当前 generation 的系统 DNS 接管已完成；这不代表所有 VPN 分域解析或加密 DNS 都经过 Steer。
 
 ## Apply
 

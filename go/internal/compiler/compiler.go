@@ -248,7 +248,7 @@ func compileSingBox(intent model.Intent, target Target, dnsPaths []DNSPath, geoR
 		dnsServers = append(dnsServers, compileDNSPath(profiles[path.Profile], routes[path.Route], path, intent.Bootstrap.Strategy))
 	}
 
-	routeRules := make([]any, 0, 3+len(intent.Rules))
+	routeRules := make([]any, 0, 4+len(intent.Rules))
 	capture := target.DNSCapture
 	if capture.Mode == "" && len(capture.InboundTags) == 0 && len(target.DNSInboundTags) > 0 {
 		capture = DNSCapture{Mode: DNSCaptureInboundHijack, InboundTags: append([]string{}, target.DNSInboundTags...)}
@@ -264,6 +264,14 @@ func compileSingBox(intent model.Intent, target Target, dnsPaths []DNSPath, geoR
 				"inbound": capture.InboundTags, "network": []string{"tcp", "udp"}, "port": []uint16{53}, "action": "hijack-dns",
 			})
 		}
+	}
+	if directID := enabledDirectRouteID(intent); directID != "" {
+		// Linux auto_redirect otherwise captures ICMP echo into sing-box.
+		// Pre-match bypass keeps ping on the kernel path; ICMP echo
+		// that still arrives on TUN falls back to the required Direct route.
+		routeRules = append(routeRules, map[string]any{
+			"network": []string{"icmp"}, "action": "bypass", "outbound": routeTag(directID),
+		})
 	}
 	if len(target.DirectRouteAddress) > 0 {
 		for _, route := range intent.Routes {
@@ -765,6 +773,15 @@ func indexNodes(values []model.Node) map[string]model.Node {
 	}
 	return result
 }
+func enabledDirectRouteID(intent model.Intent) string {
+	for _, route := range intent.Routes {
+		if route.Enabled && route.Kind == "direct" {
+			return route.ID
+		}
+	}
+	return ""
+}
+
 func routeTag(id string) string               { return "steer-route-" + id }
 func nodeTag(id string) string                { return "steer-node-" + id }
 func localProxyTag(id string) string          { return "steer-local-" + id }
