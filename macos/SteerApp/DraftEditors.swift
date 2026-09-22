@@ -128,6 +128,8 @@ struct DraftItemEditor: View {
                 switch target.key {
                 case "nodes":
                     SharedNodeDraftForm(object: $object)
+                case "wireguard_tunnels":
+                    WireGuardDraftForm(object:$object)
                 case "routes":
                     RouteDraftForm(
                         model: model,
@@ -226,7 +228,8 @@ struct DraftItemEditor: View {
             }
         case "routes":
             let kind = draftString(value, "kind")
-            if !["direct", "block", "single"].contains(kind) { return "请选择路由类型" }
+            if !["direct", "block", "single", "wireguard"].contains(kind) { return "请选择路由类型" }
+            if kind == "wireguard", !model.draftItems(for:"wireguard_tunnels").contains(where: { $0.enabled && $0.identifier == draftString(value,"tunnel") }) { return "请选择已启用的 WireGuard 隧道" }
             if kind == "single" {
                 let nodeID = draftString(value, "node")
                 if let problem = model.nodeReferenceProblem(nodeID) { return "节点选择无效：\(problem)" }
@@ -668,18 +671,25 @@ private struct RouteDraftForm: View {
             if isSystemRoute {
                 LabeledContent("类型", value: kind == "direct" ? "Direct" : "Reject")
             } else {
-                LabeledContent("类型") {
-                    if kind == "single" {
-                        Text("Single 节点")
-                    } else {
-                        Text("缺失（需修复）").foregroundStyle(.red)
-                    }
+                Picker("类型", selection: stringBinding($object,"kind",required:true)) {
+                    Text("Single 节点").tag("single")
+                    Text("WireGuard 隧道").tag("wireguard")
                 }
             }
             if isSystemRoute {
                 Text("系统路由类型固定；可以修改显示名称。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+        }
+        if kind == "wireguard" {
+            Section("WireGuard 出口") {
+                Picker("隧道",selection:stringBinding($object,"tunnel",required:true)) {
+                    Text("请选择隧道").tag("")
+                    ForEach(model.draftItems(for:"wireguard_tunnels").filter(\.enabled)) { item in
+                        Text(item.title).tag(item.identifier)
+                    }
+                }
             }
         }
         if kind == "single" {
@@ -988,6 +998,12 @@ private struct RuleDraftForm: View {
         RuleDecisionSection(model: model, object: $object)
 
         Section("目标匹配") {
+            Toggle("目标使用出口的 AllowedIPs",isOn:boolBinding($object,"allowed_ips"))
+            if draftBool(object,"allowed_ips") {
+                Text("选择 WireGuard 出口；网段随隧道配置更新。全网段会接管后续流量。请清空手工 IP match。").font(.caption).foregroundStyle(.secondary)
+                Text(model.wireGuardAllowedIPs(routeID:draftString(object,"route")).joined(separator:"\n"))
+                    .font(.caption.monospaced()).textSelection(.enabled)
+            }
             MatchListEditor(
                 label: "Domain match",
                 key: "domain_match",
@@ -1064,7 +1080,7 @@ private struct SubscriptionDraftForm: View {
     }
 }
 
-private func stringBinding(
+func stringBinding(
     _ object: Binding<[String: JSONValue]>,
     _ key: String,
     required: Bool = false
@@ -1083,7 +1099,7 @@ private func stringBinding(
     )
 }
 
-private func boolBinding(
+func boolBinding(
     _ object: Binding<[String: JSONValue]>,
     _ key: String
 ) -> Binding<Bool> {
@@ -1097,7 +1113,7 @@ private func boolBinding(
     )
 }
 
-private func intBinding(
+func intBinding(
     _ object: Binding<[String: JSONValue]>,
     _ key: String
 ) -> Binding<Int> {
@@ -1210,7 +1226,7 @@ private func validPort(_ value: Int) -> Bool {
 }
 
 private func ruleHasMatch(_ object: [String: JSONValue]) -> Bool {
-    RuleDraftPolicy.matchKeys.contains { object[$0]?.arrayValue?.isEmpty == false }
+    object["allowed_ips"]?.boolValue == true || RuleDraftPolicy.matchKeys.contains { object[$0]?.arrayValue?.isEmpty == false }
 }
 
 private func normalizedObject(_ source: [String: JSONValue], key: String) -> [String: JSONValue] {
@@ -1242,6 +1258,7 @@ private func normalizedObject(_ source: [String: JSONValue], key: String) -> [St
         object.removeValue(forKey: "node")
         object.removeValue(forKey: "detour")
     }
+    if key == "routes", draftString(object,"kind") != "wireguard" { object.removeValue(forKey:"tunnel") }
     if key == "nodes", draftString(object, "type") == "tor" {
         object.removeValue(forKey: "server")
         object.removeValue(forKey: "server_port")

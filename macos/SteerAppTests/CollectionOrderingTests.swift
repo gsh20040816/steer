@@ -129,7 +129,7 @@ final class CollectionOrderingTests: XCTestCase {
         XCTAssertEqual(document.schemaVersion, 1)
         XCTAssertEqual(Set(document.collections), Set(SteerUISpec.contract.collectionOrdering.keys))
         XCTAssertEqual(SteerUISpec.orderingPolicy(for: "nodes")?.groupField, "source_subscription")
-        XCTAssertEqual(SteerUISpec.orderingPolicy(for: "routes")?.movableKinds, ["single"])
+        XCTAssertEqual(SteerUISpec.orderingPolicy(for: "routes")?.movableKinds, ["single", "wireguard"])
         XCTAssertEqual(SteerUISpec.orderingPolicy(for: "rules")?.pinnedLastBooleanField, "default")
     }
 

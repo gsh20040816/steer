@@ -58,6 +58,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runValidate(args[1:], stdout)
 	case "compile":
 		return runCompile(args[1:], stdout)
+	case "parse-wireguard":
+		return runParseWireGuard(args[1:], stdout)
 	case "parse-nodes":
 		return runParseNodes(args[1:], stdout)
 	case "export-node":

@@ -113,6 +113,7 @@ func ValidateWithOptions(intent Intent, options ValidationOptions) Validation {
 		register("rule", value.ID)
 	}
 
+	validateWireGuard(intent, register, err, warn)
 	nodes := make(map[string]Node, len(intent.Nodes))
 	for _, node := range intent.Nodes {
 		nodes[node.ID] = node
@@ -136,8 +137,8 @@ func ValidateWithOptions(intent Intent, options ValidationOptions) Validation {
 		if !route.Enabled {
 			continue
 		}
-		if !oneOf(route.Kind, "direct", "block", "single") {
-			err("UNSUPPORTED_ROUTE_KIND", "route", route.ID, "kind", "route kind must be direct, block or single")
+		if !oneOf(route.Kind, "direct", "block", "single", "wireguard") {
+			err("UNSUPPORTED_ROUTE_KIND", "route", route.ID, "kind", "route kind must be direct, block, single or wireguard")
 			continue
 		}
 		if route.Kind == "direct" {
@@ -642,6 +643,9 @@ func validateLocalProxy(value LocalProxy, err issueFn) {
 // widen the reject beyond the rule's canonical match.
 func DNSProjectionUnsupportedConditions(value Rule) []string {
 	conditions := []string{}
+	if value.AllowedIPs {
+		conditions = append(conditions, "allowed_ips")
+	}
 	if len(value.IPMatch) > 0 {
 		conditions = append(conditions, "ip_match")
 	}
@@ -658,7 +662,7 @@ func DNSProjectionUnsupportedConditions(value Rule) []string {
 }
 
 func validateRule(value Rule, routes map[string]Route, dnsProfiles map[string]DNSProfile, localProxies map[string]LocalProxy, err, warn issueFn) {
-	hasMatch := len(value.Inbound)+len(value.DomainMatch)+len(value.IPMatch)+len(value.SourceIPCIDR)+len(value.SourceMACAddress)+len(value.Network)+len(value.Protocol)+len(value.Port) > 0
+	hasMatch := value.AllowedIPs || len(value.Inbound)+len(value.DomainMatch)+len(value.IPMatch)+len(value.SourceIPCIDR)+len(value.SourceMACAddress)+len(value.Network)+len(value.Protocol)+len(value.Port) > 0
 	if value.Default && hasMatch {
 		err("DEFAULT_HAS_MATCH", "rule", value.ID, "", "Default cannot have match conditions")
 	}

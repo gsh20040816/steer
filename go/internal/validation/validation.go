@@ -14,6 +14,7 @@ import (
 )
 
 type Options struct {
+	WireGuard             bool
 	ReservedListeners     []model.Listener
 	IPv6WildcardDualStack bool
 	GeoDataDirectory      string
@@ -26,6 +27,14 @@ func Validate(value model.Intent, options Options) model.Validation {
 		ReservedListeners:     options.ReservedListeners,
 		IPv6WildcardDualStack: options.IPv6WildcardDualStack,
 	})
+	if !options.WireGuard {
+		for _, t := range value.WireGuardTunnels {
+			if t.Enabled {
+				result.Errors = append(result.Errors, model.Issue{Code: "PLATFORM_UNSUPPORTED_WIREGUARD", ObjectType: "wireguard_tunnel", ObjectID: t.ID, Message: "managed WireGuard tunnels currently require macOS"})
+			}
+		}
+		result.OK = len(result.Errors) == 0
+	}
 	references := geoReferences(value)
 	if len(references) == 0 {
 		return result

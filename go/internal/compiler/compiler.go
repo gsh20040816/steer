@@ -92,7 +92,7 @@ func Compile(intent model.Intent, options Options) Output {
 		RequiredCapabilities: requiredCapabilities(intent, options.Target),
 		GeoRuleSets:          geoSets,
 	}
-	output.SingBox = compileSingBox(intent, options.Target, dnsPaths, geoSets, options.StateDirectory)
+	output.SingBox = compileSingBox(expandWireGuardRules(intent), options.Target, dnsPaths, geoSets, options.StateDirectory)
 	output.RuntimeDigest = RuntimeDigest(intent, output.SingBox)
 	return output
 }
@@ -127,6 +127,11 @@ func digestValue(value any) string {
 
 func requiredCapabilities(intent model.Intent, target Target) []string {
 	capabilities := append([]string{}, target.RequiredCapabilities...)
+	for _, tunnel := range intent.WireGuardTunnels {
+		if tunnel.Enabled {
+			capabilities = append(capabilities, "with_wireguard", "with_gvisor")
+		}
+	}
 	for _, node := range intent.Nodes {
 		if !node.Enabled {
 			continue
@@ -238,6 +243,8 @@ func compileSingBox(intent model.Intent, target Target, dnsPaths []DNSPath, geoR
 			// sing-box deprecated the legacy block outbound in 1.11; rules
 			// referencing this route are lowered to the reject action below.
 			continue
+		case "wireguard":
+			outbounds = append(outbounds, map[string]any{"type": "selector", "tag": routeTag(route.ID), "outbounds": []string{wireGuardTag(route.Tunnel)}})
 		case "single":
 			outbounds = append(outbounds, compileRouteOutbound(route, nodes))
 		}
@@ -251,7 +258,9 @@ func compileSingBox(intent model.Intent, target Target, dnsPaths []DNSPath, geoR
 		dnsServers = append(dnsServers, compileDNSPath(profiles[path.Profile], routes[path.Route], path, intent.Bootstrap.Strategy))
 	}
 
-	routeRules := make([]any, 0, 4+len(intent.Rules))
+	endpoints, wireGuardAccess := compileWireGuard(intent)
+	routeRules := append([]any{}, wireGuardAccess...)
+	var privateFallback []any
 	capture := target.DNSCapture
 	if capture.Mode == "" && len(capture.InboundTags) == 0 && len(target.DNSInboundTags) > 0 {
 		capture.Mode = DNSCaptureInboundHijack
@@ -274,7 +283,7 @@ func compileSingBox(intent model.Intent, target Target, dnsPaths []DNSPath, geoR
 			"inbound": capture.TUNInboundTags, "network": []string{"tcp", "udp"}, "port": []uint16{53}, "action": "hijack-dns",
 		})
 	}
-	if directID := enabledDirectRouteID(intent); directID != "" {
+	if directID := enabledDirectRouteID(intent); directID != "" && len(endpoints) == 0 {
 		// Linux auto_redirect otherwise captures ICMP echo into sing-box.
 		// Pre-match bypass keeps ping on the kernel path; ICMP echo
 		// that still arrives on TUN falls back to the required Direct route.
@@ -291,7 +300,11 @@ func compileSingBox(intent model.Intent, target Target, dnsPaths []DNSPath, geoR
 				if len(target.SniffInboundTags) > 0 {
 					direct["inbound"] = target.SniffInboundTags
 				}
-				routeRules = append(routeRules, direct)
+				if len(endpoints) > 0 {
+					privateFallback = append(privateFallback, direct)
+				} else {
+					routeRules = append(routeRules, direct)
+				}
 				break
 			}
 		}
@@ -304,6 +317,15 @@ func compileSingBox(intent model.Intent, target Target, dnsPaths []DNSPath, geoR
 	// already-addressed TUN path as a no-op before normal route evaluation.
 	routeRules = append(routeRules, map[string]any{"inbound": sniffInboundTags, "action": "resolve"})
 	dnsRules := []any{}
+	for _, t := range intent.WireGuardTunnels {
+		if t.Enabled {
+			for _, p := range t.Peers {
+				if p.Server != "" {
+					dnsRules = append(dnsRules, map[string]any{"domain": []string{p.Server}, "action": "route", "server": "steer-dns-bootstrap", "disable_cache": true})
+				}
+			}
+		}
+	}
 	var defaultRule model.Rule
 	for _, rule := range intent.Rules {
 		if !rule.Enabled {
@@ -334,6 +356,7 @@ func compileSingBox(intent model.Intent, target Target, dnsPaths []DNSPath, geoR
 			dnsRules = append(dnsRules, dnsMatch)
 		}
 	}
+	routeRules = append(routeRules, privateFallback...)
 	finalDNS := "steer-dns-bootstrap"
 	if routes[defaultRule.Route].Kind == "block" {
 		dnsRules = append(dnsRules, map[string]any{"action": "reject"})
@@ -380,6 +403,9 @@ func compileSingBox(intent model.Intent, target Target, dnsPaths []DNSPath, geoR
 		"inbounds":  inbounds,
 		"outbounds": outbounds,
 		"route":     routeOptions,
+	}
+	if len(endpoints) > 0 {
+		result["endpoints"] = endpoints
 	}
 	if len(geoRuleSets) > 0 {
 		result["http_clients"] = []any{map[string]any{"tag": "steer-geodata"}}

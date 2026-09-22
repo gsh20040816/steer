@@ -22,3 +22,12 @@ func TestParseRejectsMissingTagButDoesNotPinVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestUserspaceWireGuardRequiresBothBuildTags(t *testing.T) {
+	for _, tags := range []string{"with_gvisor", "with_wireguard", "with_wireguard,with_gvisor"} {
+		result := Parse("sing-box version 1.14.1\nTags: "+tags+"\n", []string{"with_wireguard", "with_gvisor"})
+		if result.OK != (tags == "with_wireguard,with_gvisor") {
+			t.Fatalf("unexpected capabilities: %+v", result)
+		}
+	}
+}

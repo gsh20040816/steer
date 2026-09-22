@@ -17,7 +17,8 @@ enum GeneratedUISpec {
       "nodes": "node",
       "routes": "route",
       "rules": "rule",
-      "subscriptions": "subscription"
+      "subscriptions": "subscription",
+      "wireguard_tunnels": "wg"
     }
   },
   "creation_defaults": {
@@ -65,6 +66,13 @@ enum GeneratedUISpec {
       "enabled": true,
       "update_interval": "6h",
       "url": ""
+    },
+    "wireguard_tunnels": {
+      "access": [],
+      "address": [],
+      "enabled": true,
+      "peers": [],
+      "private_key": ""
     }
   },
   "creation_required_fields": {
@@ -118,6 +126,13 @@ enum GeneratedUISpec {
       "enabled",
       "url",
       "update_interval"
+    ],
+    "wireguard_tunnels": [
+      "id",
+      "enabled",
+      "address",
+      "private_key",
+      "peers"
     ]
   },
   "input_formats": {
@@ -1120,6 +1135,10 @@ enum GeneratedUISpec {
     {
       "value": "single",
       "label": "Single node"
+    },
+    {
+      "value": "wireguard",
+      "label": "WireGuard"
     }
   ],
   "dns_protocols": [
@@ -1255,6 +1274,7 @@ enum GeneratedUISpec {
     }
   ],
   "rule_match_fields": [
+    "allowed_ips",
     "inbound",
     "domain_match",
     "ip_match",
@@ -1265,12 +1285,19 @@ enum GeneratedUISpec {
     "port"
   ],
   "rule_connection_only_fields": [
+    "allowed_ips",
     "ip_match",
     "network",
     "protocol",
     "port"
   ],
   "collection_references": [
+    {
+      "target_collection": "wireguard_tunnels",
+      "source_collection": "routes",
+      "source_object_type": "route",
+      "field": "tunnel"
+    },
     {
       "target_collection": "nodes",
       "source_collection": "routes",
@@ -1334,7 +1361,8 @@ enum GeneratedUISpec {
         "down"
       ],
       "movable_kinds": [
-        "single"
+        "single",
+        "wireguard"
       ]
     },
     "rules": {
@@ -1346,6 +1374,13 @@ enum GeneratedUISpec {
       "pinned_last_boolean_field": "default"
     },
     "subscriptions": {
+      "stable_id_field": "id",
+      "move_actions": [
+        "up",
+        "down"
+      ]
+    },
+    "wireguard_tunnels": {
       "stable_id_field": "id",
       "move_actions": [
         "up",

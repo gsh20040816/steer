@@ -9,6 +9,7 @@ enum AppPage: String, CaseIterable, Identifiable {
     case general = "General"
     case configuration = "Configuration"
     case nodes = "Nodes"
+    case wireguard = "WireGuard"
     case routes = "Routes"
     case dns = "DNS"
     case rules = "Rules"
@@ -25,6 +26,7 @@ enum AppPage: String, CaseIterable, Identifiable {
         case .general: return "switch.2"
         case .configuration: return "doc.text"
         case .nodes: return "point.3.connected.trianglepath.dotted"
+        case .wireguard: return "lock.shield"
         case .routes: return "arrow.triangle.branch"
         case .dns: return "network"
         case .rules: return "list.number"
@@ -63,7 +65,14 @@ extension JSONValue {
     }
 }
 
+struct WireGuardPeerStatus: Decodable, Sendable {
+    let tunnel: String
+    let server: String
+    let address: String?
+    let error: String?
+}
 struct RuntimeStatus: Decodable, Sendable {
+    var wireguard: [WireGuardPeerStatus] = []
     var healthy = false
     var generationID = ""
     var intentDigest = ""
@@ -75,6 +84,7 @@ struct RuntimeStatus: Decodable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        wireguard = try container.decodeIfPresent([WireGuardPeerStatus].self, forKey:.wireguard) ?? []
         healthy = try container.decodeIfPresent(Bool.self, forKey: .healthy) ?? false
         generationID = try container.decodeIfPresent(String.self, forKey: .generationID) ?? ""
         intentDigest = try container.decodeIfPresent(String.self, forKey: .intentDigest) ?? ""
@@ -84,6 +94,7 @@ struct RuntimeStatus: Decodable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
+        case wireguard
         case healthy
         case generationID = "generation_id"
         case intentDigest = "intent_digest"
@@ -649,7 +660,7 @@ indirect enum JSONValue: Codable, Sendable {
 }
 
 enum RuleDraftPolicy {
-    static let matchKeys = [
+    static let matchKeys = ["allowed_ips",
         "inbound", "domain_match", "ip_match", "source_ip_cidr", "source_mac_address",
         "network", "protocol", "port",
     ]
@@ -828,6 +839,7 @@ protocol BackendClient: Sendable {
     func overviewState() async throws -> OverviewLifecycleState
     func logs() async throws -> String
     func versions() async throws -> RuntimeVersions
+    func parseWireGuard(document: String) async throws -> WireGuardImportResult
     func parseNodes(document: String) async throws -> NodeImportResult
     func exportNode(node: JSONValue) async throws -> String
     func probe(kind: String, nodeID: String?, routeID: String?, download: Bool) async throws -> ProbeLatestResult
@@ -840,6 +852,7 @@ protocol BackendClient: Sendable {
 }
 
 extension BackendClient {
+    func parseWireGuard(document: String) async throws -> WireGuardImportResult { throw BackendClientError.helperUnavailable }
     func setEnabled(_ enabled: Bool) async throws -> (ApplyOutcome, ConfigurationSnapshot) {
         throw BackendClientError.helperUnavailable
     }
@@ -1145,6 +1158,16 @@ struct HelperBackendClient: BackendClient {
             geoVersion: manifest?.upstream.version ?? "—",
             geoRuleCount: manifest?.rules.count
         )
+    }
+
+    func parseWireGuard(document: String) async throws -> WireGuardImportResult {
+        let helper = URL(fileURLWithPath: Self.installedHelperPath)
+        try requireExecutable(helper)
+        return try await withTemporaryDocument(document) { url in
+            let result = try await Self.execute(helper, ["parse-wireguard", "--input", url.path])
+            guard result.status == 0 else { throw result.error }
+            return try JSONDecoder().decode(WireGuardImportResult.self, from: result.stdout)
+        }
     }
 
     func parseNodes(document: String) async throws -> NodeImportResult {
@@ -1840,6 +1863,7 @@ final class AppModel: ObservableObject {
         switch issue.objectType {
         case "steer", "bootstrap": page = .general
         case "node": page = .nodes
+        case "wireguard_tunnel": page = .wireguard
         case "route": page = .routes
         case "dns_profile": page = .dns
         case "local_proxy": page = .proxies
@@ -2631,6 +2655,41 @@ final class AppModel: ObservableObject {
         return nil
     }
 
+    func wireGuardAllowedIPs(routeID:String) -> [String] {
+        guard let root=parseDraft()?.objectValue,
+              let route=(root["routes"]?.arrayValue ?? []).compactMap(\.objectValue).first(where: { $0["id"]?.stringValue == routeID }),
+              let tunnelID=route["tunnel"]?.stringValue,
+              let tunnel=(root["wireguard_tunnels"]?.arrayValue ?? []).compactMap(\.objectValue).first(where: { $0["id"]?.stringValue == tunnelID }) else { return [] }
+        return (tunnel["peers"]?.arrayValue ?? []).flatMap { ($0.objectValue?["allowed_ips"]?.arrayValue ?? []).compactMap(\.stringValue) }
+    }
+
+    func previewWireGuard(_ document: String) async throws -> WireGuardImportResult {
+        try await backend.parseWireGuard(document: document)
+    }
+
+    func importWireGuard(_ imported: WireGuardImportResult, name: String, createRule: Bool) -> Bool {
+        guard canEditDraft, var root = parseDraft()?.objectValue,
+              var tunnel = imported.tunnel.objectValue else { return false }
+        let suffix = String(UUID().uuidString.lowercased().prefix(8))
+        let tunnelID = "wg-" + suffix, routeID = "wg-route-" + suffix
+        tunnel["id"] = .string(tunnelID)
+        tunnel["name"] = .string(name.isEmpty ? "WireGuard" : name)
+        var tunnels = root["wireguard_tunnels"]?.arrayValue ?? []
+        tunnels.append(.object(tunnel)); root["wireguard_tunnels"] = .array(tunnels)
+        var routes = root["routes"]?.arrayValue ?? []
+        routes.append(.object(["id":.string(routeID), "enabled":.bool(true), "name":tunnel["name"]!, "kind":.string("wireguard"), "tunnel":.string(tunnelID)]))
+        root["routes"] = .array(routes)
+        if createRule {
+            var rules = root["rules"]?.arrayValue ?? []
+            guard let index = rules.firstIndex(where: { $0.objectValue?["default"]?.boolValue == true }),
+                  let dns = rules[index].objectValue?["dns_profile"] else { return false }
+            rules.insert(.object(["id":.string("wg-rule-"+suffix), "enabled":.bool(true), "default":.bool(false), "name":.string((name.isEmpty ? "WireGuard" : name)+" AllowedIPs"), "route":.string(routeID), "dns_profile":dns, "allowed_ips":.bool(true)]), at:index)
+            root["rules"] = .array(rules)
+        }
+        writeDraft(.object(root), context:"wireguard_tunnels")
+        return true
+    }
+
     func newDraftItemObject(for key: String) -> [String: JSONValue]? {
         defaultItem(for: key).objectValue
     }
@@ -3098,8 +3157,10 @@ final class AppModel: ObservableObject {
             return port.isEmpty ? listen : "\(listen):\(port)"
         }
         if let url = object["url"]?.stringValue { return url }
+        if key == "wireguard_tunnels" { return "\(object["peers"]?.arrayValue?.count ?? 0) Peers · \(object["access"]?.arrayValue?.count ?? 0) 个本机服务" }
         if key == "routes" {
             let kind = object["kind"]?.stringValue ?? ""
+            if kind == "wireguard" { return referencedTitle(key:"wireguard_tunnels", identifier:object["tunnel"]?.stringValue) }
             if kind == "direct" { return "系统直连" }
             if kind == "block" { return "拒绝连接" }
             let node = referencedTitle(key: "nodes", identifier: object["node"]?.stringValue)
@@ -3109,7 +3170,7 @@ final class AppModel: ObservableObject {
         }
         if key == "rules" {
             let labels = [
-                "inbound": "本地入口", "domain_match": "域名", "ip_match": "目标 IP",
+                "allowed_ips":"出口 AllowedIPs", "inbound": "本地入口", "domain_match": "域名", "ip_match": "目标 IP",
                 "source_ip_cidr": "源 IP", "source_mac_address": "源 MAC",
                 "network": "网络", "protocol": "协议", "port": "端口",
             ]

@@ -83,3 +83,7 @@ sing-box 负责 Darwin utun 和 `auto_route`；macOS plan 不设置 `auto_redire
 Geo 不是 macOS 语义限制。正式 DMG 已内置并校验 tag workflow 使用的精确 `geodata-seed/`；源码开发需把相同 seed 放入 `/Library/Application Support/Steer/geodata-seed/`。Apply 会按 manifest 校验所需 SRS；目标机不安装 geoview，也不读取 DAT。
 
 从旧版升级到 0.9.13 后，在“系统”页更新/修复系统组件，使常驻 control 服务与新客户端同步。新启停命令只修改最新 Saved 的 enabled，订阅自动更新不会导致开关弹出整份配置覆盖选择；普通 Save/Save and Apply 继续执行版本冲突保护。
+
+## WireGuard
+
+0.11.1 起支持原生隧道管理、`.conf` 导入、AllowedIPs 动态规则和远端 TCP/UDP 本机服务访问。Endpoint 地址变化通过核心重载生效，可能中断现有连接。配置、刷新和平台边界详见 [WireGuard](../docs/WIREGUARD.md)。

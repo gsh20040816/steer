@@ -84,7 +84,16 @@ func (backend *Backend) runSupervised(ctx context.Context, config string, manage
 	}
 	readyPath := filepath.Join(backend.options.RunDirectory, "dns-ready.json")
 	_ = os.Remove(readyPath)
-	cmd := exec.Command(backend.options.SingBoxBinary, "run", "-c", config)
+	runConfig := config
+	wgRuntime, err := prepareWireGuardRuntime(config, backend.options.RunDirectory)
+	if err != nil {
+		return err
+	}
+	if wgRuntime != nil {
+		runConfig = wgRuntime.path
+		defer wgRuntime.close()
+	}
+	cmd := exec.Command(backend.options.SingBoxBinary, "run", "-c", runConfig)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
 		return err
@@ -92,7 +101,19 @@ func (backend *Backend) runSupervised(ctx context.Context, config string, manage
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	exited := false
+	monitorCtx, stopMonitor := context.WithCancel(ctx)
+	monitorDone := make(chan struct{})
+	if wgRuntime != nil {
+		go func() {
+			defer close(monitorDone)
+			wgRuntime.monitor(monitorCtx, func() error { return cmd.Process.Signal(syscall.SIGHUP) })
+		}()
+	} else {
+		close(monitorDone)
+	}
 	defer func() {
+		stopMonitor()
+		<-monitorDone
 		_ = os.Remove(readyPath)
 		restoreCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		result = errors.Join(result, manager.Restore(restoreCtx))

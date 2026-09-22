@@ -19,6 +19,7 @@ func Validate(value model.Intent) model.Validation {
 func ValidateWithGeoDataDirectory(value model.Intent, seedDirectory string) model.Validation {
 	seedDirectory = normalizeGeoDataDirectory(seedDirectory)
 	validation := platformvalidation.Validate(value, platformvalidation.Options{
+		WireGuard:             true,
 		IPv6WildcardDualStack: true,
 		GeoDataDirectory:      seedDirectory,
 	})

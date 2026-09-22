@@ -19,7 +19,7 @@ var versionPattern = regexp.MustCompile(`(?m)^sing-box version ([0-9]+\.[0-9]+\.
 
 var knownCapabilities = map[string]bool{
 	"tun": true, "auto_route": true, "auto_redirect": true, "tproxy": true,
-	"with_quic": true, "dns_quic": true, "with_utls": true,
+	"with_wireguard": true, "with_gvisor": true, "with_quic": true, "dns_quic": true, "with_utls": true,
 }
 
 func Parse(output string, required []string) Report {
@@ -54,8 +54,8 @@ func Parse(output string, required []string) Report {
 		switch capability {
 		case "with_quic", "dns_quic":
 			requiredTag = "with_quic"
-		case "with_utls":
-			requiredTag = "with_utls"
+		case "with_utls", "with_wireguard", "with_gvisor":
+			requiredTag = capability
 		}
 		if requiredTag != "" && !tagSet[requiredTag] {
 			report.Errors = append(report.Errors, "sing-box build is missing tag "+requiredTag+" required by current intent")

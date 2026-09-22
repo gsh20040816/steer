@@ -478,6 +478,12 @@ jobs:
           [ "$#" -ge 1 ]
           install -m 0644 "$1" "$RUNNER_TEMP/steer-macos-binaries/sing-box-LICENSE"
 
+      - name: Verify WireGuard outbound and remote local-service access
+        working-directory: go
+        run: |
+          STEER_WG_SING_BOX="$RUNNER_TEMP/steer-macos-binaries/sing-box" \
+            go test ./internal/wireguard -run TestNativeWireGuardRemoteAccess -count=1 -v
+
       - name: Assemble, sign, and create native DMG
         env:
           STEER_APP_BINARY: ${{ runner.temp }}/steer-app-placeholder

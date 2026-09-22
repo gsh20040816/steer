@@ -6,14 +6,15 @@ package intent
 const SchemaVersion = 9
 
 type Intent struct {
-	Main          Main           `json:"main"`
-	Bootstrap     Bootstrap      `json:"bootstrap"`
-	Nodes         []Node         `json:"nodes"`
-	Subscriptions []Subscription `json:"subscriptions"`
-	Routes        []Route        `json:"routes"`
-	DNSProfiles   []DNSProfile   `json:"dns_profiles"`
-	LocalProxies  []LocalProxy   `json:"local_proxies"`
-	Rules         []Rule         `json:"rules"`
+	WireGuardTunnels []WireGuardTunnel `json:"wireguard_tunnels,omitempty"`
+	Main             Main              `json:"main"`
+	Bootstrap        Bootstrap         `json:"bootstrap"`
+	Nodes            []Node            `json:"nodes"`
+	Subscriptions    []Subscription    `json:"subscriptions"`
+	Routes           []Route           `json:"routes"`
+	DNSProfiles      []DNSProfile      `json:"dns_profiles"`
+	LocalProxies     []LocalProxy      `json:"local_proxies"`
+	Rules            []Rule            `json:"rules"`
 }
 
 type Main struct {
@@ -128,6 +129,7 @@ type Route struct {
 	Enabled bool   `json:"enabled"`
 	Name    string `json:"name,omitempty"`
 	Kind    string `json:"kind"`
+	Tunnel  string `json:"tunnel,omitempty"`
 	Node    string `json:"node,omitempty"`
 	Detour  string `json:"detour,omitempty"`
 }
@@ -158,6 +160,7 @@ type LocalProxy struct {
 type Rule struct {
 	ID               string   `json:"id"`
 	Enabled          bool     `json:"enabled"`
+	AllowedIPs       bool     `json:"allowed_ips,omitempty"`
 	Default          bool     `json:"default"`
 	Name             string   `json:"name,omitempty"`
 	DNSProfile       string   `json:"dns_profile"`

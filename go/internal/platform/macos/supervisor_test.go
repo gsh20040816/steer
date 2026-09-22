@@ -46,6 +46,9 @@ func TestSupervisorRestoresDNSOnCoreExitAndCancellation(t *testing.T) {
 	for _, stop := range []string{"core-exit", "cancel"} {
 		t.Run(stop, func(t *testing.T) {
 			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "sing-box.json"), []byte(`{}`), 0600); err != nil {
+				t.Fatal(err)
+			}
 			binary := filepath.Join(root, "core")
 			// Wait for a test-controlled file to simulate an unexpected core exit.
 			script := "#!/bin/sh\nwhile [ ! -f '" + root + "/stop' ]; do sleep 0.05; done\nexit 7\n"
@@ -121,6 +124,9 @@ func TestSupervisorKeepsCoreAliveAcrossHealthFailures(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "sing-box.json"), []byte(`{}`), 0600); err != nil {
+				t.Fatal(err)
+			}
 			binary := filepath.Join(root, "core")
 			if err := os.WriteFile(binary, []byte("#!/bin/sh\nwhile :; do sleep 0.05; done\n"), 0o700); err != nil {
 				t.Fatal(err)

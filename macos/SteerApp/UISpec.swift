@@ -421,6 +421,7 @@ enum SteerUISpec {
     static func ruleSummaryTokens(_ object: [String: JSONValue]) -> [String] {
         if object["default"]?.boolValue == true { return ["default"] }
         return contract.ruleMatchFields.compactMap { field in
+            if field == "allowed_ips", object[field]?.boolValue == true { return "allowed_ips:1" }
             let values = object[field]?.arrayValue ?? []
             guard !values.isEmpty else { return nil }
             if field == "network" || field == "protocol" {
@@ -431,7 +432,7 @@ enum SteerUISpec {
     }
 
     static func ruleDNSContinues(_ object: [String: JSONValue]) -> Bool {
-        let populated = contract.ruleMatchFields.filter { !(object[$0]?.arrayValue ?? []).isEmpty }
+        let populated = contract.ruleMatchFields.filter { object[$0]?.boolValue == true || !(object[$0]?.arrayValue ?? []).isEmpty }
         return !populated.isEmpty && populated.allSatisfy(contract.ruleConnectionOnlyFields.contains)
     }
 

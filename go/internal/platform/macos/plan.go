@@ -31,16 +31,29 @@ var routeExcludeIPv6 = []string{
 }
 
 type Plan struct {
-	SchemaVersion int       `json:"schema_version"`
-	Resources     Resources `json:"resources"`
+	WireGuardRoutes []string  `json:"wireguard_routes,omitempty"`
+	SchemaVersion   int       `json:"schema_version"`
+	Resources       Resources `json:"resources"`
 }
 
 type Resources struct {
 	TunAddresses []string `json:"tun_addresses"`
 }
 
-func NewPlan(_ model.Intent) Plan {
-	return Plan{SchemaVersion: 3, Resources: Resources{
+func NewPlan(intent model.Intent) Plan {
+	var prefixes []string
+	seen := map[string]bool{}
+	for _, t := range intent.WireGuardTunnels {
+		if t.Enabled {
+			for _, p := range t.AllowedPrefixes() {
+				if p != "0.0.0.0/0" && p != "::/0" && !seen[p] {
+					prefixes = append(prefixes, p)
+					seen[p] = true
+				}
+			}
+		}
+	}
+	return Plan{WireGuardRoutes: prefixes, SchemaVersion: 3, Resources: Resources{
 		TunAddresses: []string{"198.18.0.1/30", "fdfe:dcba:9876::1/126"},
 	}}
 }
@@ -51,7 +64,7 @@ func NewPlan(_ model.Intent) Plan {
 // extra private routes are unnecessary. Private packets that do enter TUN
 // are sent Direct after the explicit port-53 rule.
 func (plan Plan) CompilerTarget() compiler.Target {
-	routes := append([]string{}, defaultRouteAddress...)
+	routes := append(append([]string{}, defaultRouteAddress...), plan.WireGuardRoutes...)
 	excluded := append(append([]string{}, routeExcludeIPv4...), routeExcludeIPv6...)
 	return compiler.Target{
 		Inbounds: []any{

@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "collections": [
+    "wireguard_tunnels",
     "nodes",
     "routes",
     "dns_profiles",

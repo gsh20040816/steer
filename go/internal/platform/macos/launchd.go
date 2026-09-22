@@ -141,6 +141,7 @@ func (backend *Backend) ReadStatus(ctx context.Context) Status {
 	}
 	current, value, err := backend.paths().LoadCurrentIntent()
 	if err == nil {
+		status.WireGuard = backend.readWireGuardStatus(filepath.Join(backend.options.RunDirectory, "generations", current.Directory, "sing-box.json"))
 		status.GenerationID = current.GenerationID
 		status.IntentDigest = current.IntentDigest
 		if file, openErr := os.Open(filepath.Join(backend.options.RunDirectory, "generations", current.Directory, "sing-box.json")); openErr == nil {

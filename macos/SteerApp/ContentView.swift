@@ -128,6 +128,7 @@ private struct SidebarView: View {
                     ForEach(group.items) { item in
                         if let page = AppPage(contractKey: item.key) {
                             sidebarRow(page, count: count(for: page))
+                            if page == .nodes { sidebarRow(.wireguard, count: count(for:.wireguard)) }
                         }
                     }
                 }
@@ -173,6 +174,7 @@ private struct SidebarView: View {
     private func count(for page: AppPage) -> Int? {
         switch page {
         case .nodes: return model.itemCount(for: "nodes")
+        case .wireguard: return model.itemCount(for:"wireguard_tunnels")
         case .routes: return model.itemCount(for: "routes")
         case .dns: return model.itemCount(for: "dns_profiles")
         case .proxies: return model.itemCount(for: "local_proxies")
@@ -203,6 +205,8 @@ struct PageView: View {
                 ConfigurationView(model: model)
             case .nodes:
                 DraftCollectionView(model: model, descriptor: .nodes)
+            case .wireguard:
+                WireGuardPage(model:model)
             case .routes:
                 DraftCollectionView(model: model, descriptor: .routes)
             case .dns:
@@ -526,6 +530,7 @@ struct DraftCollectionDescriptor {
     var ordered: Bool { SteerUISpec.orderingPolicy(for: key) != nil }
 
     static let nodes = Self(key: "nodes", title: "节点库", emptyMessage: "尚未添加节点", addLabel: "添加节点", symbol: "point.3.connected.trianglepath.dotted")
+    static let wireguard = Self(key:"wireguard_tunnels",title:"WireGuard 隧道",emptyMessage:"尚未添加隧道",addLabel:"添加隧道",symbol:"lock.shield")
     static let routes = Self(key: "routes", title: "路由", emptyMessage: "尚未添加路由", addLabel: "添加路由", symbol: "arrow.triangle.branch")
     static let dns = Self(key: "dns_profiles", title: "DNS Profile", emptyMessage: "尚未添加 DNS Profile", addLabel: "添加 Profile", symbol: "network")
     static let rules = Self(key: "rules", title: "顺序规则", emptyMessage: "尚未添加规则", addLabel: "添加规则", symbol: "list.number")
@@ -791,6 +796,10 @@ struct DraftCollectionView: View {
                 .disabled(model.isBusy || model.draftSyntaxError != nil)
             }
 
+            if descriptor.key == "rules", model.draftItems(for:"wireguard_tunnels").contains(where: \.enabled) {
+                Text("已启用 WireGuard：私网直连兜底位于下列普通规则之后、Default 之前；WG 入站由隧道的远端访问规则独立控制。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             if descriptor.key == "subscriptions" {
                 Label("订阅会定时刷新节点列表；无引用的消失节点会自动删除，仍被路由使用的节点将保留并告警。", systemImage: "info.circle")
                     .font(.caption)
@@ -1250,7 +1259,7 @@ struct DraftCollectionView: View {
 
     private func openValidationFocus() {
         let objectType = [
-            "nodes": "node", "routes": "route", "dns_profiles": "dns_profile",
+            "wireguard_tunnels":"wireguard_tunnel", "nodes": "node", "routes": "route", "dns_profiles": "dns_profile",
             "local_proxies": "local_proxy", "rules": "rule", "subscriptions": "subscription",
         ][descriptor.key]
         guard let objectType,
@@ -1822,6 +1831,7 @@ private extension AppPage {
         case "overview": self = .overview
         case "general": self = .general
         case "nodes": self = .nodes
+        case "wireguard": self = .wireguard
         case "routes": self = .routes
         case "dns": self = .dns
         case "proxies": self = .proxies
@@ -1840,6 +1850,7 @@ private extension AppPage {
         case .general: return "基础设置"
         case .configuration: return "高级配置"
         case .nodes: return "节点"
+        case .wireguard: return "WireGuard"
         case .routes: return "路由"
         case .dns: return "DNS Profile"
         case .rules: return "规则"
@@ -1856,6 +1867,7 @@ private extension AppPage {
         case .general: return "配置"
         case .configuration: return "JSON"
         case .nodes: return "节点"
+        case .wireguard: return "WireGuard"
         case .routes: return "路由"
         case .dns: return "DNS Profiles"
         case .rules: return "顺序规则"
@@ -1872,7 +1884,8 @@ private extension AppPage {
         case .general: return "运行、连通性探测、DNS 缓存与启动解析设置"
         case .configuration: return "高级编辑与校验；所有可视化页面共享同一份工作副本"
         case .nodes: return "手动节点可编辑，订阅节点保持只读"
-        case .routes: return "管理直连、拒绝与单节点出口链路"
+        case .wireguard: return "双向隧道、AllowedIPs 与远端访问本机服务"
+        case .routes: return "管理直连、拒绝、代理与 WireGuard 出口"
         case .dns: return "上游解析器与每条规则的独立 DNS 路径"
         case .rules: return "从上到下严格匹配，Default 必须位于最后"
         case .subscriptions: return "管理订阅源、节点更新与失效节点清理"
@@ -1888,6 +1901,7 @@ private extension ValidationIssue {
         switch objectType {
         case "steer", "bootstrap": return .general
         case "node": return .nodes
+        case "wireguard_tunnel": return .wireguard
         case "route": return .routes
         case "dns_profile": return .dns
         case "local_proxy": return .proxies

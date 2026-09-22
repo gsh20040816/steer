@@ -75,6 +75,7 @@ func TestPlatformCapabilitiesAreExplicit(t *testing.T) {
 func TestReferenceAndRuleStageContractsAreExplicit(t *testing.T) {
 	contract := ContractValue()
 	want := []CollectionReference{
+		{TargetCollection: "wireguard_tunnels", SourceCollection: "routes", SourceObjectType: "route", Field: "tunnel"},
 		{TargetCollection: "nodes", SourceCollection: "routes", SourceObjectType: "route", Field: "node"},
 		{TargetCollection: "routes", SourceCollection: "rules", SourceObjectType: "rule", Field: "route"},
 		{TargetCollection: "routes", SourceCollection: "routes", SourceObjectType: "route", Field: "detour"},
@@ -84,7 +85,7 @@ func TestReferenceAndRuleStageContractsAreExplicit(t *testing.T) {
 	if !reflect.DeepEqual(contract.CollectionReferences, want) {
 		t.Fatalf("collection reference contract drifted: %#v", contract.CollectionReferences)
 	}
-	if !reflect.DeepEqual(contract.RuleConnectionOnlyFields, []string{"ip_match", "network", "protocol", "port"}) {
+	if !reflect.DeepEqual(contract.RuleConnectionOnlyFields, []string{"allowed_ips", "ip_match", "network", "protocol", "port"}) {
 		t.Fatalf("connection-only rule fields drifted: %#v", contract.RuleConnectionOnlyFields)
 	}
 }
