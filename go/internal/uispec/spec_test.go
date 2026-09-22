@@ -61,6 +61,9 @@ func TestPlatformCapabilitiesAreExplicit(t *testing.T) {
 			t.Fatalf("missing platform capability %q", platform)
 		}
 	}
+	if capabilities["macos"].DirectBypass || !capabilities["linux"].DirectBypass || !capabilities["openwrt"].DirectBypass {
+		t.Fatal("kernel bypass must be limited to Linux auto_redirect platforms")
+	}
 	if capabilities["macos"].SourceMAC {
 		t.Fatal("macOS must not advertise source-MAC support")
 	}

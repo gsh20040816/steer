@@ -26,7 +26,7 @@ const (
 	DefaultSeedDirectory  = "/usr/share/steer/geodata-seed"
 	UpstreamRepository    = "Loyalsoldier/v2ray-rules-dat"
 	GeoViewCommit         = "3c91926d360b8f49d47520639e574608318baf12"
-	SingBoxCompiler       = "1.14.0"
+	SingBoxCompiler       = "1.14.1"
 
 	ErrorManifestInvalid  = "GEO_MANIFEST_INVALID"
 	ErrorCategoryNotFound = "GEO_CATEGORY_NOT_FOUND"

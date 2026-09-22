@@ -37,6 +37,7 @@ type Target struct {
 	Inbounds             []any      `json:"inbounds"`
 	DNSInboundTags       []string   `json:"dns_inbound_tags"`
 	DNSCapture           DNSCapture `json:"dns_capture"`
+	BypassInboundTags    []string   `json:"bypass_inbound_tags,omitempty"`
 	SniffInboundTags     []string   `json:"sniff_inbound_tags"`
 	DirectRouteAddress   []string   `json:"direct_route_address"`
 	RequiredCapabilities []string   `json:"required_capabilities"`
@@ -287,6 +288,7 @@ func compileSingBox(intent model.Intent, target Target, dnsPaths []DNSPath, geoR
 			}
 		}
 	}
+	routeRules = append(routeRules, compileDirectBypass(intent, target)...)
 	routeRules = append(routeRules, map[string]any{"inbound": sniffInboundTags, "action": "sniff", "timeout": "300ms"})
 	// Keep server unset so sing-box reuses the DNS Router rules below to select
 	// the rule-specific (DNS Profile, Route) path. Resolve is a non-final action

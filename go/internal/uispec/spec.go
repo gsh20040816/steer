@@ -59,6 +59,7 @@ type Field struct {
 }
 
 type PlatformCapabilities struct {
+	DirectBypass     bool   `json:"direct_bypass"`
 	RawEditor        bool   `json:"raw_editor"`
 	SourceMAC        bool   `json:"source_mac"`
 	SourceMACReason  string `json:"source_mac_reason,omitempty"`
@@ -139,6 +140,7 @@ type Contract struct {
 	InputFormats                      map[string]InputFormat              `json:"input_formats"`
 	NodeTypes                         []Choice                            `json:"node_types"`
 	NodeFields                        []Field                             `json:"node_fields"`
+	DirectBypassModes                 []Choice                            `json:"direct_bypass_modes"`
 	LogLevels                         []Choice                            `json:"log_levels"`
 	BootstrapProtocols                []Choice                            `json:"bootstrap_protocols"`
 	BootstrapStrategies               []Choice                            `json:"bootstrap_strategies"`
@@ -250,6 +252,7 @@ func ContractValue() Contract {
 			"hysteria", "Hysteria", "hysteria2", "Hysteria2", "shadowtls", "ShadowTLS",
 			"tuic", "TUIC", "anytls", "AnyTLS", "naive", "NaiveProxy", "ssh", "SSH", "tor", "Tor",
 		),
+		DirectBypassModes:   choices("off", "Normal direct", "static", "Prefer kernel direct", "dns", "Allow DNS-assisted bypass"),
 		LogLevels:           choices("error", "Error", "warn", "Warning", "info", "Info", "debug", "Debug"),
 		BootstrapProtocols:  choices("udp", "UDP", "tcp", "TCP"),
 		BootstrapStrategies: choices("prefer_ipv4", "Prefer IPv4", "prefer_ipv6", "Prefer IPv6", "ipv4_only", "IPv4 only", "ipv6_only", "IPv6 only"),
@@ -280,8 +283,8 @@ func ContractValue() Contract {
 		DomainPrefixes: []string{"full:", "domain:", "regexp:", "geosite:"},
 		IPPrefixes:     []string{"geoip:"},
 		PlatformCapabilities: map[string]PlatformCapabilities{
-			"openwrt": {RawEditor: false, SourceMAC: true, SystemComponents: false},
-			"linux":   {RawEditor: true, SourceMAC: true, SystemComponents: false},
+			"openwrt": {DirectBypass: true, RawEditor: false, SourceMAC: true, SystemComponents: false},
+			"linux":   {DirectBypass: true, RawEditor: true, SourceMAC: true, SystemComponents: false},
 			"macos":   {RawEditor: true, SourceMAC: false, SourceMACReason: "macOS utun traffic does not expose the original LAN neighbor MAC address", SystemComponents: true},
 		},
 		Navigation: []NavigationGroup{

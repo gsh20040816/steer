@@ -55,6 +55,20 @@ macOS GUI/JSON ──────────┤
 
 每个启用规则实际引用的 `(DNS Profile, Route)` 编译成独立 DNS transport。代理 Route 引用同一个 Route tag，自动继承完整前置链；Direct 不写 detour；Reject（兼容键 `kind=block`）在业务路由和 DNS 路由中都投影为 `action: reject`，不创建 block outbound。普通规则与 DNS 规则共享可表达的匹配条件，目标 IP、网络、协议和端口只参与业务流量。
 
+## 有序直连旁路规划
+
+共享编译器在完整业务规则前生成可选的 IPv6 TCP 旁路计划。平台 Target 用
+`BypassInboundTags` 显式声明 auto_redirect 入口；用户 `main.direct_bypass` 选择
+`off/static/dns`，默认关闭。`compiler/bypass.go` 的规则证明分别表示确定匹配和确定不匹配，
+二者都不成立即未知。域名存在性保护避免反转域名条件时把缺失映射误判为 FALSE；
+TCP 协议条件、缺失 MAC 也不能作排除证据。AND 规则任一确定不匹配的条件即可排除整条规则。
+
+每条 Direct 候选要求自身确定匹配，并排除所有前置非 Direct 规则；前置 Direct 不改变路由结果。
+Default 按语义放在最后，禁用规则不参与。旁路只生成无 outbound 的 `bypass`，在非预匹配上下文跳过；
+随后保留原 sniff、resolve、完整业务规则和 DNS 投影。TCP/53 不进入新旁路。
+该规划没有新增连接处理进程、DNS 缓存或 nft 地址集合。DNS 模式明确接受映射域名歧义；
+不声称其结果必定等价于未来嗅探域名。实际可用性由平台 native check 和隔离网络验收验证。
+
 ## OpenWrt 数据面
 
 主路径由 sing-box 1.14 TUN 的 `auto_route`、`strict_route`、`auto_redirect` 和 `dns_mode: hijack` 接管，包括普通 DNS 重定向。Steer 仅保留本机目的地址的 DNS 例外：PREROUTING 拦截 LAN 查询路由器自身，OUTPUT/SNAT 保留路由器本机查询本地 DNS 的原有覆盖。其他 DNS 重定向交给 sing-box，删除未使用的 nft 地址集合。路由器本机 UDP/123 仍明确直连。ICMP echo（ping）不交给业务代理规则：编译器在 sniff 之前发出 `network=icmp` 的 `bypass`，Linux `auto_redirect` 预匹配阶段把它留在内核，已进入 TUN 的请求回退到 Direct。

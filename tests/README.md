@@ -61,7 +61,7 @@ swift test --disable-sandbox --build-system native
 
 ## Linux systemd 容器
 
-`tests/integration/run-linux-system.sh` 只能运行在显式设置 `STEER_LINUX_SYSTEM_TEST=1` 的一次性 privileged systemd 容器，不能用于生产主机。发布 CI 使用 `tests/integration/linux-system.Dockerfile` 构建固定 Debian 环境，挂载本次构建的 Steer、同次验证的 SRS seed 和校验过 SHA-256 的 sing-box 1.14.0 musl 二进制。
+`tests/integration/run-linux-system.sh` 只能运行在显式设置 `STEER_LINUX_SYSTEM_TEST=1` 的一次性 privileged systemd 容器，不能用于生产主机。发布 CI 使用 `tests/integration/linux-system.Dockerfile` 构建固定 Debian 环境，挂载本次构建的 Steer、同次验证的 SRS seed 和校验过 SHA-256 的 sing-box 1.14.1 musl 二进制。
 
 CI 只对容器基础设施启动做有限重试：镜像只构建一次，容器最多重建 3 次，每次最多等待 30 秒，必须等到 systemd 可响应且 `systemd-resolved` active；每次失败输出容器状态、failed units 和本次 boot journal。真正的 `run-linux-system.sh` 产品集成只运行一次，失败不会重试或被掩盖。
 
@@ -111,3 +111,14 @@ macOS 的 DNS journal 测试覆盖自动/手动 DNS 恢复、服务重命名、�
 ## OpenWrt netlink 故障恢复
 
 `check-netlink-guard.py <steer-openwrt> <sing-box>` 使用独立网络和挂载命名空间，暂停测试核心并注入路由通知积压，验证持续烧核后的自动恢复、十分钟冷却和停止时子进程退出。它不使用生产配置。非初始命名空间的 `rmem_default` 通常只读，此时仍验证降级恢复；接收缓冲提升需另在可写环境检查 netlink diag 返回的实际 socket 缓冲及系统默认值恢复。CI 将此测试与 DNS 集成一起执行。
+
+### 隔离验证 IPv6 TCP 有序旁路
+
+`STEER_BYPASS_FIXTURE_DIR=/tmp/steer-bypass-fixtures go test ./internal/platform -run TestExportDirectBypassFixtures`
+从共享编译器和两个真实平台 Target 导出 off/static/dns 测试配置。
+在 Linux 使用 `unshare -Ur python3 tests/integration/check-direct-bypass.py /tmp/steer-bypass-fixtures linux`
+运行（root 可省略 `unshare -Ur`），将最后参数换为 `openwrt` 验证 OpenWrt Target。
+脚本自行隔离 network/mount namespace，使用无公网出口的 client/router/server 拓扑，
+验证远端源 IPv6、源 MAC、DNS 映射、前置 Proxy/Reject/协议屏障、sniff 后 Direct 和显式 HTTP 代理。
+需要 sing-box、ip、nft、dig、Python 3 和允许 user/net/mount namespace 的 Linux 内核。
+CI 使用已校验的官方 sing-box 1.14.1 对两个平台执行该验收。

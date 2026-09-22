@@ -44,7 +44,7 @@ for fragment in (
     "swift build -c release --disable-sandbox --build-system native",
     "swift build -c release --show-bin-path --build-system native",
     "sing-box-$SING_BOX_MACOS_VERSION-darwin-${{ matrix.upstream_arch }}.tar.gz",
-    "a150c94012ff768b7261939cd236b9c8554127f45137230295d23a5660225cc9",
+    "b9024642ef7b4848252df5469b7f60ef3c18bb5e217a16a0934f0174f8ad11b4",
     'arm64) expected_sha256="$SING_BOX_DARWIN_ARM64_SHA256"',
     'STEER_SING_BOX_ARCHIVE_SHA256: ${{ steps.sing_box.outputs.sha256 }}',
     "macos/scripts/build-app-bundle.sh",

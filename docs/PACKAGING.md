@@ -8,10 +8,10 @@ Steer 采用三条相互校验的交付链：定时 Geo 工作流发布当前 SR
 2. Geo 工作流每 6 小时检查 Loyalsoldier 最新 release，以固定版本的生成器和 sing-box 把完整 GeoSite/GeoIP 转换成 SRS，并只保留 Pages 上的 `geodata/latest`。
 3. 每份 seed 都有严格 manifest，记录上游版本、DAT SHA-256、转换工具版本以及每个 selector 对应 SRS 的路径、大小和 SHA-256。
 4. 设备 Apply 只校验所引用的 seed 文件；sing-box 通过 `initial_path` 立即启动，并使用 direct HTTP client 每 24 小时后台检查同名 remote SRS。
-5. 控制器只依赖无版本的 `sing-box` 提供者；Apply 通过实际二进制的 native config check 和 build tags 判断能力，不满足时明确要求用户指定兼容版本/构建。当前 CI/Geo 验证、OpenWrt 软件源镜像和 macOS DMG 固定使用官方 `1.14.0`；这不构成 Linux/Arch 的最低运行时版本约束，兼容构建仍由实际能力检查裁决。
+5. 控制器只依赖无版本的 `sing-box` 提供者；Apply 通过实际二进制的 native config check 和 build tags 判断能力，不满足时明确要求用户指定兼容版本/构建。当前 CI/Geo 验证、OpenWrt 软件源镜像和 macOS DMG 固定使用官方 `1.14.1`；这不构成 Linux/Arch 的最低运行时版本约束，兼容构建仍由实际能力检查裁决。
 6. master 不构建或保存正式发布包。tag 必须指向 `origin/master` 的祖先；稳定 tag 还要求同一 `head_sha` 已有成功的 master CI push run。GitHub Actions 服务降级时，预发布允许以完整本地发布门替代独立 master CI；tag push 事件丢失时可显式 dispatch 同一版本 tag。两种入口都要求 `GITHUB_REF_TYPE=tag`，并运行完全相同的构建、验收、attest 和发布链。预发布不替换稳定 OpenWrt 软件源。
 
-当前稳定版本是 `v0.10.5`；OpenWrt APK、Arch `pkgver`、Git tag、Linux 与 macOS 构件均使用 `0.10.5`。
+当前稳定版本是 `v0.11.0`；OpenWrt APK、Arch `pkgver`、Git tag、Linux 与 macOS 构件均使用 `0.11.0`。
 
 ## Geo SRS
 
@@ -43,14 +43,14 @@ Pages 只保存当前版本，不承诺历史 seed 或可重复取得任意旧�
 
 ## OpenWrt
 
-`v0.10.5` 面向 OpenWrt 25.12.5 x86/64：
+`v0.11.0` 面向 OpenWrt 25.12.5 x86/64：
 
 | 包 | 版本 | 所有内容 |
 |---|---|---|
-| `steer` | `0.10.5-r1` | 控制器、默认 UCI、procd init、完整只读 SRS seed |
-| `luci-app-steer` | `0.10.5-r1` | LuCI 页面、ucode RPC、ACL |
-| `luci-i18n-steer-zh-cn` | `0.10.5-r1` | 简体中文翻译 |
-| `sing-box` | `1.14.0-r0` | SagerNet 官方 x86_64 APK，经内容核验后改用 Steer 仓库密钥签名 |
+| `steer` | `0.11.0-r1` | 控制器、默认 UCI、procd init、完整只读 SRS seed |
+| `luci-app-steer` | `0.11.0-r1` | LuCI 页面、ucode RPC、ACL |
+| `luci-i18n-steer-zh-cn` | `0.11.0-r1` | 简体中文翻译 |
+| `sing-box` | `1.14.1-r0` | SagerNet 官方 x86_64 APK，经内容核验后改用 Steer 仓库密钥签名 |
 
 Steer 不重编译 sing-box。CI 先校验官方 APK 的固定 SHA-256，重签后比较除签名记录外的 APK 元数据，再用仓库公钥验证安装包。软件源的四个 APK 与 `packages.adb` 使用同一 Steer P-256 信任根；私钥只来自 GitHub Actions Secret `OPENWRT_APK_PRIVATE_KEY`，不得进入源码、构件、Release 或 Pages。
 
@@ -128,7 +128,7 @@ GitHub Release 仅提供 Apple Silicon 的原生 DMG：
 steer-macos-arm64.dmg       # xcode-27 / arm64 / Xcode 27.0
 ```
 
-Swift GUI 不交叉编译。每个 job 构建 release Swift package 和同架构 `steer-macos`，下载 SagerNet 官方 `sing-box 1.14.0` Darwin archive并严格校验固定 SHA，然后调用唯一的 `macos/scripts/build-app-bundle.sh`。DMG 内固定包含：
+Swift GUI 不交叉编译。每个 job 构建 release Swift package 和同架构 `steer-macos`，下载 SagerNet 官方 `sing-box 1.14.1` Darwin archive并严格校验固定 SHA，然后调用唯一的 `macos/scripts/build-app-bundle.sh`。DMG 内固定包含：
 
 ```text
 Steer.app/

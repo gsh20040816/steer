@@ -19,7 +19,7 @@ func DecodeBytes(config []byte) (model.Intent, error) {
 }
 
 var optionNames = map[string]map[string]bool{
-	"steer":        set("schema_version", "enabled", "log_level", "probe_direct", "probe_proxy", "speedtest_proxy", "dns_cache_capacity", "dns_cache_persist", "dns_optimistic_cache"),
+	"steer":        set("schema_version", "enabled", "log_level", "probe_direct", "probe_proxy", "speedtest_proxy", "dns_cache_capacity", "dns_cache_persist", "dns_optimistic_cache", "direct_bypass"),
 	"bootstrap":    set("protocol", "server", "server_port", "strategy"),
 	"node":         set("enabled", "name", "type", "server", "server_port", "uuid", "username", "flow", "packet_encoding", "password", "method", "plugin", "plugin_options", "security", "alter_id", "version", "network", "transport", "transport_path", "transport_host", "service_name", "congestion_control", "udp_relay_mode", "udp_over_stream", "zero_rtt_handshake", "heartbeat", "quic", "quic_congestion_control", "insecure_concurrency", "private_key", "host_key", "executable_path", "data_directory", "host_key_algorithms", "server_ports", "extra_args", "alpn", "hop_interval", "obfs_type", "obfs_password", "up_mbps", "down_mbps", "tls_server_name", "insecure", "reality_public_key", "reality_short_id", "utls_fingerprint", "source_subscription", "source_fingerprint", "pinned_stale"),
 	"subscription": set("enabled", "name", "url", "update_interval"),
@@ -149,7 +149,7 @@ func decodeMain(s uci.Section) (model.Main, error) {
 		ProbeProxyURL:     s.Options["probe_proxy"],
 		SpeedtestProxyURL: s.Options["speedtest_proxy"],
 		DNSCacheCapacity:  capacity, DNSCachePersist: persist,
-		DNSOptimisticCache: optimistic}, nil
+		DNSOptimisticCache: optimistic, DirectBypass: s.Options["direct_bypass"]}, nil
 }
 
 func decodeBootstrap(s uci.Section) (model.Bootstrap, error) {

@@ -22,6 +22,12 @@ func ValidateWithGeoDataDirectory(value model.Intent, seedDirectory string) mode
 		IPv6WildcardDualStack: true,
 		GeoDataDirectory:      seedDirectory,
 	})
+	if value.Main.DirectBypass != "" && value.Main.DirectBypass != "off" {
+		validation.Errors = append(validation.Errors, model.Issue{
+			Code: "PLATFORM_UNSUPPORTED_DIRECT_BYPASS", ObjectType: "steer", ObjectID: value.Main.ID,
+			Option: "direct_bypass", Message: "macOS does not support kernel direct bypass",
+		})
+	}
 	for _, rule := range value.Rules {
 		if !rule.Enabled {
 			continue

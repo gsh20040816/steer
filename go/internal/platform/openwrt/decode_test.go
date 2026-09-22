@@ -226,3 +226,13 @@ func TestDecodeRejectsCanonicalIDThatOpenWrtUCICannotAddress(t *testing.T) {
 		t.Fatalf("hyphenated OpenWrt UCI ID was accepted: %v", err)
 	}
 }
+
+func TestDecodeDirectBypass(t *testing.T) {
+	for _, mode := range []string{"off", "static", "dns"} {
+		config := strings.Replace(minimalConfig, "option log_level 'warn'", "option log_level 'warn'\n option direct_bypass '"+mode+"'", 1)
+		value, err := Decode(strings.NewReader(config))
+		if err != nil || value.Main.DirectBypass != mode {
+			t.Fatalf("mode %q: value=%#v err=%v", mode, value.Main, err)
+		}
+	}
+}

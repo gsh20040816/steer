@@ -26,6 +26,7 @@ type Main struct {
 	SpeedtestProxyURL  string `json:"speedtest_proxy"`
 	DNSCacheCapacity   int    `json:"dns_cache_capacity,omitempty"`
 	DNSCachePersist    bool   `json:"dns_cache_persist,omitempty"`
+	DirectBypass       string `json:"direct_bypass,omitempty"`
 	DNSOptimisticCache bool   `json:"dns_optimistic_cache,omitempty"`
 }
 

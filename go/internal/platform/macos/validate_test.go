@@ -68,3 +68,23 @@ func validIntent() model.Intent {
 		Rules:       []model.Rule{{ID: "default", Enabled: true, Default: true, DNSProfile: "dns", Route: "direct"}},
 	}
 }
+
+func TestValidateRejectsDirectBypass(t *testing.T) {
+	for _, mode := range []string{"", "off", "static", "dns"} {
+		value := validIntent()
+		value.Main.DirectBypass = mode
+		result := Validate(value)
+		found := false
+		for _, issue := range result.Errors {
+			if issue.Code == "PLATFORM_UNSUPPORTED_DIRECT_BYPASS" {
+				found = true
+			}
+		}
+		if found != (mode == "static" || mode == "dns") {
+			t.Fatalf("mode %q: %#v", mode, result.Errors)
+		}
+		if len(NewPlan(value).CompilerTarget().BypassInboundTags) != 0 {
+			t.Fatal("Darwin claims bypass capability")
+		}
+	}
+}

@@ -653,3 +653,20 @@ func warningForObject(validation Validation, code, objectID string) bool {
 	}
 	return false
 }
+
+func TestValidateDirectBypassMode(t *testing.T) {
+	for _, mode := range []string{"", "off", "static", "dns", "always"} {
+		value := validIntent()
+		value.Main.DirectBypass = mode
+		result := Validate(value)
+		found := false
+		for _, issue := range result.Errors {
+			if issue.Code == "INVALID_DIRECT_BYPASS" {
+				found = true
+			}
+		}
+		if found != (mode == "always") {
+			t.Fatalf("mode %q: %#v", mode, result.Errors)
+		}
+	}
+}

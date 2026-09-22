@@ -295,6 +295,13 @@ return view.extend({
 		uiSpec.log_levels.forEach((item) => o.value(item.value, steer.uiSpecLabel(item.label)));
 		o.default = 'warn';
 
+		if (uiSpec.platform_capabilities.openwrt.direct_bypass) {
+			o = s.option(form.ListValue, 'direct_bypass', _('IPv6 TCP direct mode'));
+			uiSpec.direct_bypass_modes.forEach((item) => o.value(item.value, steer.uiSpecLabel(item.label)));
+			o.default = 'off';
+			o.description = _('Kernel direct preserves the client address when rules can be decided early. DNS-assisted mode accepts shared-IP ambiguity; other connections use normal routing.');
+		}
+
 		o = s.option(form.Value, 'dns_cache_capacity', _('Cache capacity'));
 		o.datatype = 'range(1024,10000000)';
 		o.placeholder = '4096';

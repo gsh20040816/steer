@@ -131,9 +131,19 @@ func TestSupervisorKeepsCoreAliveAcrossHealthFailures(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 			defer cancel()
 			attempt := 0
+			failureObserved := make(chan struct{})
 			failure := errors.New("test DNS unavailable")
-			probe := func(context.Context) error {
+			probe := func(probeCtx context.Context) error {
 				attempt++
+				// Hold the recovery transition until the reader has checked the
+				// failed snapshot. Otherwise two file reads can straddle recovery.
+				if phase != "runtime" && attempt >= 2 || phase == "runtime" && attempt >= 6 {
+					select {
+					case <-failureObserved:
+					case <-probeCtx.Done():
+						return probeCtx.Err()
+					}
+				}
 				if phase == "entrance" && attempt == 1 || phase == "runtime" && attempt >= 2 && attempt <= 5 {
 					return failure
 				}
@@ -169,10 +179,13 @@ func TestSupervisorKeepsCoreAliveAcrossHealthFailures(t *testing.T) {
 					continue
 				}
 				if strings.Contains(string(data), `"error":`) {
-					if err := backend.checkDNSReady(ctx, root); err == nil {
-						t.Fatal("failed health marker reported healthy")
+					if !sawFailure {
+						if err := backend.checkDNSReady(ctx, root); err == nil {
+							t.Fatal("failed health marker reported healthy")
+						}
+						sawFailure = true
+						close(failureObserved)
 					}
-					sawFailure = true
 					continue
 				}
 				if sawFailure {

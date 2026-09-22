@@ -101,12 +101,14 @@ struct UIFieldSpec: Decodable, Identifiable {
 }
 
 struct UIPlatformCapabilities: Decodable {
+    let directBypass: Bool
     let rawEditor: Bool
     let sourceMAC: Bool
     let sourceMACReason: String?
     let systemComponents: Bool
 
     enum CodingKeys: String, CodingKey {
+        case directBypass = "direct_bypass"
         case rawEditor = "raw_editor"
         case sourceMAC = "source_mac"
         case sourceMACReason = "source_mac_reason"
@@ -259,6 +261,7 @@ struct UIContract: Decodable {
     let inputFormats: [String: UIInputFormat]
     let nodeTypes: [UIChoice]
     let nodeFields: [UIFieldSpec]
+    let directBypassModes: [UIChoice]
     let logLevels: [UIChoice]
     let bootstrapProtocols: [UIChoice]
     let bootstrapStrategies: [UIChoice]
@@ -289,6 +292,7 @@ struct UIContract: Decodable {
         case inputFormats = "input_formats"
         case nodeTypes = "node_types"
         case nodeFields = "node_fields"
+        case directBypassModes = "direct_bypass_modes"
         case logLevels = "log_levels"
         case bootstrapProtocols = "bootstrap_protocols"
         case bootstrapStrategies = "bootstrap_strategies"

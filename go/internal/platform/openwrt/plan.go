@@ -79,7 +79,7 @@ func (plan Plan) CompilerTarget() compiler.Target {
 		},
 	}
 	target := compiler.Target{
-		Inbounds: inbounds, DNSInboundTags: []string{"steer-dns"}, SniffInboundTags: []string{"steer-tun"},
+		Inbounds: inbounds, DNSInboundTags: []string{"steer-dns"}, SniffInboundTags: []string{"steer-tun"}, BypassInboundTags: []string{"steer-tun"},
 		RequiredCapabilities: []string{"tun", "auto_route", "auto_redirect"},
 	}
 	return target

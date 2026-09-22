@@ -1209,6 +1209,12 @@ async function testSharedProbeDiagnosticsAndDisabledActions() {
   loadView(environment, 'general');
   const generalRoot = new Element('main');
   environment.S.views.general.render(generalRoot);
+  const bypass = find(generalRoot, (element) => element.tag === 'select' && element.children.some((option) => option.value === 'dns'));
+  assert.ok(bypass, 'Linux General must offer the shared direct bypass modes');
+  assert.strictEqual(bypass.value, 'off');
+  assert.ok(!Object.hasOwn(intent.main, 'direct_bypass'), 'render must not change an existing configuration');
+  bypass.listeners.change({ target: { value: 'dns' } });
+  assert.strictEqual(intent.main.direct_bypass, 'dns');
   const capacity = find(generalRoot, (element) => element.tag === 'input' && element.placeholder === '4096');
   assert.ok(capacity, 'Linux General must render the DNS cache capacity field');
   assert.strictEqual(capacity.value, '', 'Linux General must present the default DNS cache capacity as an empty field');

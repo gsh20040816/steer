@@ -1046,6 +1046,20 @@ return baseclass.extend({
       ]
     }
   ],
+  "direct_bypass_modes": [
+    {
+      "value": "off",
+      "label": "Normal direct"
+    },
+    {
+      "value": "static",
+      "label": "Prefer kernel direct"
+    },
+    {
+      "value": "dns",
+      "label": "Allow DNS-assisted bypass"
+    }
+  ],
   "log_levels": [
     {
       "value": "error",
@@ -1348,17 +1362,20 @@ return baseclass.extend({
   ],
   "platform_capabilities": {
     "linux": {
+      "direct_bypass": true,
       "raw_editor": true,
       "source_mac": true,
       "system_components": false
     },
     "macos": {
+      "direct_bypass": false,
       "raw_editor": true,
       "source_mac": false,
       "source_mac_reason": "macOS utun traffic does not expose the original LAN neighbor MAC address",
       "system_components": true
     },
     "openwrt": {
+      "direct_bypass": true,
       "raw_editor": false,
       "source_mac": true,
       "system_components": false

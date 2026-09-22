@@ -2062,6 +2062,9 @@ async function main() {
 	environment = await renderOverview({
 		steer: [ { '.name': 'main', dns_cache_capacity: '0' } ], subscription: []
 	}, 'general');
+	const bypassMode = allOptions(environment).find((option) => option.name == 'direct_bypass');
+	assert.equal(bypassMode?.type, 'ListValue');
+	assert.equal(bypassMode.default, 'off', 'bypass must be opt-in');
 	const cacheCapacity = allOptions(environment).find((option) => option.name == 'dns_cache_capacity');
 	assert.equal(cacheCapacity.cfgvalue('main'), '',
 		'LuCI General must present the default DNS cache capacity as an empty field');

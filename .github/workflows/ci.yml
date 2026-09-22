@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 env:
-  SING_BOX_VERSION: 1.14.0
-  SING_BOX_LINUX_AMD64_MUSL_SHA256: d2d6b4543d850269214ced70ffe41b13b1595baa1b6f9c016466abfba162c4d4
+  SING_BOX_VERSION: 1.14.1
+  SING_BOX_LINUX_AMD64_MUSL_SHA256: b907365b154e4a7e3e40be15c2cd83433c0fa65c7dc736bdb1b5face2afe4501
 
 jobs:
   linux-openwrt:
@@ -88,6 +88,8 @@ jobs:
             cd go
             STEER_DNS_FIXTURE_DIR="$RUNNER_TEMP/steer-linux-system/dns-fixtures" \
               go test ./internal/platform -run TestExportNativeDNSFixtures -count=1
+            STEER_BYPASS_FIXTURE_DIR="$RUNNER_TEMP/steer-linux-system/bypass-fixtures" \
+              go test ./internal/platform -run TestExportDirectBypassFixtures -count=1
             CGO_ENABLED=0 go build -o "$RUNNER_TEMP/steer-linux-system/steer-openwrt" ./cmd/steer-openwrt
             CGO_ENABLED=0 go build \
               -trimpath \
@@ -144,6 +146,14 @@ jobs:
               steer-linux-system python3 /workspace/tests/integration/check-native-dns.py \
               "/artifacts/dns-fixtures/$platform.json" \
               "/artifacts/dns-fixtures/$platform.nft"
+          done
+
+      - name: Test ordered IPv6 TCP direct bypass
+        run: |
+          for platform in linux openwrt; do
+            docker exec --env PATH=/artifacts:/usr/sbin:/usr/bin:/sbin:/bin \
+              steer-linux-system python3 /workspace/tests/integration/check-direct-bypass.py \
+              /artifacts/bypass-fixtures "$platform"
           done
 
       - name: Test OpenWrt netlink overload recovery

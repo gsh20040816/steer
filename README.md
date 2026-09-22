@@ -2,7 +2,7 @@
 
 Steer 是一套严格、可解释的透明代理控制面。用户配置节点、逻辑路由、DNS Profile 和有序规则；共享 Go 核心负责 Canonical Intent、校验、编译、Apply 编排、订阅与测试，平台适配器负责网络资源和服务生命周期。
 
-当前稳定版本为 **0.10.5**，公开配置为 **schema 9**。OpenWrt 25.12.5 x86/64 由主仓库提供 APK；Linux systemd 适配器提供 x86_64/aarch64 通用上游 tar.zst；macOS 提供 Apple Silicon（arm64）原生 DMG、SwiftUI GUI、一次授权安装的 root control daemon 和 sing-box TUN 后端，无需 Apple Developer Program。
+当前稳定版本为 **0.11.0**，公开配置为 **schema 9**。OpenWrt 25.12.5 x86/64 由主仓库提供 APK；Linux systemd 适配器提供 x86_64/aarch64 通用上游 tar.zst；macOS 提供 Apple Silicon（arm64）原生 DMG、SwiftUI GUI、一次授权安装的 root control daemon 和 sing-box TUN 后端，无需 Apple Developer Program。
 
 ## 已实现能力
 
@@ -12,6 +12,7 @@ Steer 是一套严格、可解释的透明代理控制面。用户配置节点�
 - UDP、TCP、DoT、DoH、DoQ、DoH3 DNS Profile；每个实际使用的 `(DNS Profile, Route)` 拥有独立传输路径。
 - HTTP(S) 节点订阅、稳定节点 ID、无引用过期节点自动清理与引用保护。
 - 三个可配置目标的当前网络环境测试，以及裸节点和完整路由链测试。
+- 可选 IPv6 TCP 内核直连：按有序规则提前证明 Direct，支持静态条件或 DNS 辅助判断；无法提前确定时保留 sniff 和完整规则回退。
 - OpenWrt UCI/LuCI、procd、sing-box TUN `auto_route`/`auto_redirect`、1.14 原生源 MAC 规则和最小 DNS nftables shim。
 - Linux systemd 适配器源码：Canonical JSON、sing-box TUN `auto_route`/`strict_route`/`auto_redirect`、主机与 VM/Docker DNS 的双栈 nft shim、受保护的 wildcard DNS listener、nftables 重启联动、systemd 服务和 loopback Web API/UI。
 - macOS SwiftUI GUI 与 LuCI、Linux Web 同为平台前端，直接编辑 Canonical Intent；首次安装系统组件需要一次管理员授权，之后 Save/Apply 通过 peer-credential 保护的受限 root IPC 免密完成，数据面由独立 LaunchDaemon 和 sing-box TUN 承担。

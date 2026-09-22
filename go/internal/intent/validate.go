@@ -73,6 +73,9 @@ func ValidateWithOptions(intent Intent, options ValidationOptions) Validation {
 	if intent.Main.DNSCacheCapacity != 0 && (intent.Main.DNSCacheCapacity < 1024 || intent.Main.DNSCacheCapacity > 10_000_000) {
 		err("INVALID_CACHE_CAPACITY", "steer", intent.Main.ID, "dns_cache_capacity", "DNS cache capacity must be 1024..10000000")
 	}
+	if !oneOf(intent.Main.DirectBypass, "", "off", "static", "dns") {
+		err("INVALID_DIRECT_BYPASS", "steer", intent.Main.ID, "direct_bypass", "direct bypass must be off, static or dns")
+	}
 	validateProbeURL(intent.Main.ProbeDirectURL, intent.Main.ID, "probe_direct", err)
 	validateProbeURL(intent.Main.ProbeProxyURL, intent.Main.ID, "probe_proxy", err)
 	validateProbeURL(intent.Main.SpeedtestProxyURL, intent.Main.ID, "speedtest_proxy", err)
