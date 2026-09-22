@@ -647,7 +647,7 @@ func compileTLS(serverName string, insecure bool, fingerprint, publicKey, shortI
 
 func compileDNSPath(profile model.DNSProfile, route model.Route, path DNSPath, domainResolverStrategy string) map[string]any {
 	result := map[string]any{"type": profile.Protocol, "tag": path.Tag, "server": profile.Server, "server_port": profile.ServerPort}
-	if route.Kind == "single" {
+	if route.Kind == "single" || route.Kind == "wireguard" {
 		result["detour"] = routeTag(path.Route)
 	}
 	if _, err := netip.ParseAddr(profile.Server); err != nil {

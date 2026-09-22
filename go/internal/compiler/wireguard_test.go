@@ -71,3 +71,26 @@ func TestWireGuardIsolationAndOrdering(t *testing.T) {
 		}
 	}
 }
+
+func TestWireGuardDNSProfileUsesTunnelWhileBootstrapRemainsIndependent(t *testing.T) {
+	v := wgIntent()
+	v.Rules[0].DomainMatch = []string{"domain:internal.example"}
+	out := Compile(v, testOptions())
+	servers := out.SingBox["dns"].(map[string]any)["servers"].([]any)
+	found := false
+	for _, raw := range servers {
+		s := raw.(map[string]any)
+		if s["tag"] == "steer-dns-bootstrap" && s["detour"] != nil {
+			t.Fatal("bootstrap depends on tunnel")
+		}
+		if s["tag"] == "steer-dns-public-via-wg-route" {
+			found = true
+			if s["detour"] != "steer-route-wg-route" {
+				t.Fatal("WireGuard DNS escaped via physical Direct")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("missing WireGuard DNS path")
+	}
+}

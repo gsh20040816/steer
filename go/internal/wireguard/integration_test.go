@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -81,6 +82,47 @@ func TestNativeWireGuardRemoteAccess(t *testing.T) {
 		}
 	}()
 	udpEchoPort := udpEcho.LocalAddr().(*net.UDPAddr).Port
+	dnsListener, e := net.ListenPacket("udp4", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer dnsListener.Close()
+	var dnsQueries atomic.Int32
+	go func() {
+		data := make([]byte, 2048)
+		for {
+			n, addr, e := dnsListener.ReadFrom(data)
+			if e != nil {
+				return
+			}
+			if n < 17 {
+				continue
+			}
+			end := 12
+			for end < n && data[end] != 0 {
+				end += int(data[end]) + 1
+			}
+			end += 5
+			if end > n {
+				continue
+			}
+			answer := append([]byte(nil), data[:end]...)
+			answer[2] = 0x81
+			answer[3] = 0x80
+			answer[6] = 0
+			answer[7] = 0
+			answer[8] = 0
+			answer[9] = 0
+			answer[10] = 0
+			answer[11] = 0
+			if data[end-4] == 0 && data[end-3] == 1 {
+				dnsQueries.Add(1)
+				answer[7] = 1
+				answer = append(answer, 0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 0, 0, 4, 10, 77, 0, 2)
+			}
+			_, _ = dnsListener.WriteTo(answer, addr)
+		}
+	}()
 	udpEntrance := udpPort()
 	for udpEntrance == portA || udpEntrance == portB {
 		udpEntrance = udpPort()
@@ -95,12 +137,16 @@ func TestNativeWireGuardRemoteAccess(t *testing.T) {
 		return model.Intent{Main: model.Main{ID: "main", SchemaVersion: model.SchemaVersion, Enabled: true, LogLevel: "debug"}, Bootstrap: model.Bootstrap{ID: "bootstrap", Protocol: "udp", Server: "1.1.1.1", ServerPort: 53, Strategy: "ipv4_only"}, Routes: []model.Route{{ID: "direct", Enabled: true, Kind: "direct"}, {ID: "wg", Enabled: true, Kind: "wireguard", Tunnel: id}}, DNSProfiles: []model.DNSProfile{{ID: "dns", Enabled: true, Protocol: "udp", Server: "1.1.1.1", ServerPort: 53}}, Rules: []model.Rule{{ID: "allowed", Enabled: true, AllowedIPs: true, Route: "wg", DNSProfile: "dns"}, {ID: "default", Enabled: true, Default: true, Route: "direct", DNSProfile: "dns"}}, WireGuardTunnels: []model.WireGuardTunnel{{ID: id, Enabled: true, Address: []string{address}, PrivateKey: private, ListenPort: listen, Peers: []model.WireGuardPeer{{PublicKey: public, Server: "127.0.0.1", ServerPort: remote, AllowedIPs: []string{allowed}}}}}}
 	}
 	a := makeIntent("client", "10.77.0.1/32", privA, pubB, portA, portB, "10.77.0.2/32")
+	a.DNSProfiles[0].Server = "10.77.0.2"
+	a.DNSProfiles[0].ServerPort = 5353
+	a.Rules[1].Route = "wg"
 	a.LocalProxies = []model.LocalProxy{{ID: "socks", Enabled: true, Protocol: "socks", Listen: "127.0.0.1", ListenPort: socksPort}}
 	b := makeIntent("server", "10.77.0.2/32", privB, pubA, portB, portA, "10.77.0.1/32")
 	b.WireGuardTunnels[0].Peers[0].Server = ""
 	b.WireGuardTunnels[0].Peers[0].ServerPort = 0
 	b.WireGuardTunnels[0].Access = []model.WireGuardAccess{{SourceIPCIDR: []string{"10.77.0.1/32"}, Network: "tcp", Port: 2222, Target: "127.0.0.1", TargetPort: echoPort}}
 	b.WireGuardTunnels[0].Access = append(b.WireGuardTunnels[0].Access, model.WireGuardAccess{SourceIPCIDR: []string{"10.77.0.1/32"}, Network: "udp", Port: 3333, Target: "127.0.0.1", TargetPort: udpEchoPort})
+	b.WireGuardTunnels[0].Access = append(b.WireGuardTunnels[0].Access, model.WireGuardAccess{SourceIPCIDR: []string{"10.77.0.1/32"}, Network: "udp", Port: 5353, Target: "127.0.0.1", TargetPort: dnsListener.LocalAddr().(*net.UDPAddr).Port})
 	dir := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -141,7 +187,7 @@ func TestNativeWireGuardRemoteAccess(t *testing.T) {
 	}
 	start("server", b)
 	start("client", a)
-	connect := func(port int) (net.Conn, error) {
+	connect := func(port int, domain string) (net.Conn, error) {
 		c, e := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(socksPort)), time.Second)
 		if e != nil {
 			return nil, e
@@ -155,7 +201,12 @@ func TestNativeWireGuardRemoteAccess(t *testing.T) {
 		if _, e = io.ReadFull(c, reply); e != nil {
 			return fail(e)
 		}
-		if _, e = c.Write([]byte{5, 1, 0, 1, 10, 77, 0, 2, byte(port >> 8), byte(port)}); e != nil {
+		request := []byte{5, 1, 0, 1, 10, 77, 0, 2}
+		if domain != "" {
+			request = append([]byte{5, 1, 0, 3, byte(len(domain))}, []byte(domain)...)
+		}
+		request = append(request, byte(port>>8), byte(port))
+		if _, e = c.Write(request); e != nil {
 			return fail(e)
 		}
 		header := make([]byte, 4)
@@ -176,7 +227,7 @@ func TestNativeWireGuardRemoteAccess(t *testing.T) {
 	}
 	var c net.Conn
 	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
-		c, e = connect(2222)
+		c, e = connect(2222, "")
 		if e == nil {
 			break
 		}
@@ -207,7 +258,20 @@ func TestNativeWireGuardRemoteAccess(t *testing.T) {
 	if e != nil || string(reply[:n]) != "udp-echo" {
 		t.Fatalf("UDP remote access failed: %q %v", reply[:n], e)
 	}
-	denied, e := connect(echoPort)
+	byName, e := connect(2222, "service.internal")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer byName.Close()
+	_, e = byName.Write([]byte("dns-via-wg"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	dnsPayload := make([]byte, 10)
+	if _, e = io.ReadFull(byName, dnsPayload); e != nil || string(dnsPayload) != "dns-via-wg" || dnsQueries.Load() == 0 {
+		t.Fatalf("internal DNS did not travel through WireGuard: %q %v, queries=%d", dnsPayload, e, dnsQueries.Load())
+	}
+	denied, e := connect(echoPort, "")
 	if e == nil {
 		defer denied.Close()
 		_, _ = denied.Write([]byte("forbidden"))
