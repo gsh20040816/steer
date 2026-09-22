@@ -304,7 +304,7 @@ func TestCompileTUNPort53DNSCaptureIsExplicit(t *testing.T) {
 func TestCompileDNSCaptureNoneDoesNotInventHijack(t *testing.T) {
 	options := testOptions()
 	options.Target.DNSInboundTags = nil
-	options.Target.DNSCapture = DNSCapture{Mode: DNSCaptureNone, InboundTags: []string{"steer-dns"}}
+	options.Target.DNSCapture = DNSCapture{Mode: DNSCaptureNone, InboundTags: []string{"steer-dns"}, TUNInboundTags: []string{"steer-tun"}}
 	bundle := Compile(representativeIntent(), options)
 	rules := bundle.SingBox["route"].(map[string]any)["rules"].([]any)
 	if strings.Contains(string(mustJSON(rules)), `"action":"hijack-dns"`) {

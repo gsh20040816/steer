@@ -38,13 +38,15 @@ func TestExportNativeDNSFixtures(t *testing.T) {
 		if platform == "macos" {
 			dnsRule = map[string]any{"inbound": []string{"steer-tun"}, "network": []string{"tcp", "udp"}, "port": []int{53}, "action": "hijack-dns"}
 		}
+		routeRules := []any{dnsRule}
+		if len(target.DNSCapture.TUNInboundTags) > 0 {
+			routeRules = append(routeRules, map[string]any{"inbound": target.DNSCapture.TUNInboundTags, "network": []string{"tcp", "udp"}, "port": []int{53}, "action": "hijack-dns"})
+		}
+		routeRules = append(routeRules, map[string]any{"port": 19000, "action": "route", "outbound": "direct", "override_address": "127.0.0.1", "override_port": 19000})
 		doc := map[string]any{"log": map[string]any{"level": "debug"}, "inbounds": target.Inbounds,
 			"dns":       map[string]any{"servers": []any{map[string]any{"type": "hosts", "tag": "test", "predefined": map[string]any{"steer.test": []string{"203.0.113.7"}}}}},
 			"outbounds": []any{map[string]any{"type": "direct", "tag": "direct", "bind_interface": "lo"}},
-			"route": map[string]any{"auto_detect_interface": true, "rules": []any{
-				dnsRule,
-				map[string]any{"port": 19000, "action": "route", "outbound": "direct", "override_address": "127.0.0.1", "override_port": 19000},
-			}, "final": "direct"},
+			"route":     map[string]any{"auto_detect_interface": true, "rules": routeRules, "final": "direct"},
 		}
 		data, err := json.MarshalIndent(doc, "", "  ")
 		if err != nil {

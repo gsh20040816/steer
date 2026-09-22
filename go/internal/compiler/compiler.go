@@ -57,6 +57,8 @@ const (
 type DNSCapture struct {
 	Mode        DNSCaptureMode `json:"mode"`
 	InboundTags []string       `json:"inbound_tags"`
+	// Port-53 traffic that reaches TUN without native destination rewriting.
+	TUNInboundTags []string `json:"tun_inbound_tags,omitempty"`
 }
 
 type DNSPath struct {
@@ -252,7 +254,8 @@ func compileSingBox(intent model.Intent, target Target, dnsPaths []DNSPath, geoR
 	routeRules := make([]any, 0, 4+len(intent.Rules))
 	capture := target.DNSCapture
 	if capture.Mode == "" && len(capture.InboundTags) == 0 && len(target.DNSInboundTags) > 0 {
-		capture = DNSCapture{Mode: DNSCaptureInboundHijack, InboundTags: append([]string{}, target.DNSInboundTags...)}
+		capture.Mode = DNSCaptureInboundHijack
+		capture.InboundTags = append([]string{}, target.DNSInboundTags...)
 	}
 	switch capture.Mode {
 	case DNSCaptureInboundHijack:
@@ -265,6 +268,11 @@ func compileSingBox(intent model.Intent, target Target, dnsPaths []DNSPath, geoR
 				"inbound": capture.InboundTags, "network": []string{"tcp", "udp"}, "port": []uint16{53}, "action": "hijack-dns",
 			})
 		}
+	}
+	if capture.Mode != DNSCaptureNone && len(capture.TUNInboundTags) > 0 {
+		routeRules = append(routeRules, map[string]any{
+			"inbound": capture.TUNInboundTags, "network": []string{"tcp", "udp"}, "port": []uint16{53}, "action": "hijack-dns",
+		})
 	}
 	if directID := enabledDirectRouteID(intent); directID != "" {
 		// Linux auto_redirect otherwise captures ICMP echo into sing-box.
