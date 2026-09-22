@@ -184,7 +184,7 @@ steer probe --kind speedtest --route <route-id> --download
 
 0.8.0 及更高版本只接受 schema 9。Linux、OpenWrt 和发行版包均不再提供旧 schema 迁移命令或安装 hook；旧版本配置必须在升级前完成转换，否则 Validate/Apply 会明确失败。`bootstrap.strategy` 只服务内部域名解析，DNS Profile 不再包含客户端地址族 strategy。
 
-## IPv6 TCP 内核直连（0.11.0）
+## IPv6 内核直连（0.11.0）
 
 `main.direct_bypass` 是 schema 9 的可选字段，省略或 `off` 保持既有行为。
 LuCI/Linux 基础设置提供同一选项；OpenWrt 对应 `option direct_bypass 'dns'`，
@@ -193,17 +193,18 @@ Canonical JSON 对应 `"direct_bypass": "dns"`。
 | 值 | 行为 |
 |---|---|
 | `off` | 先 sniff，再执行完整业务规则。 |
-| `static` | 根据 IP、源 CIDR、端口、TCP 和已确认的源 MAC 提前证明 Direct。域名条件保持未知。 |
+| `static` | 根据 IP、源 CIDR、端口、传输层协议和已确认的源 MAC 提前证明 Direct。域名条件保持未知。 |
 | `dns` | 在 static 基础上，接受 DNS reverse mapping 域名参与提前判断；缺失域名仍是未知。 |
 
-仅 OpenWrt/Linux auto_redirect 的 IPv6 TCP 流量参与新旁路；TCP/53 继续由 DNS 接管，
-IPv4、UDP 和显式 HTTP/SOCKS/Mixed 入口保持原路径。macOS 拒绝启用该选项。
+仅 OpenWrt/Linux auto_redirect 的 IPv6 流量参与新旁路，不附加传输层协议限制；
+规则显式指定的 TCP/UDP 条件仍按实际报文匹配。TCP/UDP 53 继续由 DNS 接管，
+IPv4 和显式 HTTP/SOCKS/Mixed 入口保持原路径。macOS 拒绝启用该选项。
 已配置的 ICMP 旁路独立于此选项。
 
 前置 Proxy/Reject 规则必须能够被排除；缺少域名不能视为域名规则不匹配。
 前面的未知规则如果同样指向 Direct，则不阻止后面已经确定的 Direct。
 例如前置域名 Proxy 后的 `geoip:cn → Direct`，在无域名时必须回退 sniff。
-协议规则在 TCP 预匹配阶段未知，但同一规则内明确不匹配的端口、网络或源网段可排除整条规则。
+应用协议规则在预匹配阶段未知，但同一规则内明确不匹配的端口、网络或源网段可排除整条规则。
 源 MAC 匹配失败可能是邻居信息缺失，因此不会被用于证明前置 MAC Proxy/Reject 不匹配。
 
 DNS 辅助旁路接受共享 IP、CNAME、缓存等带来的域名歧义；它不保证与稍后 SNI/Host 相同。

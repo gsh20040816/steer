@@ -57,15 +57,15 @@ macOS GUI/JSON ──────────┤
 
 ## 有序直连旁路规划
 
-共享编译器在完整业务规则前生成可选的 IPv6 TCP 旁路计划。平台 Target 用
+共享编译器在完整业务规则前生成可选的 IPv6 旁路计划。平台 Target 用
 `BypassInboundTags` 显式声明 auto_redirect 入口；用户 `main.direct_bypass` 选择
 `off/static/dns`，默认关闭。`compiler/bypass.go` 的规则证明分别表示确定匹配和确定不匹配，
 二者都不成立即未知。域名存在性保护避免反转域名条件时把缺失映射误判为 FALSE；
-TCP 协议条件、缺失 MAC 也不能作排除证据。AND 规则任一确定不匹配的条件即可排除整条规则。
+应用协议条件、缺失 MAC 也不能作排除证据。AND 规则任一确定不匹配的条件即可排除整条规则。
 
 每条 Direct 候选要求自身确定匹配，并排除所有前置非 Direct 规则；前置 Direct 不改变路由结果。
 Default 按语义放在最后，禁用规则不参与。旁路只生成无 outbound 的 `bypass`，在非预匹配上下文跳过；
-随后保留原 sniff、resolve、完整业务规则和 DNS 投影。TCP/53 不进入新旁路。
+随后保留原 sniff、resolve、完整业务规则和 DNS 投影。TCP/UDP 53 不进入新旁路。
 该规划没有新增连接处理进程、DNS 缓存或 nft 地址集合。DNS 模式明确接受映射域名歧义；
 不声称其结果必定等价于未来嗅探域名。实际可用性由平台 native check 和隔离网络验收验证。
 

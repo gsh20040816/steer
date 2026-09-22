@@ -296,7 +296,7 @@ return view.extend({
 		o.default = 'warn';
 
 		if (uiSpec.platform_capabilities.openwrt.direct_bypass) {
-			o = s.option(form.ListValue, 'direct_bypass', _('IPv6 TCP direct mode'));
+			o = s.option(form.ListValue, 'direct_bypass', _('IPv6 direct mode'));
 			uiSpec.direct_bypass_modes.forEach((item) => o.value(item.value, steer.uiSpecLabel(item.label)));
 			o.default = 'off';
 			o.description = _('Kernel direct preserves the client address when rules can be decided early. DNS-assisted mode accepts shared-IP ambiguity; other connections use normal routing.');

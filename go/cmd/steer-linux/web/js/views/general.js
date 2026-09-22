@@ -46,7 +46,7 @@
         h('section', { class: 'card' }, [
           h('div', { class: 'card__head' }, h('div', {}, h('span', { class: 'eyebrow' }, '运行'), h('div', { class: 'card__title' }, '核心设置'))),
           ui.field('日志级别', logLevel),
-          S.uiSpec.platform_capabilities.linux.direct_bypass ? ui.field('IPv6 TCP 直连方式', ui.select(S.uiSpec.direct_bypass_modes.map((item) => [item.value, item.label]), main.direct_bypass || 'off', (value) => { main.direct_bypass = value; S.store.touch(); }), '提前判定为直连时保留客户端地址；DNS 辅助模式接受共享 IP 的域名歧义，其余连接继续正常分流。') : null,
+          S.uiSpec.platform_capabilities.linux.direct_bypass ? ui.field('IPv6 直连方式', ui.select(S.uiSpec.direct_bypass_modes.map((item) => [item.value, item.label]), main.direct_bypass || 'off', (value) => { main.direct_bypass = value; S.store.touch(); }), '提前判定为直连时保留客户端地址；DNS 辅助模式接受共享 IP 的域名歧义，其余连接继续正常分流。') : null,
           h('p', { class: 'muted' }, '使用页面顶部开关启用或停用；切换后会立即保存并应用。')
         ]),
         h('section', { class: 'card' }, [

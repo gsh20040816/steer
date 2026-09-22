@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check compiled IPv6 TCP bypass in isolated Linux network/mount namespaces.
+"""Check compiled IPv6 TCP/UDP bypass in isolated Linux network/mount namespaces.
 
 Usage: [unshare -Ur] python3 check-direct-bypass.py fixtures platform
 Only the private router/client/server topology is changed. No Internet needed.
@@ -49,6 +49,14 @@ def serve(port):
  s.bind(('::',port));s.listen()
  while True:
   c,a=s.accept(); threading.Thread(target=handle,args=(c,a,port==19080),daemon=True).start()
+def serve_udp(port):
+ s=socket.socket(socket.AF_INET6,socket.SOCK_DGRAM)
+ s.bind(('::',port))
+ while True:
+  data,address=s.recvfrom(4096)
+  s.sendto(address[0].encode(),address)
+for port in [18080,18081,18084,18085]:
+ threading.Thread(target=serve_udp,args=(port,),daemon=True).start()
 for port in [18080,18081,18083,18084,18085,19080]:
  threading.Thread(target=serve,args=(port,),daemon=True).start()
 print('ready',flush=True)
@@ -68,6 +76,15 @@ try:
    b+=data
   print(b.decode().split('\r\n\r\n')[-1] or 'rejected')
 except OSError:print('rejected')
+'''
+
+
+UDP_CLIENT = r'''
+import socket,sys
+with socket.socket(socket.AF_INET6,socket.SOCK_DGRAM) as c:
+ c.settimeout(4)
+ c.sendto(b'steer-bypass-source-check',(sys.argv[1],int(sys.argv[2])))
+ print(c.recvfrom(4096)[0].decode())
 '''
 
 
@@ -111,6 +128,9 @@ def main():
     def request(last, port, host):
         return run("ip", "netns", "exec", "b-client", "python3", "-c", CLIENT, "2001:4860:77:3::" + last, str(port), host)
 
+    def request_udp(last, port):
+        return run("ip", "netns", "exec", "b-client", "python3", "-c", UDP_CLIENT, "2001:4860:77:3::" + last, str(port))
+
     try:
         for mode in ["off", "static", "dns"]:
             config = str(fixtures / (platform + "-" + mode + ".json"))
@@ -135,6 +155,8 @@ def main():
                     expected = client_address if mode != "off" else router_address
                     assert request("20", 18081, "unmapped.test") == expected, "management IP/port direct"
                     assert request("20", 18085, "unmapped.test") == expected, "source MAC direct"
+                    assert request_udp("20", 18081) == expected, "UDP management direct preserves source"
+                    assert request_udp("20", 18085) == expected, "UDP source MAC direct"
                     # A missing reverse map must not turn an earlier domain
                     # proxy/reject into FALSE and bypass the later IP rule.
                     assert request("20", 18080, "unmapped.proxy.test") == "proxy", "missing-domain proxy barrier"
@@ -151,11 +173,14 @@ def main():
                     assert request("10", 18084, "mapped.direct.test") == expected, "UDP-only barrier cannot block TCP"
                     assert request("13", 18080, "mapped.other.test") == expected, "mapped domain excludes proxies for IP direct"
 
+                    assert request_udp("10", 18080) == expected, "UDP mapped domain direct"
+                    assert request_udp("10", 18084) == router_address, "UDP protocol barrier keeps userspace fallback"
+
                     # An explicit HTTP proxy connection must never kernel-bypass.
                     explicit = CLIENT.replace("GET / HTTP/1.1", "GET http://[2001:4860:77:3::10]:18080/ HTTP/1.1")
                     result = run("ip", "netns", "exec", "b-client", "python3", "-c", explicit, "2001:4860:77:1::1", "19090", "mapped.direct.test")
                     assert result == router_address, "explicit proxy remains L4 direct"
-                    print("PASS:", platform, mode, "source IPv6, MAC, DNS mapping, proxy/reject/protocol barriers, L4 fallback and HTTP proxy")
+                    print("PASS:", platform, mode, "TCP/UDP source IPv6, MAC, DNS mapping, proxy/reject/protocol barriers, L4 fallback and HTTP proxy")
                 except BaseException:
                     log.seek(0)
                     print(log.read(), file=sys.stderr)

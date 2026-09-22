@@ -112,14 +112,14 @@ macOS 的 DNS journal 测试覆盖自动/手动 DNS 恢复、服务重命名、�
 
 `check-netlink-guard.py <steer-openwrt> <sing-box>` 使用独立网络和挂载命名空间，暂停测试核心并注入路由通知积压，验证持续烧核后的自动恢复、十分钟冷却和停止时子进程退出。它不使用生产配置。非初始命名空间的 `rmem_default` 通常只读，此时仍验证降级恢复；接收缓冲提升需另在可写环境检查 netlink diag 返回的实际 socket 缓冲及系统默认值恢复。CI 将此测试与 DNS 集成一起执行。
 
-### 隔离验证 IPv6 TCP 有序旁路
+### 隔离验证 IPv6 TCP/UDP 有序旁路
 
 `STEER_BYPASS_FIXTURE_DIR=/tmp/steer-bypass-fixtures go test ./internal/platform -run TestExportDirectBypassFixtures`
 从共享编译器和两个真实平台 Target 导出 off/static/dns 测试配置。
 在 Linux 使用 `unshare -Ur python3 tests/integration/check-direct-bypass.py /tmp/steer-bypass-fixtures linux`
 运行（root 可省略 `unshare -Ur`），将最后参数换为 `openwrt` 验证 OpenWrt Target。
 脚本自行隔离 network/mount namespace，使用无公网出口的 client/router/server 拓扑，
-验证远端源 IPv6、源 MAC、DNS 映射、前置 Proxy/Reject/协议屏障、sniff 后 Direct 和显式 HTTP 代理。
+验证 TCP/UDP 远端源 IPv6、源 MAC、DNS 映射、前置 Proxy/Reject/协议屏障、sniff 后 Direct 和显式 HTTP 代理。
 需要 sing-box、ip、nft、dig、Python 3 和允许 user/net/mount namespace 的 Linux 内核。
 CI 使用已校验的官方 sing-box 1.14.1 对两个平台执行该验收。
 

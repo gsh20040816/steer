@@ -1598,8 +1598,8 @@ msgstr "优先内核直连"
 msgid "Allow DNS-assisted bypass"
 msgstr "允许 DNS 辅助旁路"
 
-msgid "IPv6 TCP direct mode"
-msgstr "IPv6 TCP 直连方式"
+msgid "IPv6 direct mode"
+msgstr "IPv6 直连方式"
 
 msgid "Kernel direct preserves the client address when rules can be decided early. DNS-assisted mode accepts shared-IP ambiguity; other connections use normal routing."
 msgstr "提前判定为直连时，内核直连保留客户端地址。DNS 辅助模式接受共享 IP 的域名歧义；其余连接继续正常分流。"

@@ -52,7 +52,7 @@ func preMatchProof(rule model.Rule, allowDNS bool) ruleProof {
 		yes = append(yes, proofCombine("and", known, predicate))
 		no = append(no, proofCombine("and", known, proofNot(predicate)))
 	}
-	// IP-literal IPv6 TCP traffic is the only scope compiled below. Local
+	// IP-literal IPv6 traffic is the only scope compiled below. Local
 	// proxy inbound selectors cannot match that scope.
 	if len(rule.Inbound) > 0 {
 		return ruleProof{proofConstant(false), proofConstant(true)}
@@ -71,18 +71,13 @@ func preMatchProof(rule model.Rule, allowDNS bool) ruleProof {
 		add(map[string]any{"source_ip_cidr": rule.SourceIPCIDR}, proofConstant(true))
 	}
 	if len(rule.Network) > 0 {
-		matchesTCP := false
-		for _, network := range rule.Network {
-			matchesTCP = matchesTCP || network == "tcp"
-		}
-		yes = append(yes, proofConstant(matchesTCP))
-		no = append(no, proofConstant(!matchesTCP))
+		add(map[string]any{"network": rule.Network}, proofConstant(true))
 	}
 	if len(rule.Port) > 0 {
 		add(map[string]any{"port": rule.Port}, proofConstant(true))
 	}
 	if len(rule.Protocol) > 0 {
-		// TCP SYN has no application protocol. Missing protocol is UNKNOWN.
+		// Application protocol is unavailable at pre-match. Keep it UNKNOWN.
 		yes = append(yes, proofConstant(false))
 		no = append(no, proofConstant(false))
 	}
@@ -114,7 +109,7 @@ func compileDirectBypass(intent model.Intent, target Target) []any {
 			return
 		}
 		scope := proofMatch(map[string]any{
-			"inbound": target.BypassInboundTags, "ip_version": 6, "network": []string{"tcp"},
+			"inbound": target.BypassInboundTags, "ip_version": 6,
 		})
 		// Port 53 belongs to the platform DNS capture path, including when
 		// the user has a catch-all Direct rule.
