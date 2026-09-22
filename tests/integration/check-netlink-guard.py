@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Root-only isolated OpenWrt supervisor regression. Args: steer sing-box.
-Checks actual netlink buffer size, burst tolerance, recovery and cooldown.
+Checks subscription buffers and burst tolerance; if the runtime exhibits the
+legacy overrun spin, also checks recovery and cooldown.
 """
 import ctypes
 import json
@@ -60,8 +61,18 @@ def main():
                 subprocess.run(['ip', '-batch', '-'], input=batch, text=True, check=True, capture_output=True)
             finally:
                 os.kill(pid, signal.SIGCONT)
-        def buffers(pid):
+        def subscriptions(pid):
             inodes = {os.readlink(p)[8:-1] for p in pathlib.Path('/proc', str(pid), 'fd').iterdir() if os.readlink(p).startswith('socket:[')}
+            # Observe owned route-notification subscriptions, not a fixed count
+            # of internal sockets (the upstream monitor now shares sockets).
+            result = []
+            for line in pathlib.Path('/proc', str(pid), 'net/netlink').read_text().splitlines()[1:]:
+                fields = line.split()
+                if len(fields) >= 10 and fields[1] == '0' and int(fields[3], 16) & 0x440 and fields[9] in inodes:
+                    result.append(fields)
+            return result
+        def buffers(pid):
+            inodes = {fields[9] for fields in subscriptions(pid)}
             result = []
             with socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, 4) as sock:
                 sock.settimeout(3)
@@ -88,7 +99,7 @@ def main():
             assert pid and parent.poll() is None
             assert default.read_text() == original, 'global buffer default was not restored'
             sizes = buffers(pid)
-            assert len(sizes) >= 3, sizes
+            assert sizes, "core has no observable route-notification subscription"
             if min(sizes) >= 4*1024*1024:
                 print('PASS actual subscription receive buffers:', sizes, flush=True)
                 burst(pid, 2500, 50000)
@@ -98,10 +109,21 @@ def main():
             else:
                 # rmem_default is read-only in non-initial network namespaces.
                 # Production verifies the raised socket limit separately.
-                print('Buffer adjustment unavailable in this namespace; testing recovery with buffers:', sizes, flush=True)
+                print('Subscription buffers below requested default; testing overflow tolerance:', sizes, flush=True)
             burst(pid, 12000, 50001)
             time.sleep(3)
-            assert cpu(pid) > 70, 'overflow reproducer did not trigger upstream fault'
+            usage = cpu(pid)
+            if usage < 25:
+                # sing-tun v0.9.3 fixes the overrun spin. A healthy core must
+                # not be rejected merely because the old fault is gone.
+                assert child() == pid, 'healthy core was unnecessarily restarted'
+                sockets = subscriptions(pid)
+                assert sockets and all(int(fields[4]) == 0 for fields in sockets), 'route subscriptions stopped draining'
+                assert any(int(fields[8]) > 0 for fields in sockets), 'burst did not exercise a receive overrun'
+                assert not pathlib.Path('/run/guard-cooldown.json').exists(), 'healthy core triggered recovery'
+                print('PASS overflow handled without spinning or restarting', flush=True)
+                return
+            assert usage > 70, f'overflow left ambiguous CPU load: {usage:.1f}%'
             until = time.monotonic()+85
             while time.monotonic() < until and child() == pid:
                 time.sleep(2)

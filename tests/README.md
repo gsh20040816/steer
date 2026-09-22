@@ -122,3 +122,5 @@ macOS 的 DNS journal 测试覆盖自动/手动 DNS 恢复、服务重命名、�
 验证远端源 IPv6、源 MAC、DNS 映射、前置 Proxy/Reject/协议屏障、sniff 后 Direct 和显式 HTTP 代理。
 需要 sing-box、ip、nft、dig、Python 3 和允许 user/net/mount namespace 的 Linux 内核。
 CI 使用已校验的官方 sing-box 1.14.1 对两个平台执行该验收。
+
+Netlink 验收按进程实际拥有的路由通知订阅检查，不假定上游内部 socket 数量。sing-box 1.14.1 已修复接收溢出卡死，能正常处理突发且没有误重启的核心通过验收；仍复现旧故障的核心继续验证自动恢复和冷却期。
