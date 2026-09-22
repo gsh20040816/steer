@@ -90,6 +90,8 @@ jobs:
               go test ./internal/platform -run TestExportNativeDNSFixtures -count=1
             STEER_BYPASS_FIXTURE_DIR="$RUNNER_TEMP/steer-linux-system/bypass-fixtures" \
               go test ./internal/platform -run TestExportDirectBypassFixtures -count=1
+            STEER_ICMP_FIXTURE_DIR="$RUNNER_TEMP/steer-linux-system/icmp-fixtures" \
+              go test ./internal/platform -run TestExportICMPFixtures -count=1
             CGO_ENABLED=0 go build -o "$RUNNER_TEMP/steer-linux-system/steer-openwrt" ./cmd/steer-openwrt
             CGO_ENABLED=0 go build \
               -trimpath \
@@ -155,6 +157,12 @@ jobs:
               steer-linux-system python3 /workspace/tests/integration/check-direct-bypass.py \
               /artifacts/bypass-fixtures "$platform"
           done
+
+      - name: Test ICMP L3 forwarding and absence of synthetic replies
+        run: |
+          docker exec --env PATH=/artifacts:/usr/sbin:/usr/bin:/sbin:/bin \
+            steer-linux-system python3 /workspace/tests/integration/check-icmp.py \
+            /artifacts/icmp-fixtures linux openwrt macos
 
       - name: Test OpenWrt netlink overload recovery
         run: |

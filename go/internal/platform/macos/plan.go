@@ -67,6 +67,7 @@ func (plan Plan) CompilerTarget() compiler.Target {
 	routes := append(append([]string{}, defaultRouteAddress...), plan.WireGuardRoutes...)
 	excluded := append(append([]string{}, routeExcludeIPv4...), routeExcludeIPv6...)
 	return compiler.Target{
+		TUNAddresses: append([]string{}, plan.Resources.TunAddresses...),
 		Inbounds: []any{
 			map[string]any{
 				"type": "tun", "tag": "steer-tun", "address": plan.Resources.TunAddresses,

@@ -34,6 +34,8 @@ type Options struct {
 // Target contains sing-box-native fragments selected by one platform adapter.
 // It deliberately contains no nftables, routing-table or service-manager plan.
 type Target struct {
+	// TUNAddresses are interface addresses, retaining host bits (not network prefixes).
+	TUNAddresses         []string   `json:"tun_addresses,omitempty"`
 	Inbounds             []any      `json:"inbounds"`
 	DNSInboundTags       []string   `json:"dns_inbound_tags"`
 	DNSCapture           DNSCapture `json:"dns_capture"`
@@ -283,14 +285,7 @@ func compileSingBox(intent model.Intent, target Target, dnsPaths []DNSPath, geoR
 			"inbound": capture.TUNInboundTags, "network": []string{"tcp", "udp"}, "port": []uint16{53}, "action": "hijack-dns",
 		})
 	}
-	if directID := enabledDirectRouteID(intent); directID != "" && len(endpoints) == 0 {
-		// Linux auto_redirect otherwise captures ICMP echo into sing-box.
-		// Pre-match bypass keeps ping on the kernel path; ICMP echo
-		// that still arrives on TUN falls back to the required Direct route.
-		routeRules = append(routeRules, map[string]any{
-			"network": []string{"icmp"}, "action": "bypass", "outbound": routeTag(directID),
-		})
-	}
+	routeRules = append(routeRules, compileICMPRules(intent, target)...)
 	if len(target.DirectRouteAddress) > 0 {
 		for _, route := range intent.Routes {
 			if route.Enabled && route.Kind == "direct" {

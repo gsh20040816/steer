@@ -83,7 +83,7 @@ config dns_profile 'secure_dns'
 
 协议支持 `udp tcp tls https quic h3`。规则选择代理 Route 时，DNS transport 使用同一 Route 及其完整前置链。本地 SOCKS、HTTP 或 Mixed 入口收到域名目标后，会在业务路由前通过 sing-box 原生 `resolve` action 复用同一组 DNS rules，因此按匹配规则选择 DNS Profile；Direct 不会再用 Bootstrap 解析业务域名，Proxy 也使用所选 Profile 的解析结果。已经是 IP 的目标不会触发该查询。Steer 不设置全局 `dns.strategy`，普通客户端明确发出的 A/AAAA 查询保持透明；DNS server 使用域名时，其 `domain_resolver.strategy` 来自独立的 `bootstrap.strategy`。sing-box 1.14 已废弃 DNS rule action 的 query-level `strategy`，schema 9 删除了原 `dns_profile.strategy`，Steer 不再生成该字段。缓存容量、持久化与乐观缓存是全局设置。
 
-平台 capture 只接管进入各自捕获路径的 TCP/UDP 目标端口 53；ICMP echo（ping）在 Linux/OpenWrt 的 `auto_redirect` 预匹配阶段 bypass，已进入 TUN 的请求走 Direct。应用自带 DoH、DoT、DoQ 是普通业务流量，port-53 capture 本身无法识别或重定向；除非另有经过验证的阻断/重定向策略，否则 UI 和文档都不承诺“全部 DNS 必然经过所选 Profile”。Diagnostics 的 DNS 检查只核对已发布 Active generation 中的预期 sing-box/nftables 配置，不是流量抓包，也不证明零泄漏。为保持网络稳定，Steer 不把整个 TUN 或本地链路流量无差别送入 DNS hijack。
+平台 capture 只接管进入各自捕获路径的 TCP/UDP 目标端口 53；ICMP echo（ping）遵循共享 L3 策略，保留适用规则顺序和 Direct/WireGuard/Block，普通代理目标回退 Direct。Linux/OpenWrt 对可路由源地址执行内核 bypass，本机 TUN 源地址改用 Direct 转发；macOS 通过 TUN 完成真实转发。应用自带 DoH、DoT、DoQ 是普通业务流量，port-53 capture 本身无法识别或重定向；除非另有经过验证的阻断/重定向策略，否则 UI 和文档都不承诺“全部 DNS 必然经过所选 Profile”。Diagnostics 的 DNS 检查只核对已发布 Active generation 中的预期 sing-box/nftables 配置，不是流量抓包，也不证明零泄漏。为保持网络稳定，Steer 不把整个 TUN 或本地链路流量无差别送入 DNS hijack。
 
 ## 规则
 

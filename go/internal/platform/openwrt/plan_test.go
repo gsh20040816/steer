@@ -48,12 +48,13 @@ func TestOpenWrtCompilerTargetUsesSharedLocalProxyResolve(t *testing.T) {
 	}) {
 		t.Fatalf("TUN DNS fallback must precede sniff and bypass: %#v", rules)
 	}
-	if len(rules) < 6 || rules[0].(map[string]any)["action"] != "hijack-dns" ||
-		!reflect.DeepEqual(rules[2].(map[string]any)["network"], []string{"icmp"}) ||
-		rules[2].(map[string]any)["action"] != "bypass" ||
-		rules[3].(map[string]any)["action"] != "sniff" || rules[4].(map[string]any)["action"] != "resolve" ||
-		!reflect.DeepEqual(rules[4].(map[string]any)["inbound"], []string{"steer-tun", "steer-local-local"}) ||
-		rules[5].(map[string]any)["outbound"] != "steer-route-direct" {
+	if len(rules) < 7 || rules[0].(map[string]any)["action"] != "hijack-dns" ||
+		rules[2].(map[string]any)["action"] != "route" ||
+		!reflect.DeepEqual(rules[3].(map[string]any)["network"], []string{"icmp"}) ||
+		rules[3].(map[string]any)["action"] != "bypass" ||
+		rules[4].(map[string]any)["action"] != "sniff" || rules[5].(map[string]any)["action"] != "resolve" ||
+		!reflect.DeepEqual(rules[5].(map[string]any)["inbound"], []string{"steer-tun", "steer-local-local"}) ||
+		rules[6].(map[string]any)["outbound"] != "steer-route-direct" {
 		t.Fatalf("OpenWrt target lost shared sniff/resolve/route semantics: %#v", rules)
 	}
 }

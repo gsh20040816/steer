@@ -79,7 +79,8 @@ func (plan Plan) CompilerTarget() compiler.Target {
 		},
 	}
 	target := compiler.Target{
-		Inbounds: inbounds, DNSInboundTags: []string{"steer-dns"}, SniffInboundTags: []string{"steer-tun"}, BypassInboundTags: []string{"steer-tun"},
+		TUNAddresses: append([]string{}, plan.Resources.TunAddresses...),
+		Inbounds:     inbounds, DNSInboundTags: []string{"steer-dns"}, SniffInboundTags: []string{"steer-tun"}, BypassInboundTags: []string{"steer-tun"},
 		DNSCapture:           compiler.DNSCapture{TUNInboundTags: []string{"steer-tun"}},
 		RequiredCapabilities: []string{"tun", "auto_route", "auto_redirect"},
 	}

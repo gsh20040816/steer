@@ -126,3 +126,9 @@ CI 使用已校验的官方 sing-box 1.14.1 对两个平台执行该验收。
 Netlink 验收按进程实际拥有的路由通知订阅检查，不假定上游内部 socket 数量。sing-box 1.14.1 已修复接收溢出卡死，能正常处理突发且没有误重启的核心通过验收；仍复现旧故障的核心继续验证自动恢复和冷却期。
 
 WireGuard 原生双端验收：设置 `STEER_WG_SING_BOX` 为已验证的 sing-box 1.14.1 路径，在 `go` 目录运行 `go test ./internal/wireguard -run TestNativeWireGuardRemoteAccess -count=1 -v`。测试只使用用户态 endpoint 和回环端口，不修改系统路由。macOS 发布流程自动执行。
+
+## ICMP 数据面回归
+
+在 `go` 目录以绝对路径设置 `STEER_ICMP_FIXTURE_DIR`，执行 `go test ./internal/platform -run TestExportICMPFixtures`，然后在具备网络 namespace 权限的一次性 Linux 容器或 OpenWrt 上运行 `python3 tests/integration/check-icmp.py <fixtures> [linux openwrt macos]`。脚本先隔离网络和 mount namespace，再创建测试链路，不修改宿主路由。
+
+覆盖 IPv4/IPv6 的真实 echo、目标端主动丢包时无伪应答，以及 Linux/OpenWrt 的本机/转发、TUN 源地址和 TTL/Hop Limit 超时。分别启用和不启用未使用的 WireGuard endpoint，防止隧道开关改变普通 ICMP 语义。macOS target 只在 Linux 上验证主机配置行为，Darwin 实机与实际 WireGuard peer 连通性需另行验收。
