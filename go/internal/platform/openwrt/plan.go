@@ -8,11 +8,14 @@ import (
 )
 
 const (
-	TunInterface           = "steer0"
-	DNSPort                = 1053
-	TunTable               = 2022
-	TunPriority            = 9000
-	TunFallbackPriority    = 32768
+	TunInterface = "steer0"
+	DNSPort      = 1053
+	TunTable     = 2022
+	TunPriority  = 9000
+	// netifd installs IPv6 source-interface routing rules at priority 90000.
+	// Excluded MAC traffic must reach those tables before the TUN fallback;
+	// captured traffic already takes the marked rule at priority 9001.
+	TunFallbackPriority    = 100000
 	AutoRedirectInputMark  = 0x2023
 	AutoRedirectOutputMark = 0x2024
 	AutoRedirectResetMark  = 0x2025

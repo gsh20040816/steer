@@ -163,3 +163,5 @@ procd 通过 `steer _supervise` 运行原版 sing-box。启动前临时将 `net.
 平台只提供 TUN 接口地址（保留 host bits）和内核 bypass 的入口能力。编译器从这些地址推导本机源地址例外，避免已选为 TUN 私有源地址的请求被错误送回物理内核路由。该例外不绑定固定 TUN 地址、WAN 接口、域名或公网前缀。
 
 实包回归覆盖 IPv4/IPv6 echo、本机/转发、TUN 源地址、目标端丢包负例和转发 TTL/Hop Limit；macOS 配置在 Linux namespace 的测试仅验证配置与核心行为，不能替代 Darwin 实机验收，也不代表已验证全部 ICMP 类型或 PMTUD。
+
+OpenWrt 的 TUN 兜底策略路由优先级为 100000，位于 netifd 的 IPv6 源接口路由（90000）之后；被原生 MAC 排除的无标记 TCP 可按委派前缀路由转发，已捕获流量仍通过前面的 mark 规则进入 TUN。Linux 通用平台仍使用 32768。

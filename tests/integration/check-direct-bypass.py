@@ -137,6 +137,14 @@ def main():
     try:
         for mode in ["off", "static", "dns", "mac"]:
             if mode == "mac":
+                if platform == "openwrt":
+                    # netifd's delegated-prefix route sits after main. Native
+                    # MAC-excluded TCP has no bypass mark and must reach it.
+                    run("ip", "-6", "route", "del", "default")
+                    run("ip", "-6", "route", "del", "2001:4860:77:3::/64")
+                    run("ip", "-6", "route", "add", "default", "from", "2001:4860:77:2::/64", "via", "2001:4860:77:2::2")
+                    run("ip", "-6", "route", "add", "table", "600", "default", "via", "2001:4860:77:2::2", "dev", "b-server-host")
+                    run("ip", "-6", "rule", "add", "priority", "90000", "from", "2001:4860:77:1::/64", "iif", "b-client-host", "lookup", "600")
                 # Reproduce Docker's broad MASQUERADE: without early native
                 # exclusion, UDP entering steer0 loses the client identity.
                 subprocess.run(["nft", "-f", "-"], input='table ip docker_test { chain postrouting { type nat hook postrouting priority srcnat; policy accept; ip saddr 11.77.1.2 oifname != "b-client-host" masquerade; \n }\n}\n', text=True, check=True)
