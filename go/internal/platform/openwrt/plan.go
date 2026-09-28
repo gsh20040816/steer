@@ -46,9 +46,10 @@ type Resources struct {
 	AutoRedirectOutputMark int      `json:"auto_redirect_output_mark"`
 	AutoRedirectResetMark  int      `json:"auto_redirect_reset_mark"`
 	AutoRedirectNFQueue    int      `json:"auto_redirect_nfqueue"`
+	ExcludeMACAddresses    []string `json:"exclude_mac_addresses,omitempty"`
 }
 
-func NewPlan(_ model.Intent) Plan {
+func NewPlan(intent model.Intent) Plan {
 	return Plan{SchemaVersion: 1, Resources: Resources{
 		TunInterface: TunInterface,
 		TunAddresses: []string{"198.18.0.1/30", "fdfe:dcba:9876::1/126"},
@@ -56,6 +57,7 @@ func NewPlan(_ model.Intent) Plan {
 		TunFallbackPriority: TunFallbackPriority, AutoRedirectInputMark: AutoRedirectInputMark,
 		AutoRedirectOutputMark: AutoRedirectOutputMark, AutoRedirectResetMark: AutoRedirectResetMark,
 		AutoRedirectNFQueue: AutoRedirectNFQueue,
+		ExcludeMACAddresses: compiler.DirectMACExclusions(intent),
 	}}
 }
 
@@ -78,6 +80,10 @@ func (plan Plan) CompilerTarget() compiler.Target {
 			"network": []string{"tcp", "udp"},
 		},
 	}
+	if len(plan.Resources.ExcludeMACAddresses) > 0 {
+		inbounds[0].(map[string]any)["exclude_mac_address"] = append([]string{}, plan.Resources.ExcludeMACAddresses...)
+	}
+
 	target := compiler.Target{
 		TUNAddresses: append([]string{}, plan.Resources.TunAddresses...),
 		Inbounds:     inbounds, DNSInboundTags: []string{"steer-dns"}, SniffInboundTags: []string{"steer-tun"}, BypassInboundTags: []string{"steer-tun"},

@@ -17,6 +17,13 @@ func RenderFirewall(plan Plan) string {
 		"\t\ttype nat hook prerouting priority dstnat - 2; policy accept;",
 		fmt.Sprintf("\t\tiifname \"%s\" return", plan.Resources.TunInterface),
 		fmt.Sprintf("\t\tmeta mark 0x%x counter return", plan.Resources.AutoRedirectOutputMark),
+	}
+	// TUN exclusion owns the data path; exempt these devices from the local
+	// DNS shim as well, before any destination rewriting.
+	if len(plan.Resources.ExcludeMACAddresses) > 0 {
+		lines = append(lines, "\t\tether saddr { "+strings.Join(plan.Resources.ExcludeMACAddresses, ", ")+" } counter return")
+	}
+	lines = append(lines,
 		"\t\tfib daddr type != local return",
 		fmt.Sprintf("\t\tmeta nfproto ipv4 meta l4proto { tcp, udp } th dport 53 counter redirect to :%d", plan.Resources.DNSPort),
 		// Link-local sources must remain on their ingress interface.
@@ -45,6 +52,6 @@ func RenderFirewall(plan Plan) string {
 		"\t}",
 		"}",
 		"",
-	}
+	)
 	return strings.Join(lines, "\n")
 }

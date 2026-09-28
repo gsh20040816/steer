@@ -55,7 +55,7 @@ def serve_udp(port):
  while True:
   data,address=s.recvfrom(4096)
   s.sendto(address[0].encode(),address)
-for port in [18080,18081,18084,18085]:
+for port in [53,18080,18081,18084,18085]:
  threading.Thread(target=serve_udp,args=(port,),daemon=True).start()
 for port in [18080,18081,18083,18084,18085,19080]:
  threading.Thread(target=serve,args=(port,),daemon=True).start()
@@ -81,7 +81,7 @@ except OSError:print('rejected')
 
 UDP_CLIENT = r'''
 import socket,sys
-with socket.socket(socket.AF_INET6,socket.SOCK_DGRAM) as c:
+with socket.socket(socket.AF_INET6 if ":" in sys.argv[1] else socket.AF_INET,socket.SOCK_DGRAM) as c:
  c.settimeout(4)
  c.sendto(b'steer-bypass-source-check',(sys.argv[1],int(sys.argv[2])))
  print(c.recvfrom(4096)[0].decode())
@@ -115,8 +115,11 @@ def main():
         for prefix, interface, last in [(["ip"], device, "1"), (["ip", "-n", namespace], peer, "2")]:
             run(*prefix, "link", "set", "lo", "up")
             run(*prefix, "link", "set", interface, "up")
+            run(*prefix, "addr", "add", "11.77." + segment + "." + last + "/24", "dev", interface)
             run(*prefix, "-6", "addr", "add", "2001:4860:77:" + segment + "::" + last + "/64", "dev", interface, "nodad")
+        run("ip", "-n", namespace, "route", "add", "default", "via", "11.77." + segment + ".1")
         run("ip", "-n", namespace, "-6", "route", "add", "default", "via", "2001:4860:77:" + segment + "::1")
+    run("ip", "route", "add", "default", "via", "11.77.2.2")
     run("ip", "-6", "route", "add", "default", "via", "2001:4860:77:2::2")
     run("ip", "-6", "route", "add", "2001:4860:77:3::/64", "via", "2001:4860:77:2::2")
     for last in ["10", "11", "12", "13", "14", "20"]:
@@ -132,7 +135,11 @@ def main():
         return run("ip", "netns", "exec", "b-client", "python3", "-c", UDP_CLIENT, "2001:4860:77:3::" + last, str(port))
 
     try:
-        for mode in ["off", "static", "dns"]:
+        for mode in ["off", "static", "dns", "mac"]:
+            if mode == "mac":
+                # Reproduce Docker's broad MASQUERADE: without early native
+                # exclusion, UDP entering steer0 loses the client identity.
+                subprocess.run(["nft", "-f", "-"], input='table ip docker_test { chain postrouting { type nat hook postrouting priority srcnat; policy accept; ip saddr 11.77.1.2 oifname != "b-client-host" masquerade; \n }\n}\n', text=True, check=True)
             config = str(fixtures / (platform + "-" + mode + ".json"))
             run("sing-box", "check", "-c", config)
             with tempfile.TemporaryFile(mode="w+") as log:
@@ -148,6 +155,23 @@ def main():
                             time.sleep(.1)
                     else:
                         raise RuntimeError("core listener did not start")
+
+                    if mode == "mac":
+                        assert request("20", 18080, "unmapped.proxy.test") == client_address, "whole MAC TCP IPv6"
+                        assert request_udp("20", 18080) == client_address, "whole MAC UDP IPv6"
+                        for _ in range(3):
+                            got = run("ip", "netns", "exec", "b-client", "python3", "-c", UDP_CLIENT, "11.77.2.2", "18080")
+                            assert got == "::ffff:11.77.2.1", ("Docker UDP must use WAN NAT", got)
+                        got = run("ip", "netns", "exec", "b-client", "python3", "-c", CLIENT, "11.77.2.2", "18080", "unmapped.proxy.test")
+                        assert got == "::ffff:11.77.2.1", ("Docker TCP must use WAN NAT", got)
+                        assert request_udp("20", 53) == client_address, "excluded external DNS stays outside TUN"
+                        run("ip", "-n", "b-client", "link", "set", "b-client-peer", "address", "02:00:00:00:00:11")
+                        run("ip", "-n", "b-client", "-6", "addr", "del", client_address + "/64", "dev", "b-client-peer")
+                        run("ip", "-n", "b-client", "-6", "addr", "add", "2001:4860:77:1::3/64", "dev", "b-client-peer", "nodad")
+                        assert request("20", 18080, "unmapped.proxy.test") == "proxy", "other MAC remains proxied"
+                        run("ip", "-n", "b-client", "link", "set", "b-client-peer", "address", "02:00:00:00:00:10")
+                        print("PASS:", platform, "whole MAC native exclusion, Docker NAT TCP/UDP, IPv6, external DNS and other-device isolation")
+                        continue
 
                     # Warm neighbors using a real client flow. A later MAC rule
                     # must work before sniff even without a DNS mapping.

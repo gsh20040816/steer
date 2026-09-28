@@ -53,9 +53,19 @@ func TestExportDirectBypassFixtures(t *testing.T) {
 		if platform == "openwrt" {
 			target = openwrt.NewPlan(value).CompilerTarget()
 		}
-		for _, mode := range []string{"off", "static", "dns"} {
+		for _, mode := range []string{"off", "static", "dns", "mac"} {
 			value.Main.DirectBypass = mode
+			originalRules := value.Rules
+			if mode == "mac" {
+				value.Main.DirectBypass = "off"
+				value.Rules = append([]intent.Rule{{ID: "whole_mac", Enabled: true, Route: "direct", DNSProfile: "dns", SourceMACAddress: []string{"02:00:00:00:00:10"}}}, originalRules...)
+				target = linux.NewPlan(value).CompilerTarget()
+				if platform == "openwrt" {
+					target = openwrt.NewPlan(value).CompilerTarget()
+				}
+			}
 			doc := compiler.Compile(value, compiler.Options{Target: target, StateDirectory: "/run/steer-bypass"}).SingBox
+			value.Rules = originalRules
 			// Replace only the external resolver transports, retaining generated
 			// DNS routing and reverse-mapping options.
 			dns := doc["dns"].(map[string]any)

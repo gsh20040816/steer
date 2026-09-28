@@ -14,6 +14,9 @@ func RenderFirewall(plan Plan) (string, error) {
 	add("\t\tiifname \"steer0\" return",
 		fmt.Sprintf("\t\tmeta mark 0x%x return", plan.Resources.AutoRedirectOutputMark),
 	)
+	if len(plan.Resources.ExcludeMACAddresses) > 0 {
+		add("\t\tether saddr { " + strings.Join(plan.Resources.ExcludeMACAddresses, ", ") + " } counter return")
+	}
 	add(
 		"\t\tfib daddr type != local return",
 		fmt.Sprintf("\t\tmeta nfproto ipv4 meta l4proto { tcp, udp } th dport 53 counter redirect to :%d", plan.Resources.DNSPort),

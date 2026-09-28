@@ -186,6 +186,10 @@ steer probe --kind speedtest --route <route-id> --download
 
 ## IPv6 内核直连（0.11.0）
 
+在 Linux/OpenWrt 上，仅包含 `source_mac_address` 条件、指向 Direct 的整设备规则会生成 TUN 原生 `exclude_mac_address`，同时跳过平台的本机 DNS 拦截 shim。此语义独立于下面的 IPv6 `direct_bypass` 优化，覆盖 IPv4/IPv6 TCP、UDP 和 ICMP；设备发送给外部 DNS 的请求也不再被 Steer 接管，发送给路由器自身 DNS 的请求仍由该 DNS 服务按其配置处理。
+
+只有在此前不存在可能匹配该设备的非 Direct 规则时才提升为整设备绕过；不同 MAC 或显式本地代理入口的规则不构成冲突。带域名、目的/源 IP、端口、协议、网络或入口附加条件的 MAC 规则保留常规路由语义。需要整设备绕过时，应将纯 MAC Direct 规则放在可能冲突的代理/拒绝规则之前。这样可在 Docker 对进入 TUN 的 UDP 做 MASQUERADE 之前识别设备，避免源身份丢失后误走默认代理。macOS 不生成这个 Linux 专用选项。
+
 `main.direct_bypass` 是 schema 9 的可选字段，省略或 `off` 保持既有行为。
 LuCI/Linux 基础设置提供同一选项；OpenWrt 对应 `option direct_bypass 'dns'`，
 Canonical JSON 对应 `"direct_bypass": "dns"`。

@@ -73,7 +73,7 @@ Default 按语义放在最后，禁用规则不参与。旁路只生成无 outbo
 
 主路径由 sing-box 1.14 TUN 的 `auto_route`、`strict_route`、`auto_redirect` 和 `dns_mode: hijack` 接管，包括普通 DNS 重定向。对仍以原目的地址进入 TUN 的 TCP/UDP 53 流量，编译器在 sniff/旁路之前显式执行 `hijack-dns`，覆盖原生重定向未改写地址的情况。Steer 仅保留本机目的地址的 DNS 例外：PREROUTING 拦截 LAN 查询路由器自身，OUTPUT/SNAT 保留路由器本机查询本地 DNS 的原有覆盖。其他 DNS 重定向交给 sing-box，删除未使用的 nft 地址集合。路由器本机 UDP/123 仍明确直连。ICMP echo（ping）由共享编译器在普通代理路由前完成 L3 策略匹配，保留适用规则顺序、WireGuard 和 Block，普通代理目标回退 Direct。可路由源地址使用内核 bypass；已选中 TUN 源地址的本机请求使用 Direct 重新选择物理源地址，避免 IPv6 source-specific default 无法路由 TUN ULA。
 
-源 MAC 条件由 sing-box 1.14 的 `source_mac_address` route/DNS rule 原生匹配，不再创建专用 TProxy/MAC DNS 入口或策略路由。TUN 名称、地址、table、priority、mark、NFQUEUE 和兼容 DNS 端口由平台管理，不出现在 Canonical Intent。
+Linux/OpenWrt 的无附加条件、无前序非 Direct 冲突的整 MAC Direct 规则由共享编译器筛选，平台降为 TUN 原生 `exclude_mac_address`，本机 DNS shim 同步豁免；不使用自定义数据面 mark 绕过。其余源 MAC 条件由 sing-box 1.14 的 `source_mac_address` route/DNS rule 原生匹配，不再创建专用 TProxy/MAC DNS 入口或策略路由。TUN 名称、地址、table、priority、mark、NFQUEUE 和兼容 DNS 端口由平台管理，不出现在 Canonical Intent。
 
 ## Linux 数据面
 

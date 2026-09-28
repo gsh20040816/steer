@@ -150,7 +150,7 @@ jobs:
               "/artifacts/dns-fixtures/$platform.nft"
           done
 
-      - name: Test ordered IPv6 TCP direct bypass
+      - name: Test ordered IPv6 bypass and whole-MAC Docker NAT exclusion
         run: |
           for platform in linux openwrt; do
             docker exec --env PATH=/artifacts:/usr/sbin:/usr/bin:/sbin:/bin \
