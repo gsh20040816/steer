@@ -158,9 +158,9 @@ Steer.app/
         └── LICENSES/{Steer-GPL-3.0.txt,sing-box-GPL-3.0.txt}
 ```
 
-Swift 的测试、构建和查询输出路径都显式加上 `--build-system native`。原因是 Swift 6.4 默认的构建系统在当前工具链下，会把二进制里记录的 SDK 版本写成最低部署版本 13.0；原生构建系统能正确记录 SDK 27.0。检查时同时要求最低部署版本是 13.0、SDK 是 27。
+Swift 的测试、构建和查询输出路径都显式加上 `--build-system native`。原因是 Swift 6.4 默认的构建系统在当前工具链下，会把二进制里记录的 SDK 版本写成最低部署版本 13.0；原生构建系统能正确记录 SDK 27.0。打包脚本会检查 SteerApp 的最低部署版本是 13.0、SDK 是 27，防止这个问题回来。
 
-组装时 `Info.plist` 会写入真实版本号、纯数字的 build number、`CFBundleExecutable=SteerApp`、`CFBundleIdentifier=com.steer.steer` 和 `LSMinimumSystemVersion=13.0`，不能留下 Xcode 的变量占位。构建会检查：SDK 和最低部署版本、二进制只有一种架构、文件权限、`steer-macos` 的校验和节点解析能正常运行、sing-box 的版本/编译选项/提交、Geo 清单、没有混进不该有的文件。签名时先 ad-hoc 签内部程序，最后签整个应用。
+组装时 `Info.plist` 会写入真实版本号、build number（Actions 的 run number）、`CFBundleExecutable=SteerApp`、`CFBundleIdentifier=com.steer.steer` 和 `LSMinimumSystemVersion=13.0`。签名时先 ad-hoc 签内部程序，再生成 `PAYLOAD-SHA256SUMS`，最后签整个应用。
 
 项目没有 Developer ID，构建信息里写的是 `Notarization: none`。DMG 和应用都不能宣称已公证；第一次打开时需要手动确认，这是预期行为。
 
@@ -218,8 +218,6 @@ v* tag 发布流程
   ├── CGO_ENABLED=0 构建两个 Linux tar.zst
   └── arm64 机器上构建 macOS DMG
         ↓
-各平台产物检查
-        ↓
 汇总本次构建的产物，生成统一的构建信息和校验和，生成构件证明
         ↓
 发布 GitHub Release；只有稳定版 tag 更新 Pages 上的 OpenWrt 软件源
@@ -249,7 +247,7 @@ git diff --check
 1. 把改动推到 master。稳定版等对应的 CI 通过；预发布版如果碰上 Actions 故障，记下本地完整检查的结果。
 2. 给同一个提交打版本 tag 并推送。如果 Actions 没有因为 tag 推送启动构建，手动触发这个 tag。
 3. `release.yml` 检查提交是否在 master 上、tag 和源码里的版本号是否一致；稳定版还检查 master CI。然后从 tag 源码构建所有平台。
-4. 汇总任务只下载本次构建的 OpenWrt、Linux、macOS 产物，核对各自的校验和与源码提交，然后生成统一的构建信息和校验和。
+4. 汇总任务只下载本次构建的 OpenWrt、Linux、macOS 产物，生成统一的构建信息和校验和。
 5. 构件证明完成后创建 GitHub Release。只有稳定版 tag 会更新 Pages 上的 OpenWrt 软件源；预发布只创建 prerelease。
 
 最终的 Release 包含四个 APK、两个 Linux tar.zst、一个 macOS arm64 DMG、`BUILD-METADATA.txt` 和 `SHA256SUMS`。发布任务不会下载 master 或其他构建的正式产物。

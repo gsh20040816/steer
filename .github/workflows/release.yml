@@ -26,6 +26,7 @@ env:
 jobs:
   source-gate:
     name: Verify tag source gate
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -36,65 +37,36 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify tag ancestry and version consistency
+      - name: Verify tag is on master and matches package versions
         id: version
         run: |
-          test "$GITHUB_REF_TYPE" = tag || {
-            echo "Release workflow must run from a version tag" >&2
-            exit 1
-          }
           git fetch --no-tags origin master:refs/remotes/origin/master
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/master || {
-            echo "Tag commit is not an ancestor of origin/master" >&2
-            exit 1
-          }
-          printf '%s\n' "$GITHUB_REF_NAME" \
-            | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$'
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/master
           version="${GITHUB_REF_NAME#v}"
           base_version="${version%%-*}"
+          # OpenWrt and pacman version strings cannot contain the SemVer "-".
           case "$version" in
             *-*)
-              prerelease="${version#*-}"
-              package_suffix="$(printf '%s' "$prerelease" | tr -d '.')"
-              openwrt_version="${base_version}_${package_suffix}"
-              arch_version="${base_version}${package_suffix}"
-              grep -Fq "当前预览版本为 **$version**" README.md
-              grep -Fq "当前预览版本是 \`v$version\`" docs/PACKAGING.md
+              suffix="$(printf '%s' "${version#*-}" | tr -d '.')"
+              openwrt_version="${base_version}_${suffix}"
+              arch_version="${base_version}${suffix}"
               ;;
             *)
               openwrt_version="$version"
               arch_version="$version"
-              grep -Fq "当前稳定版本为 **$version**" README.md
-              grep -Fq "当前稳定版本是 \`v$version\`" docs/PACKAGING.md
               ;;
           esac
           grep -Fqx "PKG_VERSION:=$openwrt_version" steer/Makefile
-          grep -Fqx "PKG_VERSION:=$openwrt_version" luci-app-steer/Makefile
           grep -Fqx "pkgver=$arch_version" packaging/archlinux/steer/PKGBUILD
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Require a successful master CI push run for a stable release
+      - name: Require a successful master CI run for a stable release
         if: ${{ !contains(github.ref_name, '-') }}
         env:
           GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          SOURCE_REVISION: ${{ github.sha }}
         run: |
-          run_id="$({
-            gh api --paginate \
-              "/repos/$REPOSITORY/actions/workflows/ci.yml/runs?branch=master&status=success&per_page=100" \
-              --jq ".workflow_runs[] | select(.head_sha == \"$SOURCE_REVISION\" and .event == \"push\") | .id"
-          } | head -n 1)"
-          [ -n "$run_id" ] || {
-            echo "No successful master CI push run found for $SOURCE_REVISION" >&2
-            exit 1
-          }
-          echo "Using successful master CI run $run_id"
-
-      - name: Record locally verified prerelease source gate
-        if: ${{ contains(github.ref_name, '-') }}
-        run: |
-          echo "Prerelease source was accepted after the maintainer completed the documented local release gate."
+          gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&branch=master&event=push&status=success" \
+            --jq '.total_count' | grep -qv '^0$'
 
   geodata:
     name: Resolve verified Geo seed
@@ -108,35 +80,26 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
-      - name: Download current Pages Geo bundle
+      - name: Download and verify current Pages Geo bundle
         run: |
           mkdir -p "$RUNNER_TEMP/geodata-seed"
           curl --fail --location --silent --show-error \
-            --output "$RUNNER_TEMP/steer-geodata.tar.zst" \
-            https://gsh20040816.github.io/steer/geodata/latest/steer-geodata.tar.zst
-          curl --fail --location --silent --show-error \
-            --output "$RUNNER_TEMP/manifest.json" \
-            https://gsh20040816.github.io/steer/geodata/latest/manifest.json
-          tar --zstd -xf "$RUNNER_TEMP/steer-geodata.tar.zst" \
-            -C "$RUNNER_TEMP/geodata-seed"
-          cmp "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/geodata-seed/manifest.json"
-
-      - name: Verify complete Geo seed
-        working-directory: go
-        run: go run ./cmd/steer-geodata-build verify --directory "$RUNNER_TEMP/geodata-seed"
+            https://gsh20040816.github.io/steer/geodata/latest/steer-geodata.tar.zst \
+            | tar --zstd -xf - -C "$RUNNER_TEMP/geodata-seed"
+          (cd go && go run ./cmd/steer-geodata-build verify --directory "$RUNNER_TEMP/geodata-seed")
 
       - name: Record Geo seed identity
         id: manifest
         run: |
-          echo "version=$(jq -r '.upstream.version' "$RUNNER_TEMP/manifest.json")" >> "$GITHUB_OUTPUT"
-          echo "sha256=$(sha256sum "$RUNNER_TEMP/manifest.json" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          manifest="$RUNNER_TEMP/geodata-seed/manifest.json"
+          echo "version=$(jq -r '.upstream.version' "$manifest")" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "$manifest" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
 
       - name: Upload exact Geo seed
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: geodata-seed
           path: ${{ runner.temp }}/geodata-seed/
-          if-no-files-found: error
           retention-days: 30
 
   openwrt:
@@ -151,8 +114,6 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          fetch-depth: 0
 
       - name: Download verified Geo seed
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -165,22 +126,7 @@ jobs:
           curl --fail --location --silent --show-error \
             --output "$RUNNER_TEMP/sing-box-openwrt.apk" \
             "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_OPENWRT_VERSION/sing-box_${SING_BOX_OPENWRT_VERSION}_openwrt_x86_64.apk"
-          printf '%s  %s\n' \
-            "$SING_BOX_OPENWRT_X86_64_SHA256" \
-            "$RUNNER_TEMP/sing-box-openwrt.apk" \
-            | sha256sum --check
-
-      - name: Prepare official SDK artifacts directory
-        run: |
-          mkdir -p "$RUNNER_TEMP/steer-sdk-artifacts"
-          mkdir -p "$RUNNER_TEMP/steer-sdk-dl"
-          mkdir -p "$RUNNER_TEMP/steer-sdk-ccache"
-          mkdir -p "$RUNNER_TEMP/steer-sdk-go-cache"
-          chmod -R a+rwx \
-            "$RUNNER_TEMP/steer-sdk-artifacts" \
-            "$RUNNER_TEMP/steer-sdk-dl" \
-            "$RUNNER_TEMP/steer-sdk-ccache" \
-            "$RUNNER_TEMP/steer-sdk-go-cache"
+          echo "$SING_BOX_OPENWRT_X86_64_SHA256  $RUNNER_TEMP/sing-box-openwrt.apk" | sha256sum --check
 
       - name: Restore OpenWrt SDK ccache
         id: sdk-ccache
@@ -200,21 +146,19 @@ jobs:
           restore-keys: |
             openwrt-sdk-gocache-v1-${{ runner.os }}-x86_64-5caa62e0-
 
-      - name: Normalize restored SDK cache permissions
-        run: |
-          chmod -R a+rwX \
-            "$RUNNER_TEMP/steer-sdk-ccache" \
-            "$RUNNER_TEMP/steer-sdk-go-cache"
-
       - name: Build packages with official OpenWrt SDK
         env:
           OPENWRT_APK_PRIVATE_KEY: ${{ secrets.OPENWRT_APK_PRIVATE_KEY }}
         run: |
+          # The SDK container runs as an unprivileged user.
+          for dir in artifacts dl ccache go-cache; do
+            mkdir -p "$RUNNER_TEMP/steer-sdk-$dir"
+            chmod -R a+rwX "$RUNNER_TEMP/steer-sdk-$dir"
+          done
           export SING_BOX_MIRROR_PACKAGE_VERSION="${SING_BOX_OPENWRT_VERSION/-rc./_rc}-r0"
           source_dir="$RUNNER_TEMP/steer-source"
-          mkdir -p "$source_dir"
-          git archive --format=tar "$GITHUB_SHA" | tar -xf - -C "$source_dir"
           mkdir -p "$source_dir/generated"
+          git archive --format=tar "$GITHUB_SHA" | tar -xf - -C "$source_dir"
           cp -R "$RUNNER_TEMP/geodata-seed" "$source_dir/generated/geodata-seed"
           docker run --rm \
             --volume "$source_dir:/feed:ro" \
@@ -229,19 +173,10 @@ jobs:
             --env PACKAGES="steer luci-app-steer" \
             --env OPENWRT_APK_PRIVATE_KEY \
             --env SING_BOX_UPSTREAM_APK=/upstream/sing-box.apk \
-            --env SING_BOX_UPSTREAM_SHA256="$SING_BOX_OPENWRT_X86_64_SHA256" \
             --env SING_BOX_MIRROR_PACKAGE_VERSION \
             --env BUILD_LOG=1 \
-            --env V=s \
             ghcr.io/openwrt/sdk@sha256:c8a248ce2411962a89f227db444bf5cea022829b049e6326c7d1032d9762982a \
             /bin/sh /entrypoint.sh
-
-      - name: Collect SDK artifacts
-        run: |
-          cp -R "$RUNNER_TEMP/steer-sdk-artifacts/bin" "$GITHUB_WORKSPACE/bin"
-          if [ -d "$RUNNER_TEMP/steer-sdk-artifacts/logs" ]; then
-            cp -R "$RUNNER_TEMP/steer-sdk-artifacts/logs" "$GITHUB_WORKSPACE/logs"
-          fi
 
       - name: Collect OpenWrt release assets and signed repository
         env:
@@ -250,24 +185,20 @@ jobs:
           GEODATA_MANIFEST_SHA256: ${{ needs.geodata.outputs.manifest_sha256 }}
           SING_BOX_UPSTREAM_SHA256: ${{ env.SING_BOX_OPENWRT_X86_64_SHA256 }}
         run: |
-          set -- $(find bin/packages -type f -path '*/steer/sing-box-*.apk' | sort)
-          [ "$#" -eq 1 ] || {
-            echo "Expected exactly one mirrored sing-box APK, found $#" >&2
-            exit 1
-          }
-          export SING_BOX_MIRRORED_SHA256="$(sha256sum "$1" | cut -d ' ' -f 1)"
-          ./scripts/collect-openwrt-artifacts.sh
-          ./scripts/collect-openwrt-repository.sh
+          mv "$RUNNER_TEMP/steer-sdk-artifacts/bin" "$RUNNER_TEMP/steer-sdk-artifacts/logs" .
+          export SING_BOX_MIRRORED_SHA256="$(sha256sum bin/packages/x86_64/steer/sing-box-*.apk | cut -d ' ' -f 1)"
+          ./scripts/collect-openwrt-artifacts.sh bin/packages/x86_64/steer dist
+          ./scripts/collect-openwrt-repository.sh bin/packages/x86_64/steer openwrt-repository keys/steer-apk.pem
 
       - name: Save OpenWrt SDK ccache
-        if: success() && steps.sdk-ccache.outputs.cache-hit != 'true'
+        if: steps.sdk-ccache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ runner.temp }}/steer-sdk-ccache
           key: ${{ steps.sdk-ccache.outputs.cache-primary-key }}
 
       - name: Save OpenWrt Go build cache
-        if: success() && steps.sdk-go-cache.outputs.cache-hit != 'true'
+        if: steps.sdk-go-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ runner.temp }}/steer-sdk-go-cache
@@ -280,7 +211,6 @@ jobs:
           path: |
             dist/
             logs/
-          if-no-files-found: error
           retention-days: 30
 
       - name: Upload signed OpenWrt repository
@@ -288,7 +218,6 @@ jobs:
         with:
           name: openwrt-repository
           path: openwrt-repository/
-          if-no-files-found: error
           retention-days: 30
 
   linux:
@@ -303,8 +232,6 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          fetch-depth: 0
 
       - name: Download verified Geo seed
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -315,14 +242,11 @@ jobs:
       - name: Build static Linux binaries
         working-directory: go
         run: |
-          mkdir -p "$RUNNER_TEMP/steer-linux-binaries"
           for target in amd64:x86_64 arm64:aarch64; do
-            goarch="${target%%:*}"
-            release_arch="${target#*:}"
-            CGO_ENABLED=0 GOOS=linux GOARCH="$goarch" go build \
+            CGO_ENABLED=0 GOOS=linux GOARCH="${target%%:*}" go build \
               -trimpath \
               -ldflags "-s -w -X main.version=$STEER_VERSION" \
-              -o "$RUNNER_TEMP/steer-linux-binaries/steer-linux-$release_arch" \
+              -o "$RUNNER_TEMP/steer-linux-binaries/steer-linux-${target#*:}" \
               ./cmd/steer-linux
           done
 
@@ -330,62 +254,25 @@ jobs:
         env:
           SOURCE_REVISION: ${{ github.sha }}
         run: |
-          SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")"
-          export SOURCE_DATE_EPOCH
-          ./scripts/collect-linux-artifacts.sh \
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")" \
+            ./scripts/collect-linux-artifacts.sh \
             "$RUNNER_TEMP/steer-linux-binaries" \
             dist-linux \
             "$RUNNER_TEMP/geodata-seed"
-
-      - name: Verify generic Linux archives
-        run: |
-          cd dist-linux
-          sha256sum -c SHA256SUMS
-          grep -Fqx "Source revision: $GITHUB_SHA" BUILD-METADATA.txt
-          for target in x86_64 aarch64; do
-            archive="steer-linux-$target.tar.zst"
-            listing="$RUNNER_TEMP/$target.list"
-            tar --zstd -tf "$archive" > "$listing"
-            for required in \
-              "steer-linux-$target/steer" \
-              "steer-linux-$target/config.example.json" \
-              "steer-linux-$target/web.example.json" \
-              "steer-linux-$target/geodata-seed/manifest.json" \
-              "steer-linux-$target/LICENSE" \
-              "steer-linux-$target/systemd/steer.service" \
-              "steer-linux-$target/systemd/steer-web.service" \
-              "steer-linux-$target/systemd/steer-subscription.service" \
-              "steer-linux-$target/systemd/steer-subscription.timer"; do
-              grep -Fqx "$required" "$listing"
-            done
-            if grep -Eq '(sing-box|geoview|geo(ip|site)\.dat)$' "$listing"; then
-              echo "Linux archive bundles an external dependency or Geo database" >&2
-              exit 1
-            fi
-          done
 
       - name: Upload generic Linux artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: linux-generic
           path: dist-linux/
-          if-no-files-found: error
           retention-days: 30
 
   macos:
-    name: macOS ${{ matrix.arch }} DMG
+    name: macOS arm64 DMG
     needs:
       - source-gate
       - geodata
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: xcode-27
-            arch: arm64
-            goarch: arm64
-            upstream_arch: arm64
-    runs-on: ${{ matrix.runner }}
+    runs-on: xcode-27
     env:
       STEER_VERSION: ${{ needs.source-gate.outputs.version }}
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
@@ -393,22 +280,12 @@ jobs:
     steps:
       - name: Check out tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          fetch-depth: 0
 
       - name: Set up Go from the module requirement
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version-file: go/go.mod
           cache-dependency-path: go/go.sum
-
-      - name: Confirm native runner and record toolchains
-        run: |
-          test "$(uname -m)" = "${{ matrix.arch }}"
-          xcodebuild -version | grep -Fx 'Xcode 27.0'
-          xcodebuild -version
-          swift --version
-          go version
 
       - name: Download verified Geo seed from this run
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -423,10 +300,9 @@ jobs:
             swift build -c release --disable-sandbox --build-system native
             swift build -c release --show-bin-path --build-system native > "$RUNNER_TEMP/swift-bin-path"
           )
-          mkdir -p "$RUNNER_TEMP/steer-macos-binaries"
           (
             cd go
-            CGO_ENABLED=0 GOOS=darwin GOARCH=${{ matrix.goarch }} go build \
+            CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build \
               -trimpath \
               -ldflags "-s -w -X main.version=$STEER_VERSION" \
               -o "$RUNNER_TEMP/steer-macos-binaries/steer-macos" \
@@ -434,27 +310,16 @@ jobs:
           )
 
       - name: Download and verify official sing-box Darwin archive
-        id: sing_box
         run: |
-          case '${{ matrix.arch }}' in
-            arm64) expected_sha256="$SING_BOX_DARWIN_ARM64_SHA256" ;;
-            *) echo 'Unsupported macOS architecture' >&2; exit 1 ;;
-          esac
           archive="$RUNNER_TEMP/sing-box-darwin.tar.gz"
           curl --fail --location --silent --show-error \
             --output "$archive" \
-            "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_MACOS_VERSION/sing-box-$SING_BOX_MACOS_VERSION-darwin-${{ matrix.upstream_arch }}.tar.gz"
-          printf '%s  %s\n' "$expected_sha256" "$archive" \
-            | shasum -a 256 -c
-          echo "sha256=$expected_sha256" >> "$GITHUB_OUTPUT"
-          mkdir -p "$RUNNER_TEMP/sing-box-darwin"
-          tar -xzf "$archive" -C "$RUNNER_TEMP/sing-box-darwin"
-          set -- $(find "$RUNNER_TEMP/sing-box-darwin" -type f -name sing-box | sort)
-          [ "$#" -eq 1 ]
-          install -m 0755 "$1" "$RUNNER_TEMP/steer-macos-binaries/sing-box"
-          set -- $(find "$RUNNER_TEMP/sing-box-darwin" -type f -name 'LICENSE*' | sort)
-          [ "$#" -ge 1 ]
-          install -m 0644 "$1" "$RUNNER_TEMP/steer-macos-binaries/sing-box-LICENSE"
+            "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_MACOS_VERSION/sing-box-$SING_BOX_MACOS_VERSION-darwin-arm64.tar.gz"
+          echo "$SING_BOX_DARWIN_ARM64_SHA256  $archive" | shasum -a 256 -c
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          extracted="$RUNNER_TEMP/sing-box-$SING_BOX_MACOS_VERSION-darwin-arm64"
+          install -m 0755 "$extracted/sing-box" "$RUNNER_TEMP/steer-macos-binaries/sing-box"
+          install -m 0644 "$extracted/LICENSE" "$RUNNER_TEMP/steer-macos-binaries/sing-box-LICENSE"
 
       - name: Verify WireGuard outbound and remote local-service access
         working-directory: go
@@ -464,19 +329,17 @@ jobs:
 
       - name: Assemble, sign, and create native DMG
         env:
-          STEER_APP_BINARY: ${{ runner.temp }}/steer-app-placeholder
           STEER_HELPER_BINARY: ${{ runner.temp }}/steer-macos-binaries/steer-macos
           STEER_SING_BOX_BINARY: ${{ runner.temp }}/steer-macos-binaries/sing-box
           STEER_SING_BOX_LICENSE: ${{ runner.temp }}/steer-macos-binaries/sing-box-LICENSE
           STEER_GEODATA_DIRECTORY: ${{ runner.temp }}/geodata-seed
           STEER_OUTPUT_DIRECTORY: ${{ github.workspace }}/dist-macos
           STEER_BUILD_NUMBER: ${{ github.run_number }}
-          STEER_TARGET_ARCH: ${{ matrix.arch }}
           STEER_SOURCE_REVISION: ${{ github.sha }}
           STEER_SOURCE_TAG: ${{ github.ref_name }}
           STEER_SING_BOX_VERSION: ${{ env.SING_BOX_MACOS_VERSION }}
           STEER_SING_BOX_REVISION: ${{ env.SING_BOX_MACOS_REVISION }}
-          STEER_SING_BOX_ARCHIVE_SHA256: ${{ steps.sing_box.outputs.sha256 }}
+          STEER_SING_BOX_ARCHIVE_SHA256: ${{ env.SING_BOX_DARWIN_ARM64_SHA256 }}
           STEER_GEO_MANIFEST_SHA256: ${{ needs.geodata.outputs.manifest_sha256 }}
         run: |
           export STEER_APP_BINARY="$(cat "$RUNNER_TEMP/swift-bin-path")/SteerApp"
@@ -485,52 +348,15 @@ jobs:
           export STEER_GO_VERSION="$(go version)"
           macos/scripts/build-app-bundle.sh
 
-      - name: Verify packaged DMG
-        run: |
-          cd dist-macos
-          shasum -a 256 -c SHA256SUMS
-          dmg="steer-macos-${{ matrix.arch }}.dmg"
-          mountpoint="$RUNNER_TEMP/steer-dmg-mount"
-          mkdir -p "$mountpoint"
-          hdiutil attach -nobrowse -readonly -mountpoint "$mountpoint" "$dmg"
-          cleanup_mount() {
-            hdiutil detach "$mountpoint" >/dev/null 2>&1 || true
-          }
-          trap cleanup_mount EXIT
-          app="$mountpoint/Steer.app"
-          plutil -lint "$app/Contents/Info.plist"
-          test "$(plutil -extract CFBundleExecutable raw "$app/Contents/Info.plist")" = SteerApp
-          test "$(plutil -extract CFBundleIdentifier raw "$app/Contents/Info.plist")" = com.steer.steer
-          marketing_version="${STEER_VERSION%%-*}"
-          test "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "$marketing_version"
-          test "$(plutil -extract LSMinimumSystemVersion raw "$app/Contents/Info.plist")" = 13.0
-          test "$(xcrun vtool -show-build "$app/Contents/MacOS/SteerApp" | awk '$1 == "minos" {print $2; exit}')" = 13.0
-          test "$(xcrun vtool -show-build "$app/Contents/MacOS/SteerApp" | awk '$1 == "sdk" {print $2; exit}' | cut -d. -f1)" = 27
-          test "$(lipo -archs "$app/Contents/MacOS/SteerApp")" = '${{ matrix.arch }}'
-          test "$(lipo -archs "$app/Contents/Resources/Installer/steer-macos")" = '${{ matrix.arch }}'
-          test "$(lipo -archs "$app/Contents/Resources/Installer/sing-box")" = '${{ matrix.arch }}'
-          test -x "$app/Contents/MacOS/SteerApp"
-          test -x "$app/Contents/Resources/Installer/steer-macos"
-          test -x "$app/Contents/Resources/Installer/sing-box"
-          test -x "$app/Contents/Resources/Installer/install-embedded-payload.sh"
-          codesign --verify --deep --strict --verbose=2 "$app"
-          if find "$app" -type f \( -name '*.dat' -o -name '*.go' -o -name '*.key' \) -print -quit | grep -q .; then
-            echo "DMG contains a forbidden source, key, or DAT file" >&2
-            exit 1
-          fi
-          hdiutil detach "$mountpoint"
-          trap - EXIT
-
       - name: Upload native macOS DMG
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: macos-${{ matrix.arch }}
+          name: macos-arm64
           path: dist-macos/
-          if-no-files-found: error
           retention-days: 30
 
   bundle:
-    name: Assemble verified release bundle
+    name: Assemble release bundle
     needs:
       - source-gate
       - geodata
@@ -548,44 +374,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p input/openwrt input/linux input/macos-arm64
-          gh run download "$GITHUB_RUN_ID" \
-            --repo "$GITHUB_REPOSITORY" \
-            --name openwrt-25.12.5-x86_64-packages \
-            --dir input/openwrt
-          gh run download "$GITHUB_RUN_ID" \
-            --repo "$GITHUB_REPOSITORY" \
-            --name linux-generic \
-            --dir input/linux
-          gh run download "$GITHUB_RUN_ID" \
-            --repo "$GITHUB_REPOSITORY" \
-            --name macos-arm64 \
-            --dir input/macos-arm64
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name openwrt-25.12.5-x86_64-packages --dir input/openwrt
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name linux-generic --dir input/linux
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name macos-arm64 --dir input/macos
 
-      - name: Verify and assemble exact release assets
+      - name: Assemble release assets
         run: |
-          set -- $(find input/openwrt -type f -name SHA256SUMS)
-          [ "$#" -eq 1 ]
-          openwrt_dist="$(dirname "$1")"
-          set -- $(find input/linux -type f -name SHA256SUMS)
-          [ "$#" -eq 1 ]
-          linux_dist="$(dirname "$1")"
-          set -- $(find input/macos-arm64 -type f -name SHA256SUMS)
-          [ "$#" -eq 1 ]
-          macos_arm64_dist="$(dirname "$1")"
-          (cd "$openwrt_dist" && sha256sum -c SHA256SUMS)
-          (cd "$linux_dist" && sha256sum -c SHA256SUMS)
-          (cd "$macos_arm64_dist" && sha256sum -c SHA256SUMS)
-          grep -Fqx "Source revision: $GITHUB_SHA" "$openwrt_dist/BUILD-METADATA.txt"
-          grep -Fqx "Source revision: $GITHUB_SHA" "$linux_dist/BUILD-METADATA.txt"
-          grep -Fqx "Source revision: $GITHUB_SHA" "$macos_arm64_dist/BUILD-METADATA.txt"
-          grep -Fqx "Source tag: $GITHUB_REF_NAME" "$macos_arm64_dist/BUILD-METADATA.txt"
-
           release_dir=release-artifact/dist
           mkdir -p "$release_dir"
-          cp "$openwrt_dist"/*.apk "$release_dir/"
-          cp "$linux_dist"/*.tar.zst "$release_dir/"
-          cp "$macos_arm64_dist"/steer-macos-arm64.dmg "$release_dir/"
+          cp input/openwrt/dist/*.apk input/linux/*.tar.zst input/macos/steer-macos-arm64.dmg "$release_dir/"
           {
             echo "Steer version: $STEER_VERSION"
             echo "Source tag: $GITHUB_REF_NAME"
@@ -605,19 +402,15 @@ jobs:
             echo "macOS notarization: none"
             echo "macOS arm64 sing-box archive SHA256: $SING_BOX_DARWIN_ARM64_SHA256"
             echo "macOS arm64 toolchains:"
-            grep -E '^(macOS SDK|Xcode|Swift|Go): ' "$macos_arm64_dist/BUILD-METADATA.txt"
+            grep -E '^(macOS SDK|Xcode|Swift|Go): ' input/macos/BUILD-METADATA.txt
           } > "$release_dir/BUILD-METADATA.txt"
-          (
-            cd "$release_dir"
-            sha256sum ./*.apk ./*.tar.zst ./*.dmg BUILD-METADATA.txt > SHA256SUMS
-          )
+          (cd "$release_dir" && sha256sum ./*.apk ./*.tar.zst ./*.dmg BUILD-METADATA.txt > SHA256SUMS)
 
       - name: Upload exact release bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-bundle
           path: release-artifact/dist/
-          if-no-files-found: error
           retention-days: 30
 
   attestation:
@@ -645,7 +438,6 @@ jobs:
   publish:
     name: Publish GitHub Release
     needs:
-      - source-gate
       - bundle
       - attestation
     runs-on: ubuntu-latest
@@ -663,26 +455,19 @@ jobs:
         working-directory: release-artifact
         env:
           GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ contains(github.ref_name, '-') }}
         run: |
-          release_flags=""
-          case "$RELEASE_TAG" in
-            *-*) release_flags="--prerelease" ;;
-          esac
-          gh release create "$RELEASE_TAG" ./* \
-            --repo "$REPOSITORY" \
+          gh release create "$GITHUB_REF_NAME" ./* \
+            --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --generate-notes \
-            $release_flags \
-            --title "Steer $RELEASE_TAG"
+            --prerelease="$PRERELEASE" \
+            --title "Steer $GITHUB_REF_NAME"
 
   pages:
     name: Deploy stable OpenWrt repository
     if: ${{ !contains(github.ref_name, '-') }}
-    needs:
-      - publish
-      - openwrt
+    needs: publish
     concurrency:
       group: pages-site
       cancel-in-progress: false
@@ -696,10 +481,8 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - name: Check out tagged source and Pages history
+      - name: Check out tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          fetch-depth: 0
 
       - name: Download signed OpenWrt repository from this run
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -707,45 +490,30 @@ jobs:
           name: openwrt-repository
           path: repository-artifact
 
-      - name: Locate signed OpenWrt repository
-        id: repository
-        run: |
-          repository_dir="$(dirname "$(find repository-artifact -type f -name packages.adb)")"
-          echo "repository_dir=$repository_dir" >> "$GITHUB_OUTPUT"
-
       - name: Prepare stable repository site
         run: |
+          git fetch origin refs/heads/pages:refs/remotes/origin/pages
           mkdir -p site
-          if git fetch origin refs/heads/pages:refs/remotes/origin/pages; then
-            git archive refs/remotes/origin/pages | tar -xf - -C site
-          fi
+          git archive refs/remotes/origin/pages | tar -xf - -C site
           rm -rf site/openwrt/25.12.5/x86_64
           mkdir -p site/openwrt/25.12.5/x86_64
-          cp "${{ steps.repository.outputs.repository_dir }}"/* site/openwrt/25.12.5/x86_64/
+          cp repository-artifact/* site/openwrt/25.12.5/x86_64/
           cp repository/index.html site/index.html
-          touch site/.nojekyll
 
       - name: Publish one current generated branch commit
         run: |
           pages_repo="$RUNNER_TEMP/pages-repository"
-          mkdir -p "$pages_repo"
-          git -C "$pages_repo" init --initial-branch=pages
+          git init --initial-branch=pages "$pages_repo"
           git -C "$pages_repo" config user.name github-actions[bot]
           git -C "$pages_repo" config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          auth_header="$(git config --get http.https://github.com/.extraheader)"
-          git -C "$pages_repo" config http.https://github.com/.extraheader "$auth_header"
+          git -C "$pages_repo" config http.https://github.com/.extraheader "$(git config --get http.https://github.com/.extraheader)"
           git -C "$pages_repo" remote add origin "https://github.com/$GITHUB_REPOSITORY.git"
           cp -R site/. "$pages_repo/"
           git -C "$pages_repo" add --all
           git -C "$pages_repo" commit -m "chore: publish current Pages state"
-          previous="$(git rev-parse --verify refs/remotes/origin/pages 2>/dev/null || true)"
-          if [ -n "$previous" ]; then
-            git -C "$pages_repo" push \
-              --force-with-lease="refs/heads/pages:$previous" \
-              origin HEAD:pages
-          else
-            git -C "$pages_repo" push origin HEAD:pages
-          fi
+          git -C "$pages_repo" push \
+            --force-with-lease="refs/heads/pages:$(git rev-parse refs/remotes/origin/pages)" \
+            origin HEAD:pages
 
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9

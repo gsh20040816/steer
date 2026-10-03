@@ -48,11 +48,10 @@ jobs:
             exit 1
           fi
           source_date_epoch="$(date --date="$published_at" +%s)"
-          # The first run has no published manifest yet.
           current_manifest="$(curl --fail --location --silent --show-error \
-            https://gsh20040816.github.io/steer/geodata/latest/manifest.json || echo '{}')"
+            https://gsh20040816.github.io/steer/geodata/latest/manifest.json)"
           read -r current_version current_sing_box_version current_geoview_ref < <(jq -r \
-            '[.upstream.version // "-", .tools.sing_box_version // "-", .tools.geoview_ref // "-"] | @tsv' \
+            '[.upstream.version, .tools.sing_box_version, .tools.geoview_ref] | @tsv' \
             <<<"$current_manifest")
           if [ "$current_version" = "$version" ] \
             && [ "$current_sing_box_version" = "$SING_BOX_VERSION" ] \
@@ -116,17 +115,10 @@ jobs:
 
       - name: Restore current generated Pages state
         if: steps.upstream.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p "$RUNNER_TEMP/site"
-          if git fetch origin refs/heads/pages:refs/remotes/origin/pages; then
-            git archive refs/remotes/origin/pages \
-              | tar -xf - -C "$RUNNER_TEMP/site"
-          else
-            echo 'The generated Pages branch is required before publishing Geo updates.' >&2
-            exit 1
-          fi
+          git fetch origin refs/heads/pages:refs/remotes/origin/pages
+          git archive refs/remotes/origin/pages | tar -xf - -C "$RUNNER_TEMP/site"
 
       - name: Replace current Geo subtree
         if: steps.upstream.outputs.changed == 'true'
@@ -153,14 +145,9 @@ jobs:
           cp -R "$RUNNER_TEMP/site"/. "$pages_repo/"
           git -C "$pages_repo" add --all
           git -C "$pages_repo" commit -m "chore: publish current Pages state"
-          previous="$(git rev-parse --verify refs/remotes/origin/pages 2>/dev/null || true)"
-          if [ -n "$previous" ]; then
-            git -C "$pages_repo" push \
-              --force-with-lease="refs/heads/pages:$previous" \
-              origin HEAD:pages
-          else
-            git -C "$pages_repo" push origin HEAD:pages
-          fi
+          git -C "$pages_repo" push \
+            --force-with-lease="refs/heads/pages:$(git rev-parse refs/remotes/origin/pages)" \
+            origin HEAD:pages
 
       - name: Upload GitHub Pages artifact
         if: steps.upstream.outputs.changed == 'true'

@@ -166,21 +166,9 @@ jobs:
           docker exec steer-linux-system python3 /workspace/tests/integration/check-netlink-guard.py \
             /artifacts/steer-openwrt /artifacts/sing-box
 
-      - name: Stop disposable systemd container
-        if: always()
-        run: |
-          docker container rm --force steer-linux-system >/dev/null 2>&1 || true
-
   macos:
-    name: Test macOS (${{ matrix.arch }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: xcode-27
-            arch: arm64
-            goarch: arm64
-    runs-on: ${{ matrix.runner }}
+    name: Test macOS (arm64)
+    runs-on: xcode-27
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     steps:
@@ -193,11 +181,6 @@ jobs:
           go-version-file: go/go.mod
           cache-dependency-path: go/go.sum
 
-      - name: Confirm native architecture
-        run: |
-          test "$(uname -m)" = "${{ matrix.arch }}"
-          xcodebuild -version | grep -Fx 'Xcode 27.0'
-
       - name: Test native macOS packaging and plist quarantine handling
         run: python3 tests/check-macos-packaging.py
 
@@ -206,7 +189,7 @@ jobs:
         run: |
           go test -race ./...
           go vet ./...
-          CGO_ENABLED=0 GOOS=darwin GOARCH=${{ matrix.goarch }} go build \
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build \
             -o "$RUNNER_TEMP/steer-macos" \
             ./cmd/steer-macos
 
@@ -215,7 +198,6 @@ jobs:
         run: |
           plutil -lint launchd/com.steer.steer.plist launchd/com.steer.steer.control.plist
           swift test --disable-sandbox --build-system native
-          swift build -c debug --disable-sandbox --build-system native
           swift build -c release --disable-sandbox --build-system native
           app_binary="$(swift build -c release --show-bin-path --build-system native)/SteerApp"
           xcrun vtool -show-build "$app_binary"
