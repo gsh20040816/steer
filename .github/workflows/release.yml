@@ -185,7 +185,8 @@ jobs:
           GEODATA_MANIFEST_SHA256: ${{ needs.geodata.outputs.manifest_sha256 }}
           SING_BOX_UPSTREAM_SHA256: ${{ env.SING_BOX_OPENWRT_X86_64_SHA256 }}
         run: |
-          mv "$RUNNER_TEMP/steer-sdk-artifacts/bin" "$RUNNER_TEMP/steer-sdk-artifacts/logs" .
+          # The SDK container wrote these as another uid, so they cannot be moved.
+          cp -R "$RUNNER_TEMP/steer-sdk-artifacts/bin" "$RUNNER_TEMP/steer-sdk-artifacts/logs" .
           export SING_BOX_MIRRORED_SHA256="$(sha256sum bin/packages/x86_64/steer/sing-box-*.apk | cut -d ' ' -f 1)"
           ./scripts/collect-openwrt-artifacts.sh bin/packages/x86_64/steer dist
           ./scripts/collect-openwrt-repository.sh bin/packages/x86_64/steer openwrt-repository keys/steer-apk.pem
