@@ -115,8 +115,7 @@
     },
     async geodata(kind) { return (await request(`/api/v1/geodata/${encodeURIComponent(kind)}`)).data; },
     async importNodes(document) {
-      const data = (await request('/api/v1/nodes/import', { method: 'POST', body: JSON.stringify({ document }) })).data;
-      return { ...data, warnings: data.warnings || [] };
+      return (await request('/api/v1/nodes/import', { method: 'POST', body: JSON.stringify({ document }) })).data;
     },
     async exportNode(node) {
       return (await request('/api/v1/nodes/export', { method: 'POST', body: JSON.stringify({ node }) })).data;

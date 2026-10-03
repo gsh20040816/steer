@@ -23,10 +23,7 @@ jobs:
       - name: Check source and packaging contracts
         run: |
           python3 tests/check-luci-i18n.py
-          python3 tests/check-package-boundaries.py
-          python3 tests/check-build-cache.py
-          python3 tests/check-linux-packaging.py
-          python3 tests/check-macos-packaging.py
+          python3 tests/check-release-consistency.py
           python3 tests/check-ui-contract.py
 
       - name: Check JavaScript and web interactions
@@ -172,8 +169,7 @@ jobs:
       - name: Stop disposable systemd container
         if: always()
         run: |
-          docker stop steer-linux-system >/dev/null 2>&1 || true
-          docker container rm steer-linux-system >/dev/null 2>&1 || true
+          docker container rm --force steer-linux-system >/dev/null 2>&1 || true
 
   macos:
     name: Test macOS (${{ matrix.arch }})

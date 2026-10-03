@@ -24,12 +24,6 @@ const (
 )
 
 func ActivateGeneration(ctx context.Context, runner Runner, candidate generation.Candidate, runDirectory, nftBinary string) error {
-	if runDirectory == "" {
-		runDirectory = "/run/steer"
-	}
-	if nftBinary == "" {
-		nftBinary = "/usr/sbin/nft"
-	}
 	if err := CleanupPlatform(ctx, runner, nftBinary); err != nil {
 		return err
 	}
@@ -50,9 +44,6 @@ func ActivateGeneration(ctx context.Context, runner Runner, candidate generation
 }
 
 func CleanupPlatform(ctx context.Context, runner Runner, nftBinary string) error {
-	if nftBinary == "" {
-		nftBinary = "/usr/sbin/nft"
-	}
 	tablesOutput, err := runner.Output(ctx, nftBinary, "-j", "list", "tables")
 	if err != nil {
 		return fmt.Errorf("list nftables tables: %w", err)

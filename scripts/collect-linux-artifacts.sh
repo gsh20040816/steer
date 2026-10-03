@@ -23,13 +23,6 @@ case "$source_date_epoch" in
 		;;
 esac
 
-for command_name in install tar zstd sha256sum; do
-	command -v "$command_name" >/dev/null 2>&1 || {
-		echo "Required command not found: $command_name" >&2
-		exit 1
-	}
-done
-
 work_dir="$(mktemp -d)"
 trap 'find "$work_dir" -depth -delete' EXIT HUP INT TERM
 if [ -d "$output_dir" ] && [ -n "$(find "$output_dir" ! -path "$output_dir" -print -quit)" ]; then

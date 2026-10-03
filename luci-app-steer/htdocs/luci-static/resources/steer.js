@@ -460,6 +460,7 @@ return baseclass.extend({
 	exportNode: function(node) { return callNodeExport(node); },
 	creationDefaults: function(collection, overrides) { return uciCreationDefaults(collection, overrides); },
 	disambiguateReferences: function(references) { return disambiguateReferences(references); },
+	nextSectionID: function(collection) { return nextSectionID(collection); },
 
 	configureNamedSection: function(section, defaults, beforeSectionId) {
 		const handleAdd = section.handleAdd;

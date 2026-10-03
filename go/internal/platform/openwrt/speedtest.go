@@ -26,12 +26,6 @@ type TestReport = probe.Report
 type TestResult = probe.Result
 
 func ProbeOverview(ctx context.Context, configPath, runDirectory, stateDirectory, kind string, client *http.Client) (TestReport, error) {
-	if configPath == "" {
-		configPath = "/etc/config/steer"
-	}
-	if runDirectory == "" {
-		runDirectory = "/run/steer"
-	}
 	currentIntent, err := readTestIntent(configPath, "overview test")
 	if err != nil {
 		return TestReport{}, recordTestFailure(stateDirectory, "overview", "", kind, err, probe.Identity{})
@@ -64,7 +58,7 @@ func ProbeOverview(ctx context.Context, configPath, runDirectory, stateDirectory
 	report = probe.BindReportIdentity(report, identity)
 	report = probe.SanitizeReport(report)
 	if stateDirectory != "" {
-		if err := saveTestReport(stateDirectory, report); err != nil {
+		if err := probe.SaveReport(stateDirectory, report); err != nil {
 			return report, err
 		}
 	}
@@ -99,7 +93,7 @@ func SpeedTestNode(ctx context.Context, configPath, stateDirectory, singBoxPath,
 	}
 	report = probe.BindReportIdentity(report, identity)
 	report = probe.SanitizeReport(report)
-	if err := saveTestReport(stateDirectory, report); err != nil {
+	if err := probe.SaveReport(stateDirectory, report); err != nil {
 		return report, err
 	}
 	return report, nil
@@ -138,7 +132,7 @@ func SpeedTestRoute(ctx context.Context, configPath, stateDirectory, singBoxPath
 	}
 	report = probe.BindReportIdentity(report, identity)
 	report = probe.SanitizeReport(report)
-	if err := saveTestReport(stateDirectory, report); err != nil {
+	if err := probe.SaveReport(stateDirectory, report); err != nil {
 		return report, err
 	}
 	return report, nil
@@ -153,9 +147,6 @@ func runTemporaryProbe(ctx context.Context, singBoxPath string, bootstrap model.
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 	_ = listener.Close()
-	if singBoxPath == "" {
-		singBoxPath = "/usr/bin/sing-box"
-	}
 	temporary, err := os.MkdirTemp("", "steer-test.")
 	if err != nil {
 		return TestReport{}, fmt.Errorf("create test directory: %w", err)
@@ -267,16 +258,12 @@ func readTestIntent(configPath, operation string) (model.Intent, error) {
 	return value, nil
 }
 
-func saveTestReport(stateDirectory string, report TestReport) error {
-	return probe.SaveReport(stateDirectory, report)
-}
-
 func recordTestFailure(stateDirectory, scope, objectID, kind string, testErr error, identity probe.Identity) error {
 	if kind != "direct" && kind != "proxy" && kind != "speedtest" && kind != "connect" && kind != "download" {
 		kind = "connect"
 	}
 	failure := probe.BindReportIdentity(probe.FailureReport(scope, objectID, kind, testErr), identity)
-	if saveErr := saveTestReport(stateDirectory, failure); saveErr != nil {
+	if saveErr := probe.SaveReport(stateDirectory, failure); saveErr != nil {
 		return fmt.Errorf("%w; save sanitized probe failure: %v", testErr, saveErr)
 	}
 	return testErr

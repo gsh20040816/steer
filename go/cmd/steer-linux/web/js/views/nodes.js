@@ -263,7 +263,7 @@
         preview.replaceChildren(
           h('h4', { class: 'import-title' }, `确认导入 ${nodes.length} 个节点`),
           ...(parsed.skipped ? [h('div', { class: 'alert' }, `已跳过 ${parsed.skipped} 个无效条目`)] : []),
-          ...(parsed.warnings.length ? [h('div', { class: 'alert' }, h('strong', {}, '解析警告'), h('ul', { class: 'import-warnings' }, parsed.warnings.map((w) => h('li', {}, w.detail))))] : []),
+          ...(parsed.skipped_reasons?.length ? [h('div', { class: 'alert' }, h('strong', {}, '解析警告'), h('ul', { class: 'import-warnings' }, parsed.skipped_reasons.map((w) => h('li', {}, w.detail))))] : []),
           ...(nameInput ? [ui.field('名称', nameInput)] : []),
           h('div', { class: 'facts' }, facts.map(([k, v]) => h('div', { class: 'fact' }, h('dt', {}, k), h('dd', {}, v)))),
           h('p', { class: 'muted' }, '上方只预览第一个节点；凭据始终隐藏。'),

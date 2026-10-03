@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/gsh20040816/steer/go/internal/compiler"
+	"github.com/gsh20040816/steer/go/internal/generation"
 	model "github.com/gsh20040816/steer/go/internal/intent"
 )
 
@@ -106,13 +107,6 @@ func TestProbeOverviewRunsWithoutActiveGeneration(t *testing.T) {
 	}
 }
 
-func TestProbeOverviewDefaultConfigurationPathMatchesPlatformLayout(t *testing.T) {
-	const expected = "/Library/Application Support/Steer/config/config.json"
-	if defaultProbeConfigPath != expected {
-		t.Fatalf("default overview probe configuration path = %q, want %q", defaultProbeConfigPath, expected)
-	}
-}
-
 func loadProbeTestIntent(t *testing.T) model.Intent {
 	t.Helper()
 	content, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "linux", "config.example.json"))
@@ -128,7 +122,7 @@ func loadProbeTestIntent(t *testing.T) model.Intent {
 
 func publishProbeTestIntent(t *testing.T, paths Paths, value model.Intent) {
 	t.Helper()
-	prepared, err := Prepare(value, paths)
+	prepared, err := prepareTestGeneration(value, paths)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,4 +143,39 @@ func writeProbeTestIntent(t *testing.T, path string, value model.Intent) {
 	if err := os.WriteFile(path, encoded.Bytes(), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func prepareTestGeneration(value model.Intent, paths Paths) (PreparedGeneration, error) {
+	validation := Validate(value)
+	if !validation.OK {
+		return PreparedGeneration{}, ValidationError{Validation: validation}
+	}
+	if err := paths.Ensure(); err != nil {
+		return PreparedGeneration{}, err
+	}
+	plan := NewPlan(value)
+	compiled := compiler.Compile(value, plan.CompilerOptions(paths.StateDirectory))
+	candidate, err := generation.Create(paths.GenerationsDirectory, value, compiled.SingBox)
+	if err != nil {
+		return PreparedGeneration{}, err
+	}
+	keepCandidate := false
+	defer func() {
+		if !keepCandidate {
+			_ = os.RemoveAll(candidate.Directory)
+		}
+	}()
+	metadata := GenerationMetadata{
+		SchemaVersion: RuntimeSchemaVersion,
+		GenerationID:  compiled.IntentDigest,
+		IntentDigest:  compiled.IntentDigest,
+	}
+	if err := generation.WriteJSON(filepath.Join(candidate.Directory, "macos.json"), plan); err != nil {
+		return PreparedGeneration{}, err
+	}
+	if err := generation.WriteJSON(filepath.Join(candidate.Directory, "generation.json"), metadata); err != nil {
+		return PreparedGeneration{}, err
+	}
+	keepCandidate = true
+	return PreparedGeneration{Candidate: candidate, Metadata: metadata}, nil
 }

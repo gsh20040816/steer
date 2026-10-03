@@ -27,6 +27,13 @@ type webApplication struct {
 	Runner         linuxplatform.Runner
 }
 
+func (app webApplication) runner() linuxplatform.Runner {
+	if app.Runner == nil {
+		return linuxplatform.ExecRunner{}
+	}
+	return app.Runner
+}
+
 func serveWeb(listen, webConfigPath, configPath, runDirectory, stateDirectory, seedDirectory string) error {
 	listen, err := normalizeWebListen(listen)
 	if err != nil {

@@ -4,6 +4,7 @@ package openwrt
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -31,10 +32,6 @@ func ReadSubscriptionStatus(configPath, stateDirectory string) ([]SubscriptionSt
 	}
 	statuses := make([]SubscriptionStatus, 0, len(intent.Subscriptions))
 	for _, configured := range intent.Subscriptions {
-		if !uci.IsIdentifier(configured.ID) {
-			statuses = append(statuses, subscription.BuildStatus(configured, intent.Nodes, intent.Routes, nil, fmt.Errorf("unsafe UCI section ID")))
-			continue
-		}
 		snapshot, readErr := readSubscriptionSnapshot(SubscriptionSnapshotPath(stateDirectory, configured.ID))
 		var saved *SubscriptionSnapshot
 		if readErr == nil {
@@ -104,9 +101,6 @@ func SystemUCIWriter(configPath string) UCIWriter {
 }
 
 func UpdateConfiguredSubscriptionsWithWriter(ctx context.Context, client *http.Client, configPath, stateDirectory string, id string, writeUCI UCIWriter) ([]SubscriptionSnapshot, error) {
-	if writeUCI == nil {
-		return nil, fmt.Errorf("subscription update requires a UCI writer")
-	}
 	config, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("read UCI for subscription update: %w", err)
@@ -117,14 +111,12 @@ func UpdateConfiguredSubscriptionsWithWriter(ctx context.Context, client *http.C
 	}
 	scheduleTime := time.Now()
 	var result []SubscriptionSnapshot
+	var failures []error
 	store := &UCIStore{write: writeUCI}
 	var changes []subscription.Change
 	for _, configured := range intent.Subscriptions {
 		if !configured.Enabled || (id != "" && configured.ID != id) {
 			continue
-		}
-		if !uci.IsIdentifier(configured.ID) {
-			return nil, fmt.Errorf("subscription %q has an unsafe UCI section ID", configured.ID)
 		}
 		var previous *SubscriptionSnapshot
 		if saved, readErr := readSubscriptionSnapshot(SubscriptionSnapshotPath(stateDirectory, configured.ID)); readErr == nil {
@@ -147,35 +139,26 @@ func UpdateConfiguredSubscriptionsWithWriter(ctx context.Context, client *http.C
 		if err != nil {
 			failure := subscription.FailedSnapshot(configured, previous, err, time.Now())
 			if saveErr := saveSubscriptionSnapshot(stateDirectory, failure); saveErr != nil {
-				return nil, subscription.NewUpdateError(configured.ID, saveErr)
+				err = saveErr
 			}
-			return nil, subscription.NewUpdateError(configured.ID, err)
+			// One broken subscription must not hold back the others.
+			failures = append(failures, subscription.NewUpdateError(configured.ID, err))
+			continue
 		}
 		old := make([]model.Node, 0)
 		for _, node := range intent.Nodes {
-			if !uci.IsIdentifier(node.ID) {
-				return nil, fmt.Errorf("node %q has an unsafe UCI section ID", node.ID)
-			}
 			if node.SourceSubscription == configured.ID {
 				old = append(old, node)
 			}
 		}
-		merged := []model.Node{}
-		if len(fetched.Nodes) > 0 {
-			merged = subscription.Merge(configured.ID, old, fetched.Nodes, intent.Routes)
-		}
-		for _, node := range merged {
-			if !uci.IsIdentifier(node.ID) {
-				return nil, fmt.Errorf("subscription node %q has an unsafe UCI section ID", node.ID)
-			}
-		}
+		merged := subscription.Merge(configured.ID, old, fetched.Nodes, intent.Routes)
 		existingNodes := intent.Nodes
 		intent.Nodes = subscription.Replace(existingNodes, configured.ID, merged)
 		changes = append(changes, subscription.Change{SubscriptionID: configured.ID, Existing: existingNodes, Replacement: merged})
 		snapshot := subscription.SuccessfulSnapshot(configured, previous, old, merged, fetched, time.Now())
 		result = append(result, snapshot)
 	}
-	if id != "" && len(result) == 0 {
+	if id != "" && len(result) == 0 && len(failures) == 0 {
 		return nil, fmt.Errorf("enabled subscription %q was not found", id)
 	}
 	if len(changes) > 0 {
@@ -196,7 +179,7 @@ func UpdateConfiguredSubscriptionsWithWriter(ctx context.Context, client *http.C
 			}
 		}
 	}
-	return result, nil
+	return result, errors.Join(failures...)
 }
 
 func CleanSubscriptionNode(configPath, stateDirectory, id, nodeID string) (SubscriptionSnapshot, error) {
@@ -204,9 +187,6 @@ func CleanSubscriptionNode(configPath, stateDirectory, id, nodeID string) (Subsc
 }
 
 func CleanSubscriptionNodeWithWriter(configPath, stateDirectory, id, nodeID string, writeUCI UCIWriter) (SubscriptionSnapshot, error) {
-	if writeUCI == nil {
-		return SubscriptionSnapshot{}, fmt.Errorf("subscription cleanup requires a UCI writer")
-	}
 	if !uci.IsIdentifier(id) || !uci.IsIdentifier(nodeID) {
 		return SubscriptionSnapshot{}, fmt.Errorf("subscription and node IDs must be safe UCI identifiers")
 	}

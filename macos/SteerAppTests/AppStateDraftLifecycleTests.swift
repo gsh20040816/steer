@@ -151,7 +151,6 @@ private actor DraftLifecycleBackend: BackendClient {
             failNextApply = false
             return ApplyOutcome(
                 status: runtimeStatus,
-                saved: true,
                 applied: false,
                 revision: revision,
                 error: "activation failed",
@@ -163,7 +162,6 @@ private actor DraftLifecycleBackend: BackendClient {
         markPersistedProbeResultsStale()
         return ApplyOutcome(
             status: runtimeStatus,
-            saved: true,
             applied: true,
             revision: revision,
             error: "",

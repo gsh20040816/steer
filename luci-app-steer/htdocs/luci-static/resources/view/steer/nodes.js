@@ -409,14 +409,6 @@ function selectedNodeGroup(groups) {
 	return groups.some((group) => group.id == requested) ? requested : manualNodeGroup;
 }
 
-function nextManualNodeID() {
-	const prefix = uiSpec.id_policy.collection_prefixes.nodes;
-	let index = 1;
-	while (uci.get('steer', prefix + '_' + index))
-		index++;
-	return prefix + '_' + index;
-}
-
 function renderNodeGroupNavigation(groups, activeGroup) {
 	return E('nav', { 'class': 'steer-node-groups', 'aria-label': _('Node groups') }, groups.map((group) => {
 		const query = new URLSearchParams(window.location.search || '');
@@ -1176,7 +1168,7 @@ function showImportDialog() {
 				if (nameInput)
 					nodes[0].name = nameInput.value.trim() || nodes[0].name;
 				nodes.forEach((node) => {
-					const id = nextManualNodeID();
+					const id = steer.nextSectionID('nodes');
 					uci.add('steer', 'node', id);
 					Object.keys(node).filter((option) => option != 'id' && !option.startsWith('source_') && option != 'pinned_stale').forEach((option) => {
 						let value = node[option];

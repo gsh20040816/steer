@@ -3,7 +3,7 @@
 
 'use strict';
 
-import { access, error as fs_error, mkdtemp, open, popen, rmdir, unlink } from 'fs';
+import { error as fs_error, mkdtemp, open, popen, rmdir, unlink } from 'fs';
 
 const ubus = require('ubus').connect();
 
@@ -46,16 +46,6 @@ function command_json_input(input) {
 	if (!directory)
 		return failure('IMPORT_TEMP_FAILED', 'Unable to create a private import workspace.');
 	const output = directory + '/result.json';
-	if (!access('/usr/sbin/steer')) {
-		const reason = fs_error();
-		rmdir(directory);
-		return failure('IMPORT_PROGRAM_MISSING', reason || 'The Steer node parser program is missing.');
-	}
-	if (!access('/usr/sbin/steer', 'x')) {
-		const reason = fs_error();
-		rmdir(directory);
-		return failure('IMPORT_PROGRAM_NOT_EXECUTABLE', reason || 'The Steer node parser program is not executable.');
-	}
 	const process = popen('/usr/sbin/steer _parse-nodes --output ' + shellquote(output), 'w');
 	if (!process) {
 		const reason = fs_error();

@@ -184,9 +184,9 @@ func TestApplyRecordFailurePreservesOperationError(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := errors.New("original apply failure")
-	err := runLockedApply(runDirectory, func() (coreapply.Result, error) {
+	err := runLockedApplyOutput(runDirectory, func() (coreapply.Result, error) {
 		return coreapply.Result{}, original
-	})
+	}, func(coreapply.Result) {})
 	if !errors.Is(err, original) || !strings.Contains(err.Error(), "publish Apply result") {
 		t.Fatalf("Apply errors were not preserved together: %v", err)
 	}

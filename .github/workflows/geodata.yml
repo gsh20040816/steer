@@ -42,17 +42,18 @@ jobs:
           release="$(gh api /repos/Loyalsoldier/v2ray-rules-dat/releases/latest)"
           version="$(jq -r '.tag_name' <<<"$release")"
           published_at="$(jq -r '.published_at' <<<"$release")"
-          [ -n "$version" ] && [ "$version" != null ]
-          [ -n "$published_at" ] && [ "$published_at" != null ]
+          # The tag is third-party input that later lands in URLs and manifests.
+          if ! [[ "$version" =~ ^[0-9A-Za-z._-]+$ ]]; then
+            echo "unexpected upstream tag: $version" >&2
+            exit 1
+          fi
+          source_date_epoch="$(date --date="$published_at" +%s)"
+          # The first run has no published manifest yet.
           current_manifest="$(curl --fail --location --silent --show-error \
-            https://gsh20040816.github.io/steer/geodata/latest/manifest.json 2>/dev/null \
-            || true)"
-          current_version="$(jq -r '.upstream.version // empty' \
-            <<<"$current_manifest" 2>/dev/null || true)"
-          current_sing_box_version="$(jq -r '.tools.sing_box_version // empty' \
-            <<<"$current_manifest" 2>/dev/null || true)"
-          current_geoview_ref="$(jq -r '.tools.geoview_ref // empty' \
-            <<<"$current_manifest" 2>/dev/null || true)"
+            https://gsh20040816.github.io/steer/geodata/latest/manifest.json || echo '{}')"
+          read -r current_version current_sing_box_version current_geoview_ref < <(jq -r \
+            '[.upstream.version // "-", .tools.sing_box_version // "-", .tools.geoview_ref // "-"] | @tsv' \
+            <<<"$current_manifest")
           if [ "$current_version" = "$version" ] \
             && [ "$current_sing_box_version" = "$SING_BOX_VERSION" ] \
             && [ "$current_geoview_ref" = "$GEOVIEW_REF" ]; then
@@ -61,16 +62,18 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "source_date_epoch=$(date --date="$published_at" +%s)" >> "$GITHUB_OUTPUT"
+          echo "source_date_epoch=$source_date_epoch" >> "$GITHUB_OUTPUT"
 
       - name: Download Geo inputs and sing-box compiler
         if: steps.upstream.outputs.changed == 'true'
+        env:
+          UPSTREAM_VERSION: ${{ steps.upstream.outputs.version }}
         run: |
           mkdir -p "$RUNNER_TEMP/geodata-input"
           for input in geosite geoip; do
             curl --fail --location --silent --show-error \
               --output "$RUNNER_TEMP/geodata-input/$input.dat" \
-              "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/download/${{ steps.upstream.outputs.version }}/$input.dat"
+              "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/download/$UPSTREAM_VERSION/$input.dat"
           done
           curl --fail --location --silent --show-error \
             --output "$RUNNER_TEMP/sing-box.tar.gz" \
@@ -84,21 +87,25 @@ jobs:
       - name: Generate and verify every SRS
         if: steps.upstream.outputs.changed == 'true'
         working-directory: go
+        env:
+          UPSTREAM_VERSION: ${{ steps.upstream.outputs.version }}
         run: |
           go run ./cmd/steer-geodata-build generate \
             --geosite "$RUNNER_TEMP/geodata-input/geosite.dat" \
             --geoip "$RUNNER_TEMP/geodata-input/geoip.dat" \
             --sing-box "$RUNNER_TEMP/sing-box-$SING_BOX_VERSION-linux-amd64-musl/sing-box" \
-            --upstream-version "${{ steps.upstream.outputs.version }}" \
+            --upstream-version "$UPSTREAM_VERSION" \
             --output "$RUNNER_TEMP/geodata-seed"
 
       - name: Assemble deterministic Geo bundle
         if: steps.upstream.outputs.changed == 'true'
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.upstream.outputs.source_date_epoch }}
         run: |
           temporary_tar="$RUNNER_TEMP/steer-geodata.tar"
           tar \
             --sort=name \
-            --mtime="@${{ steps.upstream.outputs.source_date_epoch }}" \
+            --mtime="@$SOURCE_DATE_EPOCH" \
             --owner=0 \
             --group=0 \
             --numeric-owner \

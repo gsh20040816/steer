@@ -33,9 +33,6 @@ func (app webApplication) authorized(request *http.Request) bool {
 		return false
 	}
 	value := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
-	if value == "" || len(value) != len(stored) {
-		return false
-	}
 	return subtle.ConstantTimeCompare([]byte(value), stored) == 1
 }
 

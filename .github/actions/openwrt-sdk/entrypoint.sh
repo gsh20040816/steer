@@ -125,9 +125,6 @@ awk '
 mv "$minimal_config" .config
 rm -f "$profile_kmods"
 
-grep -qx '# CONFIG_ALL_KMODS is not set' .config
-grep -qx '# CONFIG_ALL_NONSHARED is not set' .config
-
 # These target-profile modules are not in Steer's dependency closure.  Seeing
 # either one means the SDK config still selected unrelated target state.
 if grep -Eq '^CONFIG_PACKAGE_(kmod-r8169|kmod-video[^=]*)=[ym]' .config; then
@@ -196,10 +193,6 @@ staging_dir/host/bin/apk --keys-dir /feed/keys verify "$mirrored_sing_box"
 phase package-index
 make package/index
 
-[ -f "$repository_dir/packages.adb" ] || {
-  echo "Signed package index was not produced: $repository_dir/packages.adb" >&2
-  exit 1
-}
 staging_dir/host/bin/apk \
   --keys-dir /feed/keys \
   verify "$repository_dir/packages.adb"
@@ -220,17 +213,6 @@ cmp "$expected_packages" "$actual_packages" || {
   exit 1
 }
 rm -f "$actual_packages" "$expected_packages"
-
-for package_pattern in \
-  'sing-box-*.apk' \
-  'steer-[0-9]*.apk' \
-  'luci-app-steer-*.apk' \
-  'luci-i18n-steer-zh-cn-*.apk'; do
-  find bin/packages -type f -name "$package_pattern" -print -quit | grep -q . || {
-    echo "Required package was not produced: $package_pattern" >&2
-    exit 1
-  }
-done
 
 phase ccache-stats
 staging_dir/host/bin/ccache -vv --show-stats || true

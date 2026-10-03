@@ -72,9 +72,6 @@ func Fetch(ctx context.Context, client *http.Client, configured model.Subscripti
 	if parseErr != nil || (!strings.EqualFold(parsedURL.Scheme, "http") && !strings.EqualFold(parsedURL.Scheme, "https")) || parsedURL.Host == "" {
 		return ParseResult{}, fmt.Errorf("subscription URL must be an absolute HTTP or HTTPS URL")
 	}
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, configured.URL, nil)
 	if err != nil {
 		return ParseResult{}, fmt.Errorf("create subscription request: %w", err)
@@ -94,10 +91,7 @@ func Fetch(ctx context.Context, client *http.Client, configured model.Subscripti
 	if len(body) > maxSubscriptionBytes {
 		return ParseResult{}, fmt.Errorf("subscription exceeds the 16 MiB size limit")
 	}
-	parsed, err := ParseList(string(body))
-	if err != nil {
-		return ParseResult{}, err
-	}
+	parsed := ParseList(string(body))
 	if len(parsed.Nodes) == 0 {
 		return ParseResult{}, fmt.Errorf("subscription contains no valid nodes")
 	}

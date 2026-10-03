@@ -9,17 +9,19 @@ import (
 	"testing"
 )
 
-func TestNewPathsRequiresAbsoluteRuntimeRoot(t *testing.T) {
-	if _, err := NewPaths("relative"); err == nil {
-		t.Fatal("relative runtime root was accepted")
+func NewPaths(rootDirectory string) (Paths, error) {
+	if rootDirectory == "" || !filepath.IsAbs(rootDirectory) {
+		return Paths{}, errors.New("macOS runtime root must be an absolute path")
 	}
-	paths, err := NewPaths(filepath.Join(t.TempDir(), "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if paths.ConfigPath != filepath.Join(paths.Root, "config", "config.json") {
-		t.Fatalf("unexpected runtime paths: %#v", paths)
-	}
+	root := filepath.Clean(rootDirectory)
+	configDirectory := filepath.Join(root, "config")
+	return Paths{
+		Root: root, ConfigDirectory: configDirectory,
+		ConfigPath:           filepath.Join(configDirectory, "config.json"),
+		GenerationsDirectory: filepath.Join(root, "generations"),
+		StateDirectory:       filepath.Join(root, "state"),
+		LogsDirectory:        filepath.Join(root, "logs"),
+	}, nil
 }
 
 func TestIntentStoreUsesRevisionGuard(t *testing.T) {
@@ -57,7 +59,7 @@ func TestPreparePublishAndLoadCurrentGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := Prepare(validIntent(), paths)
+	prepared, err := prepareTestGeneration(validIntent(), paths)
 	if err != nil {
 		t.Fatal(err)
 	}

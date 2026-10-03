@@ -222,7 +222,6 @@ function createEnvironment(save, intent = { main: { enabled: true } }, options =
     icon: () => new Element('span'),
     asList: (value) => value || [],
     fmtTime: (value) => String(value),
-    fmtRevision: (value) => value,
     uid: (prefix) => `${prefix}-test`,
     api: {
       async geodata() { return { names: [], readable: false, count: 0 }; },
@@ -842,6 +841,8 @@ async function testStoreTracksSavedPendingApply() {
       },
       async overview() { return overview; },
       async runtime() { return {}; },
+      async diagnostics() { return { warnings: [] }; },
+      async probeResults() { return { latest_results: [], warnings: [] }; },
       async putConfig(_intent, _revision, apply) {
         assert.strictEqual(apply, false);
         overview = { pending_apply: true, status: {} };
@@ -881,7 +882,9 @@ async function testSharedCollectionOrderingMovesOnlyTheDraft() {
       api: {
         async config() { return { intent, revision: 'revision-ordering' }; },
         async overview() { return { pending_apply: false, status: {} }; },
-        async runtime() { return {}; }
+        async runtime() { return {}; },
+        async diagnostics() { return { warnings: [] }; },
+        async probeResults() { return { latest_results: [], warnings: [] }; },
       }
     };
     const window = { S };
@@ -909,7 +912,9 @@ async function testSharedCollectionOrderingMovesOnlyTheDraft() {
     api: {
       async config() { return { intent, revision: 'revision-pinned' }; },
       async overview() { return {}; },
-      async runtime() { return {}; }
+      async runtime() { return {}; },
+      async diagnostics() { return { warnings: [] }; },
+      async probeResults() { return { latest_results: [], warnings: [] }; },
     }
   };
   new Function('window', fs.readFileSync(path.join(root, 'go/cmd/steer-linux/web/js/store.js'), 'utf8'))({ S });
@@ -928,7 +933,9 @@ async function testSharedCollectionDragCommitsOnceAndCancellationDoesNotMutate()
       api: {
         async config() { return { intent, revision: 'revision-drag' }; },
         async overview() { return {}; },
-        async runtime() { return {}; }
+        async runtime() { return {}; },
+        async diagnostics() { return { warnings: [] }; },
+        async probeResults() { return { latest_results: [], warnings: [] }; },
       }
     };
     new Function('window', fs.readFileSync(path.join(root, 'go/cmd/steer-linux/web/js/store.js'), 'utf8'))({ S });
@@ -1335,7 +1342,9 @@ async function testExternalRevisionRefreshPreservesDraftAndLifecycleFacts() {
   const api = {
     config: async () => ({ intent: clone(server.intent), revision: server.revision }),
     overview: async () => clone(overview),
-    runtime: async () => clone(runtime)
+    runtime: async () => clone(runtime),
+    diagnostics: async () => ({ warnings: [] }),
+    probeResults: async () => ({ latest_results: [], warnings: [] })
   };
   const environment = createEnvironment(async () => ({ ok: true }), clone(server.intent));
   attachRealStore(environment, api);
@@ -1481,6 +1490,8 @@ function createDraftBackend() {
     async config() { state.configCalls++; return { intent: clone(state.intent), revision: state.revision }; },
     async overview() { return { pending_apply: true, status: { healthy: false } }; },
     async runtime() { return {}; },
+    async diagnostics() { return { warnings: [] }; },
+    async probeResults() { return { latest_results: [], warnings: [] }; },
     async diagnostics() { return probeDiagnosticsFixtures.diagnostics; },
     async probeResults() { return probeDiagnosticsFixtures.probe_results; },
     async geodata() { return { readable: true, names: [], count: 0 }; },

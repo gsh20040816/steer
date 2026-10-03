@@ -32,10 +32,7 @@ func (app webApplication) handleOverview(writer http.ResponseWriter, request *ht
 	if loadErr == nil {
 		validation = linuxplatform.ValidateWithGeoDataDirectory(value, app.seedDirectory())
 	}
-	runner := app.Runner
-	if runner == nil {
-		runner = linuxplatform.ExecRunner{}
-	}
+	runner := app.runner()
 	options := linuxplatform.BackendOptions{
 		RunDirectory: app.RunDirectory, StateDirectory: app.StateDirectory, GeoDataDirectory: app.seedDirectory(),
 	}
@@ -87,33 +84,22 @@ func (app webApplication) handleNodeImport(writer http.ResponseWriter, request *
 	}
 	var payload struct {
 		Document string `json:"document"`
-		URI      string `json:"uri"`
 	}
 	if err := json.NewDecoder(io.LimitReader(request.Body, 16<<20)).Decode(&payload); err != nil {
 		writeWebError(writer, errors.New("request requires a node document"), http.StatusBadRequest)
 		return
 	}
-	document := payload.Document
-	if document == "" {
-		// Keep accepting the 0.8.1 request shape while installed pages refresh.
-		document = payload.URI
-	}
-	if strings.TrimSpace(document) == "" {
+	if strings.TrimSpace(payload.Document) == "" {
 		writeWebError(writer, errors.New("request requires a node document"), http.StatusBadRequest)
 		return
 	}
-	parsed, err := subscription.ParseList(document)
-	if err != nil || len(parsed.Nodes) == 0 {
-		if err == nil {
-			err = fmt.Errorf("node import contained no valid nodes (%d skipped)", parsed.Skipped)
-		}
-		writeWebError(writer, err, http.StatusUnprocessableEntity)
+	parsed := subscription.ParseList(payload.Document)
+	if len(parsed.Nodes) == 0 {
+		writeWebError(writer, fmt.Errorf("node import contained no valid nodes (%d skipped)", parsed.Skipped), http.StatusUnprocessableEntity)
 		return
 	}
 	writeWebJSON(writer, map[string]any{
-		"node":  parsed.Nodes[0], // 0.8.1 page compatibility during an in-place upgrade.
 		"nodes": parsed.Nodes, "skipped": parsed.Skipped, "skipped_reasons": parsed.SkippedReasons,
-		"warnings": parsed.SkippedReasons,
 	})
 }
 
@@ -297,10 +283,6 @@ func (app webApplication) applySaved() (coreapply.Result, error) {
 			validation := model.Validation{Errors: []model.Issue{{Code: "DECODE_FAILED", ObjectType: "json", Message: err.Error()}}, Warnings: []model.Issue{}}
 			return coreapply.Result{Validation: &validation}, err
 		}
-		validation := linuxplatform.ValidateWithGeoDataDirectory(value, app.seedDirectory())
-		if !validation.OK {
-			return coreapply.Result{Validation: &validation}, linuxplatform.ValidationError{Validation: validation}
-		}
 		return app.applyValue(value)
 	})
 }
@@ -310,10 +292,7 @@ func (app webApplication) applyValue(value model.Intent) (coreapply.Result, erro
 	if !validation.OK {
 		return coreapply.Result{Validation: &validation}, linuxplatform.ValidationError{Validation: validation}
 	}
-	runner := app.Runner
-	if runner == nil {
-		runner = linuxplatform.ExecRunner{}
-	}
+	runner := app.runner()
 	backend := linuxplatform.NewBackend(runner, value, linuxplatform.BackendOptions{
 		RunDirectory: app.RunDirectory, StateDirectory: app.StateDirectory, GeoDataDirectory: app.seedDirectory(),
 	})

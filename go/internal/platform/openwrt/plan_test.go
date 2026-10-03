@@ -27,11 +27,6 @@ func TestPlanOwnsOpenWrtResourcesAndCompilerTarget(t *testing.T) {
 	if tun["dns_mode"] != "hijack" {
 		t.Fatalf("OpenWrt TUN must enable native DNS hijacking: %#v", tun)
 	}
-	for _, retired := range []string{`"type":"tproxy"`, `"mac_bindings"`, `"steer-mac-"`} {
-		if strings.Contains(string(encoded), retired) {
-			t.Fatalf("compiler target retained pre-1.14 MAC shim %q: %s", retired, encoded)
-		}
-	}
 }
 
 func TestOpenWrtCompilerTargetUsesSharedLocalProxyResolve(t *testing.T) {

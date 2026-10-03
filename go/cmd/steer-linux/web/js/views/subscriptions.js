@@ -74,7 +74,6 @@
         );
         return {
           submit() {
-            if (!draft.id || !/^[a-z][a-z0-9_]{0,31}$/.test(draft.id)) { ui.toast('无法创建订阅，请取消后重试', 'err'); return false; }
             if (!/^https?:\/\//.test(url.value.trim())) { ui.toast('订阅 URL 必须是 http(s)://', 'err'); return false; }
             draft.name = name.value.trim() || undefined;
             draft.url = url.value.trim();

@@ -60,10 +60,7 @@ func (backend *Backend) Prepare(ctx context.Context, value model.Intent, compile
 	if !capabilityReport.OK {
 		return generation.Candidate{}, fmt.Errorf("installed sing-box %s cannot satisfy this intent; specify an explicit compatible sing-box version/build: %v", capabilityReport.Version, capabilityReport.Errors)
 	}
-	firewall, err := RenderFirewall(backend.plan)
-	if err != nil {
-		return generation.Candidate{}, err
-	}
+	firewall := RenderFirewall(backend.plan)
 	if err := ValidateGeoRules(compiled.GeoRuleSets, backend.options.GeoDataDirectory); err != nil {
 		return generation.Candidate{}, err
 	}

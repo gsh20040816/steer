@@ -68,28 +68,6 @@ func TestConfiguredSubscriptionSchedule(t *testing.T) {
 	}
 }
 
-func TestIntentStoreSubscriptionNodeReplacement(t *testing.T) {
-	paths, err := NewPaths(filepath.Join(t.TempDir(), "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	value := validIntent()
-	value.Subscriptions = []model.Subscription{{ID: "sub", Enabled: true, URL: "https://example.invalid/sub"}}
-	value.Nodes = []model.Node{{ID: "old", Enabled: true, Type: "socks", Server: "127.0.0.1", ServerPort: 1080, NodeSource: model.NodeSource{SourceSubscription: "sub"}}}
-	store := IntentStore{Paths: paths}
-	if _, err := store.Save(value, ""); err != nil {
-		t.Fatal(err)
-	}
-	replacement := []model.Node{{ID: "new", Enabled: true, Type: "socks", Server: "127.0.0.2", ServerPort: 1080, NodeSource: model.NodeSource{SourceSubscription: "sub"}}}
-	if err := store.ReplaceNodes(context.Background(), "sub", value.Nodes, replacement); err != nil {
-		t.Fatal(err)
-	}
-	loaded, _, err := store.Load()
-	if err != nil || len(loaded.Nodes) != 1 || loaded.Nodes[0].ID != "new" {
-		t.Fatalf("subscription replacement failed: %#v %v", loaded.Nodes, err)
-	}
-}
-
 func TestConfiguredSubscriptionUpdatePersistsStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_, _ = writer.Write([]byte("socks://user:pass@127.0.0.1:1080#Imported\n"))

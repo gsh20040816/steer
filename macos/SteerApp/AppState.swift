@@ -239,7 +239,6 @@ struct RuntimeVersions {
 
 struct ApplyOutcome: Sendable {
     let status: RuntimeStatus
-    let saved: Bool
     let applied: Bool
     let revision: String
     let error: String
@@ -610,7 +609,6 @@ struct SystemComponentsStatus: Sendable {
 }
 
 private struct ControlResponse: Decodable {
-    let schemaVersion: Int
     let ok: Bool
     let status: RuntimeStatus?
     let saved: Bool?
@@ -622,7 +620,6 @@ private struct ControlResponse: Decodable {
     let error: String?
 
     enum CodingKeys: String, CodingKey {
-        case schemaVersion = "schema_version"
         case ok, status, saved, applied, revision, payload, validation, error
         case errorCode = "error_code"
     }
@@ -851,22 +848,6 @@ protocol BackendClient: Sendable {
     func geoCatalog(kind: String) async throws -> [String]
 }
 
-extension BackendClient {
-    func parseWireGuard(document: String) async throws -> WireGuardImportResult { throw BackendClientError.helperUnavailable }
-    func setEnabled(_ enabled: Bool) async throws -> (ApplyOutcome, ConfigurationSnapshot) {
-        throw BackendClientError.helperUnavailable
-    }
-    func diagnostics() async throws -> ProbeDiagnostics { .empty }
-    func probeResults() async throws -> ProbeLatestResults { .empty }
-    func overviewState() async throws -> OverviewLifecycleState {
-        let active = try await status()
-        return OverviewLifecycleState(active: active)
-    }
-    func exportNode(node: JSONValue) async throws -> String {
-        throw BackendClientError.helperUnavailable
-    }
-}
-
 struct HelperBackendClient: BackendClient {
     private static let installedHelperPath = "/usr/local/libexec/steer/steer-macos"
     private static let configurationPath = "/Library/Application Support/Steer/config/config.json"
@@ -1060,7 +1041,7 @@ struct HelperBackendClient: BackendClient {
                 status = try await self.status()
             }
             return ApplyOutcome(
-                status: status, saved: true, applied: response.applied == true,
+                status: status, applied: response.applied == true,
                 revision: revision, error: response.error ?? "",
                 validation: response.validation ?? validation
             )
@@ -1074,7 +1055,7 @@ struct HelperBackendClient: BackendClient {
             throw BackendClientError.processFailed(response.error ?? "启用状态未保存")
         }
         let document = String(decoding: try JSONEncoder.pretty.encode(payload), as: UTF8.self)
-        return (ApplyOutcome(status: status, saved: true, applied: response.applied == true,
+        return (ApplyOutcome(status: status, applied: response.applied == true,
                              revision: revision, error: response.error ?? "", validation: response.validation),
                 ConfigurationSnapshot(document: document, revision: revision))
     }
@@ -1410,9 +1391,6 @@ struct HelperBackendClient: BackendClient {
     private static func decodeControlResponse(_ result: ProcessResult) throws -> ControlResponse {
         guard let response = try? JSONDecoder().decode(ControlResponse.self, from: result.stdout) else {
             throw result.status == 0 ? BackendClientError.invalidResponse : result.error
-        }
-        guard response.schemaVersion == 1 else {
-            throw BackendClientError.invalidResponse
         }
         return response
     }
@@ -1903,12 +1881,6 @@ final class AppModel: ObservableObject {
         }
     }
 
-    // Compatibility for callers that still use the old name. New UI surfaces use
-    // the explicit Save and Apply wording so its persistence side effect is clear.
-    func apply() {
-        saveAndApplyDraft()
-    }
-
     func applySaved() {
         guard !isBusy, pendingDraftAction == nil else { return }
         let draftWasDirty = isDirty
@@ -1942,11 +1914,6 @@ final class AppModel: ObservableObject {
             await self.refreshOverviewLifecycleIfAvailable()
             await self.refreshProbeResultsIfAvailable()
             self.updateComponentStatus(await self.backend.componentStatus())
-            guard outcome.saved else {
-                throw BackendClientError.processFailed(
-                    outcome.error.isEmpty ? "已保存配置未应用" : outcome.error
-                )
-            }
             if !draftWasDirty,
                self.draftMatches(
                    document: draftDocumentBeforeApply,
@@ -3001,11 +2968,6 @@ final class AppModel: ObservableObject {
         await refreshOverviewLifecycleIfAvailable()
         await refreshProbeResultsIfAvailable()
         updateComponentStatus(await backend.componentStatus())
-        guard outcome.saved else {
-            throw BackendClientError.processFailed(
-                outcome.error.isEmpty ? "配置未保存，运行配置未改变" : outcome.error
-            )
-        }
         let draftStayedAtSavedVersion = adoptSavedRevision(
             outcome.revision,
             document: document,
@@ -3089,11 +3051,7 @@ final class AppModel: ObservableObject {
         cachedDraftDocument = rawJSON
         cachedDraftItems.removeAll(keepingCapacity: true)
         draftDecodeCount += 1
-        guard let data = rawJSON.data(using: .utf8) else {
-            cachedDraftValue = nil
-            cachedDraftError = "配置无法编码为 UTF-8"
-            return
-        }
+        let data = Data(rawJSON.utf8)
         do {
             cachedDraftValue = try JSONDecoder().decode(JSONValue.self, from: data)
             cachedDraftError = nil

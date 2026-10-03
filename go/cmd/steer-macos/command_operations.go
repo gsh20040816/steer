@@ -229,32 +229,18 @@ func runSubscription(args []string, stdoutWriter interface{ Write([]byte) (int, 
 			Subscriptions []macosplatform.SubscriptionStatus `json:"subscriptions"`
 		}{true, statuses})
 	}
-	snapshots, err := macosplatform.UpdateConfiguredSubscriptions(context.Background(), &http.Client{Timeout: 30 * time.Second}, *configPath, *stateDirectory, *id)
-	if err != nil {
-		if os.Geteuid() == 0 {
-			adminGID, lookupErr := lookupAdminGID()
-			if lookupErr != nil {
-				return lookupErr
-			}
-			if permissionErr := setFailedSubscriptionStatePermissions(*stateDirectory, *id, adminGID, err); permissionErr != nil {
-				return permissionErr
-			}
-		}
-		return err
-	}
+	snapshots, updateErr := macosplatform.UpdateConfiguredSubscriptions(context.Background(), &http.Client{Timeout: 30 * time.Second}, *configPath, *stateDirectory, *id)
 	if os.Geteuid() == 0 {
-		adminGID, lookupErr := lookupAdminGID()
-		if lookupErr != nil {
-			return lookupErr
-		}
-		if err := setControlConfigurationPermissions(*configPath, adminGID); err != nil {
+		adminGID, err := lookupAdminGID()
+		if err != nil {
 			return err
 		}
-		for _, snapshot := range snapshots {
-			if err := setControlStatePermissions(filepath.Join(*stateDirectory, "subscriptions", snapshot.SubscriptionID+".json"), adminGID); err != nil {
-				return err
-			}
+		if err := setSubscriptionUpdatePermissions(*configPath, *stateDirectory, adminGID, snapshots, updateErr); err != nil {
+			return err
 		}
+	}
+	if updateErr != nil {
+		return updateErr
 	}
 	statuses, err := macosplatform.ReadSubscriptionStatus(*configPath, *stateDirectory)
 	if err != nil {

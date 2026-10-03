@@ -24,12 +24,6 @@ type Status struct {
 }
 
 func ReadStatus(ctx context.Context, runner Runner, runDirectory, nftBinary string) Status {
-	if runDirectory == "" {
-		runDirectory = "/run/steer"
-	}
-	if nftBinary == "" {
-		nftBinary = "/usr/sbin/nft"
-	}
 	status := Status{}
 	if file, err := os.Open(filepath.Join(runDirectory, "last-apply.json")); err == nil {
 		var record coreapply.Record

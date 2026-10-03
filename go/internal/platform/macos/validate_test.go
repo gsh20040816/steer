@@ -31,6 +31,24 @@ func TestValidateRejectsSourceMACPolicy(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsCustomTorProcess(t *testing.T) {
+	value := validIntent()
+	value.Nodes = []model.Node{{
+		ID: "tor", Type: "tor", NodeProtocol: model.NodeProtocol{
+			ExecutablePath: "/tmp/x", ExtraArgs: []string{"ClientTransportPlugin", "x exec /tmp/x"}, DataDirectory: "/tmp/d",
+		},
+	}}
+	options := map[string]bool{}
+	for _, issue := range Validate(value).Errors {
+		if issue.Code == "PLATFORM_UNSUPPORTED_TOR_OPTION" {
+			options[issue.Option] = true
+		}
+	}
+	if !options["executable_path"] || !options["extra_args"] || !options["data_directory"] {
+		t.Fatalf("custom Tor process options were accepted: %v", options)
+	}
+}
+
 func TestValidateAcceptsCanonicalLocalTrafficIntent(t *testing.T) {
 	validation := Validate(validIntent())
 	if !validation.OK {

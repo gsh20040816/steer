@@ -48,10 +48,7 @@ func (app webApplication) handleLogs(writer http.ResponseWriter, request *http.R
 		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	runner := app.Runner
-	if runner == nil {
-		runner = linuxplatform.ExecRunner{}
-	}
+	runner := app.runner()
 	output, err := runner.Output(request.Context(), "/usr/bin/journalctl",
 		"-u", "steer.service", "-u", "steer-web.service", "-u", "steer-subscription.service",
 		"-n", "300", "--no-pager", "--output=short-iso")
@@ -86,10 +83,7 @@ func (app webApplication) runtimeInfo(ctx context.Context) runtimeInfo {
 		CanonicalSchema: model.SchemaVersion,
 		WebListen:       app.ListenAddress,
 	}
-	runner := app.Runner
-	if runner == nil {
-		runner = linuxplatform.ExecRunner{}
-	}
+	runner := app.runner()
 
 	singBoxOutput, err := runner.Output(ctx, "/usr/bin/sing-box", "version")
 	if err != nil {

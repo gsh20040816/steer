@@ -32,7 +32,7 @@ private actor DraftEditorBackend: BackendClient {
     }
     func apply(document: String, expectedRevision: String) async throws -> ApplyOutcome {
         ApplyOutcome(
-            status: RuntimeStatus(), saved: true, applied: true, revision: "test", error: "",
+            status: RuntimeStatus(), applied: true, revision: "test", error: "",
             validation: ValidationResult(ok: true, errors: [], warnings: [])
         )
     }

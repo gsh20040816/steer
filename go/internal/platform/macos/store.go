@@ -33,21 +33,6 @@ type Paths struct {
 	LogsDirectory        string `json:"logs_directory"`
 }
 
-func NewPaths(rootDirectory string) (Paths, error) {
-	if rootDirectory == "" || !filepath.IsAbs(rootDirectory) {
-		return Paths{}, errors.New("macOS runtime root must be an absolute path")
-	}
-	root := filepath.Clean(rootDirectory)
-	configDirectory := filepath.Join(root, "config")
-	return Paths{
-		Root: root, ConfigDirectory: configDirectory,
-		ConfigPath:           filepath.Join(configDirectory, "config.json"),
-		GenerationsDirectory: filepath.Join(root, "generations"),
-		StateDirectory:       filepath.Join(root, "state"),
-		LogsDirectory:        filepath.Join(root, "logs"),
-	}, nil
-}
-
 func (paths Paths) Ensure() error {
 	for _, directory := range []string{
 		paths.ConfigDirectory, paths.GenerationsDirectory, paths.StateDirectory, paths.LogsDirectory,

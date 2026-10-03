@@ -108,9 +108,6 @@ type webErrorDetails struct {
 }
 
 func errorDetails(err error) *webErrorDetails {
-	if err == nil {
-		return nil
-	}
 	details := &webErrorDetails{Code: "OPERATION_FAILED", Message: err.Error()}
 	var geoErr *geodata.Error
 	if errors.As(err, &geoErr) {

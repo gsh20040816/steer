@@ -101,7 +101,7 @@ return view.extend({
 		}
 
 		if (updateMetadata())
-			document.replaceChildren(JSON.stringify(redactSecrets(preview.intent || {}), null, 2));
+			document.replaceChildren(JSON.stringify(preview.intent || {}, null, 2));
 		return E('section', { 'class': 'cbi-section' }, [
 			E('h2', {}, _('Canonical Preview')),
 			heading,

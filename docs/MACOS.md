@@ -1,97 +1,149 @@
-# macOS 开发基线
+# macOS
 
-macOS 由两个正式组成部分构成：SwiftUI GUI 是用户前端，root LaunchDaemon + 外部 sing-box 是运行后端。GUI 与 OpenWrt LuCI、Linux Web 处于同一层，只负责配置、操作和状态展示，不承载代理数据面。
+macOS 版分两部分：
+
+- **SwiftUI 图形界面**：和 OpenWrt 的 LuCI、Linux 的网页界面地位相同，只负责编辑配置、执行操作和显示状态，本身不转发任何流量。
+- **后台服务**：几个以 root 身份运行的 LaunchDaemon，加上外部的 sing-box，负责真正接管流量。
 
 ```text
-Steer GUI
-  ├── 编辑 Canonical Intent
-  ├── Read / Validate / Status（无授权弹窗）
-  ├── 首次“安装系统组件”
-  │          ↓ 一次 macOS 管理员授权
-  └── Save / Apply / 订阅更新与清理（后续免密）
+Steer 图形界面
+  ├── 编辑配置
+  ├── 读取 / 校验 / 查看状态（不需要密码）
+  ├── 首次「安装系统组件」
+  │          ↓ 输入一次管理员密码
+  └── 保存 / 应用 / 更新或清理订阅（之后不再要密码）
              ↓ /var/run/steer/control.sock
-root LaunchDaemon: steer-macos _control
-             ↓ 仅允许固定的配置与订阅操作
+root 后台服务：steer-macos _control
+             ↓ 只允许固定的几种操作
 /usr/local/libexec/steer/steer-macos
-             ├── launchctl bootstrap → root LaunchDaemon: steer-macos _run
-             └── 每 15 分钟 → root LaunchDaemon: subscription update
-root LaunchDaemon: steer-macos _run
-             ↓ exec
+             ├── launchctl bootstrap → root 后台服务：steer-macos _run
+             └── 每 15 分钟 → root 后台服务：subscription update
+root 后台服务：steer-macos _run
+             ↓ 作为子进程启动并看护
 sing-box run -c current/sing-box.json
              ↓
-Darwin utun + auto_route
+macOS utun 虚拟网卡 + auto_route
 ```
 
-这条路径不要求 Apple Developer Program 或付费签名。sing-box 的 TUN inbound 官方支持 macOS；`auto_redirect` 是 Linux 路径，macOS 不使用它。[sing-box Tun](https://sing-box.sagernet.org/configuration/inbound/tun/)
+整条路径不需要付费的 Apple 开发者账号。sing-box 官方支持在 macOS 上使用 TUN 入站；`auto_redirect` 只在 Linux 上有，macOS 不用。参见 [sing-box Tun 文档](https://sing-box.sagernet.org/configuration/inbound/tun/)。
 
-## GUI 前端
+## 三份配置：Draft、Saved、Active
 
-`macos/SteerApp` 是 macOS 的正式配置与运维前端，不是代理运行时，也不维护第二份配置语义。它直接面向系统安装的 `steer-macos` helper：
+界面里会反复出现这三个词：
 
-- 总览：固定显示执行模型、Draft/Saved/Active 生命周期、当前 Draft 的六类配置规模与校验/聚合 Warning、最近 Apply 和快捷操作；私有 `_state` 从 Saved 编译投影与实际 Active 投影计算 pending Apply，普通摘要不显示内部 generation/digest 或原始错误链；
-- 基础设置：用原生字段编辑 Main、探测 URL、DNS 缓存和 Bootstrap DNS；
-- 节点、路由、DNS Profile、规则、订阅、本地代理：用原生 Table 与 Form 编辑同一份 draft collection，并支持拖动排序；普通界面只显示名称，不暴露内部 Canonical ID；
-- Canonical JSON · 高级：只作为完整导入、排错和高级字段的兜底入口；
-- 诊断：显示共享校验、最近 Apply、overview 测试操作及最新安全摘要、DNS 接管检查，以及按需加载的受限运行日志；Node/Route 最近测速结果显示在对应实体操作旁，不展示连续历史报告；
-- 系统：逐项显示 helper、sing-box 版本/build tags、generation、last Apply、Geo seed version/rule count、三个 plist/LaunchDaemon、DNS capture boundary、配置与 control socket 的安装事实；缺失或版本不一致时可用固定 embedded payload Repair，并提供受控卸载。
+- **Draft**：界面里正在编辑、还没保存的配置。
+- **Saved**：已经写入 `/Library/Application Support/Steer/config/config.json` 的配置。这是唯一的权威配置。
+- **Active**：sing-box 当前实际在运行的配置。
 
-所有页面的 toolbar 和菜单栏固定提供 Save、Apply Saved、Save and Apply 与全局 Enable，文案直接反映是否写入 Saved。Apply Saved 从磁盘读取当前 Saved 后再执行 revision-guarded Apply，即使本地 Draft dirty 也不会夹带或覆盖它；Apply 失败时 candidate 不会冒充 Active。切换 Enable 时把当前合法 Draft 连同新开关状态一起 Save and Apply，不因 dirty 而忽略其他修改；失败时分别显示 Saved 开关与后端真实 Active 状态。
-全局 Enable 只在 Draft 语法无效、revision conflict、Draft guard 或写操作进行中时禁用，并通过原生 help 说明原因；Overview 不再维护第二个 Enable。合法 dirty Draft 切换成功后采用新的 Saved revision，若 Apply 部分失败，toolbar 开关仍表达已保存的期望状态，运行徽标继续表达真实 Active 状态。
+## 图形界面
 
-读取系统配置、Status、Validate、探测和 Geo catalog 不弹出管理员授权。配置保持 `root:admin 0640`，不含密钥的 `current.json` generation 摘要可由 GUI 读取。概览探测通过同一个受限 Unix socket 交给 root daemon：请求只含固定的 kind/对象 ID/download 字段，不接受 URL、路径或命令；daemon 从 Saved 配置选择目标并直接使用 Mac 当前网络环境访问，因此没有 Active generation 时仍可测试。正式 App 首次安装内置系统组件时使用一次 macOS 标准管理员授权；之后 Save、Apply、探测和订阅更新/清理通过常驻 `com.steer.steer.control` root LaunchDaemon 完成，不再重复请求密码。
+`macos/SteerApp` 直接调用系统里安装的 `steer-macos`，不自己实现配置的含义。各页面：
 
-系统页将安装事实与运行激活事实分开显示。helper、sing-box、三个 plist、Canonical 配置、Geo seed、control/subscription LaunchDaemon 和 control socket 决定安装是否完整；`com.steer.steer` runtime LaunchDaemon 是否已加载只表示当前运行激活状态。Saved `main.enabled=false` 时 runtime LaunchDaemon 按设计未加载，系统组件仍为“已安装”，配置仍必须正常载入，也不得因此提示 Repair。
+- **总览**：显示 Draft/Saved/Active 三者是否一致、当前 Draft 里六类对象各有多少、校验错误和警告、最近一次应用的结果，以及常用操作。不显示内部的 generation 编号、摘要值或原始错误链。
+- **基础设置**：编辑全局选项、测试网址、DNS 缓存和引导 DNS。
+- **节点、路由、DNS、规则、订阅、本地代理**：用表格和表单编辑，可以拖动排序。列表只显示名称，不显示内部 ID。
+- **高级（JSON）**：直接编辑完整配置，用于整体导入、排查问题或编辑表单里没有的字段。
+- **诊断**：显示校验结果、最近一次应用、网络测试和结果摘要、DNS 接管检查，以及按需加载的运行日志。节点和路由的最近测速结果显示在各自旁边，不保留历史。
+- **系统**：逐项列出后台程序、sing-box 版本和编译选项、当前运行的配置、最近一次应用、Geo 数据版本和规则数、三个 LaunchDaemon、DNS 接管范围、配置文件和 control socket 是否就位。缺东西或版本不一致时可以点「修复」，也可以卸载。
 
-control daemon 只接受 schema 固定、大小受限的 `save`、`apply`、`probe`、只读 `diagnostics`、只读 `probe-results`、`subscription-update` 和 `subscription-clean` JSON 请求，不提供 shell、URL、路径或可执行文件参数。`probe` 和 `probe-results` 都只向 GUI 返回共享 `LatestProbeResult` 摘要；原始测量报告、Saved/Active identity 和完整错误链不跨入普通 SwiftUI。概览探测不切换运行态、不启动临时核心，也不依赖 LaunchDaemon/TUN 健康状态。socket 目录为 root-owned、不可由普通管理员替换；socket 本身为 `root:admin 0660`，服务端还使用 Darwin `LOCAL_PEERCRED` 再次校验 root/admin 调用者。候选配置仍经过共享严格解码与 canonical validation，写入使用 `root:admin 0640` 原子替换。GUI 不直接写 generation，不直接启动 sing-box，也不复制 Go 校验、编译、stale 或测速摘要逻辑。
+工具栏和菜单栏在所有页面都有这几个按钮：
 
-GUI 每次 Load 同时保存配置内容的 SHA-256 revision；Save 与 Apply 必须携带该 `expected_revision`。control 在与订阅调度器共用的跨进程 operation lock 内先比较当前 Saved revision，再写入或切换运行态。不匹配时返回稳定的 `REVISION_CONFLICT`，Saved、Active 和本地 Draft 都不变。GUI 明确提供 Reload Saved、保留本地 Draft 和显式覆盖三种选择；显式覆盖仍使用冲突响应中的最新 revision 做第二次原子比较，不绕过并发保护。
+- **保存**：把 Draft 写入 Saved。
+- **应用已保存**：从磁盘重新读取 Saved 再应用。即使 Draft 有未保存的修改，也不会带进去或被覆盖。应用失败时，新配置不会被当作 Active。
+- **保存并应用**：先保存再应用。
+- **启用开关**：只修改 Saved 里的 `enabled` 并立即应用，不动 Draft；Draft 里未保存或格式有误的修改都会原样保留。失败时，开关显示 Saved 里的期望状态，运行状态标记显示 sing-box 的真实状态。
 
-订阅 timer 和手动 Update 只更新 Saved 节点库存，从不自动 Apply。手动更新开始后若 Draft 未变化，完成时可安全 reload；若用户在网络请求期间继续编辑，GUI 保留本地 Draft 并显示上述冲突选择，不能用更新结果静默替换编辑内容。订阅列表保留最近成功和最近失败两组事实；上游已移除且无 Route 引用的节点在更新时自动删除，仍被引用的节点保留为 `pinned-stale` 并产生提醒尽快解除引用的 warning。Nodes 页显示对应 badge，订阅页逐节点列出 stale 名称、所属订阅与 Route 引用；被引用节点只禁用自身 clean。
+读取配置、查看状态、校验、网络测试和查询 Geo 分类都不需要密码。配置文件权限是 `root:admin 0640`；当前运行配置的摘要文件 `current.json` 不含密钥，界面可以直接读。
 
-同一 App 生命周期只执行一次初始 Load，因此关闭主窗口再从菜单栏打开会保留内存中的 Draft。Reload、安装/Repair 和退出如果遇到 dirty Draft，统一进入 Save / Discard / Cancel guard；Cancel 不触碰 Draft、Saved 或 Active。安装完成不再无条件 Load：Save 会保留并写入安装前的 Draft，Discard 才明确以安装后的 Saved 配置替换它。
+网络测试也通过 control socket 交给 root 后台服务执行。请求里只有测试类型、节点或路由 ID、是否测下载这几个字段，不能传网址、路径或命令。后台服务从 Saved 配置里选择测试目标，直接用 Mac 当前的网络访问，所以就算 sing-box 没在运行也能测。
 
-系统配置的唯一真相仍是：
+### 后台服务接受什么
+
+control 后台服务只接受这些请求：`status`、`state`、`set-enabled`、`save`、`apply`、`probe`、`diagnostics`、`probe-results`、`subscription-update`、`subscription-clean`。请求格式固定、大小有上限，不能传 shell 命令、网址、路径或可执行文件。
+
+需要特别注意的是：任何管理员组用户都能免密码让这个 root 服务保存配置，而 Tor 节点本来允许指定 Tor 程序路径和启动参数。为了不让它变成「以 root 运行任意程序」的入口，macOS 版会拒绝带有 `executable_path`、`extra_args` 或 `data_directory` 的 Tor 节点，只能使用 sing-box 默认的 Tor 设置。
+
+其他安全措施：
+
+- socket 所在目录归 root 所有，普通管理员无法替换；socket 本身权限是 `root:admin 0660`。
+- 服务端会再用 `LOCAL_PEERCRED` 确认调用者是 root 或管理员组成员。
+- 写入的配置同样经过严格解码和完整校验，再以 `root:admin 0640` 原子替换。
+- 测试结果只把摘要返回给界面，原始测量数据和完整错误链不会传过去。
+
+界面不直接写运行配置，也不直接启动 sing-box。为了在表单里即时提示，界面对端口、必填项、地址等做了少量本地检查，但最终以后台服务的校验结果为准。
+
+### 并发修改保护
+
+界面每次读取配置时会记下内容的 SHA-256（revision）。保存和应用时必须带上这个值。后台服务在操作锁（和订阅定时任务共用）里先比较当前 Saved 的 revision，一致才写入。如果不一致，返回 `REVISION_CONFLICT`，Saved、Active 和 Draft 都不变。
+
+这时界面给出三个选择：重新读取 Saved、保留本地 Draft、强制覆盖。强制覆盖会用冲突响应里的最新 revision 再比较一次，不会跳过保护。
+
+### 订阅
+
+订阅的定时更新和手动更新都只修改 Saved 里的节点，从不自动应用。
+
+- 如果手动更新期间 Draft 没变，更新完成后会自动重新加载。
+- 如果用户在更新过程中继续编辑，界面保留 Draft 并给出上面的冲突选择，不会悄悄用更新结果覆盖编辑内容。
+
+订阅列表会同时显示最近一次成功和最近一次失败。上游删掉的节点，如果没有路由在用，更新时直接删除；如果有路由在用，就保留并标记为「过期（pinned-stale）」，同时给出警告，提醒尽快改掉引用。节点页会显示过期标记；订阅页会列出过期节点的名称、所属订阅和引用它的路由。被引用的节点不能单独清理。
+
+### 未保存修改的保护
+
+应用启动后只自动读取一次配置。关掉主窗口再从菜单栏打开，Draft 仍保留在内存里。
+
+重新读取、安装或修复组件、退出应用时，如果 Draft 有未保存的修改，会询问「保存 / 放弃 / 取消」。选「取消」什么都不改。安装完成后不会自动覆盖 Draft：选「保存」会把安装前的 Draft 写入，选「放弃」才会换成安装后的 Saved。
+
+## DNS
+
+TUN 设置了 `dns_mode: hijack`。sing-box 不会自己修改 macOS 的系统 DNS，所以 `_run` 在 sing-box 的 DNS 可用后，用 `networksetup` 修改物理网络服务的 DNS：
+
+- 按服务 UUID 记下原来的设置。原来是自动获取的，恢复成 `Empty`；原来是手动填写的，恢复成原地址。
+- 每 5 秒检查一次，新出现的网络服务也会被接管。
+- 如果用户之后自己改了某个服务的 DNS，Steer 就不再管它。
+- 不修改 VPN 专用的服务，也不修改搜索域。
+- 只接管已启用的以太网和 Wi-Fi 服务。
+
+DNS 健康检查会确认 IPv4/IPv6 的 DNS 地址确实路由到 Steer 的 utun 网卡、DNS 能正常回复、系统默认解析器用的是 Steer 的地址。这样可以避免路由器劫持 DNS 时，把远端的回复误当成本机 sing-box 已就绪。
+
+检查失败时，sing-box 继续运行，每 5 秒重试一次，失败原因写入日志和 `dns-ready.json`。**目前检查失败不会撤销 DNS 接管**：如果 sing-box 的 DNS 一直不通，系统 DNS 会一直指向 198.18.0.2，需要手动停用 Steer。接管记录会持久保存，所以进程异常退出后可以恢复原设置；如果 control 后台服务也同时被停掉，需要重启电脑或运行 `steer-macos cleanup` 来恢复。
+
+macOS 没有 Linux 那样的 nftables 规则，也不用 SmartDNS。所有 DNS 都由 sing-box 自己的 DNS 模块处理。Steer 只在 TUN 入站上为目标端口 53 的 TCP/UDP 流量加一条 `hijack-dns` 规则：
 
 ```text
-/Library/Application Support/Steer/config/config.json
-```
-
-## DNS 路径
-
-TUN 启用 `dns_mode: hijack`；macOS CLI 不会自行配置系统 DNS，因此 `_run` 在核心 DNS 可用后用 `networksetup` 管理物理网络服务 DNS。按服务 UUID 保存原设置，自动 DNS 恢复为 `Empty`，手动 DNS 恢复原地址。每 5 秒接管新增服务；对用户后续修改放弃所有权。VPN 专用服务和搜索域不修改。
-
-macOS 不复制 Linux 的 nftables `PREROUTING`/`OUTPUT` shim，也不引入 SmartDNS。DNS 由同一份 sing-box DNS Router 处理，Steer 在 TUN inbound 上只对明确的 TCP/UDP 目标端口 53 生成 `hijack-dns` 规则；进入 TUN 的 ICMP echo（ping）在 sniff 前完成 L3 路由：保留适用规则的顺序、WireGuard 和 Block，普通代理目标回退 Direct：
-
-```text
-应用 / 系统 resolver → 198.18.0.2 / fdfe:dcba:9876::2
+应用 / 系统解析器 → 198.18.0.2 / fdfe:dcba:9876::2
         ↓
 macOS utun
         ↓
-sing-box route: inbound=steer-tun, tcp/udp, port=53
+sing-box 路由：inbound=steer-tun，tcp/udp，端口 53
         ↓
-sing-box DNS Router
+sing-box DNS 模块
         ↓
-DNS Profile → Route / outbound
+DNS 配置 → 路由 / 出口
 ```
 
-明确端口规则在 1.14 的 TUN 预匹配阶段进入逐包 DNS 处理；不使用协议嗅探作为 DNS 劫持条件。DNS Profile、缓存、detour 和上游协议继续由 sing-box 内部实现。Bootstrap 只解析 DNS 上游等基础设施主机名；Direct UDP/TCP Bootstrap 可产生明文 53，但不携带原始业务查询名。应用自带 DoH/DoT/DoQ 是普通业务流量，只有进入 Steer TUN 且另有可验证策略时才可能控制；port-53 hijack 本身不能识别或重定向它。
+几点说明：
 
-GUI 的 Diagnostics 只检查当前发布 generation 是否包含预期 `inbound=steer-tun + tcp/udp + destination port 53 + hijack-dns` 配置，并显示静态 exclusions。它不是抓包观测，也不证明零泄漏。loopback、link-local、multicast、文档和其他保留地址继续排除；为保证网络稳定，不扩大为无差别本地链路劫持。
+- 劫持只看端口，不靠协议嗅探判断是不是 DNS。
+- 引导 DNS 只用来解析 DNS 服务器等基础设施的域名。直连的 UDP/TCP 引导 DNS 会产生明文的 53 端口查询，但里面不包含用户实际访问的域名。
+- 应用自己发起的 DoH/DoT/DoQ 是普通的加密流量，端口 53 劫持识别不了，也改不了它们。
+- 进入 TUN 的 ping（ICMP echo）在嗅探前就按规则路由：保留规则顺序、WireGuard 和拒绝；本应走代理的目标会改走直连，因为代理协议不能转发 ping。
 
-## Go macOS adapter
+诊断页里的 DNS 检查只确认当前运行的配置里有这条劫持规则，并列出不接管的地址范围。它不是抓包，不能证明没有 DNS 泄漏。回环地址、链路本地地址、组播、文档地址和其他保留地址都不接管，避免影响本地网络。
+
+## Go 适配器
 
 `go/internal/platform/macos` 负责：
 
-- Darwin TUN plan：地址、MTU、`auto_route` 和非全球地址排除；`198.18.0.0/15` 包含 system stack 自身的 IPv4 对端，不能加入排除表；
-- 显式 TCP/UDP 53 DNS capture，进入 TUN 的 ICMP echo（ping）在 sniff 前完成 L3 路由：保留适用规则的顺序、WireGuard 和 Block，普通代理目标回退 Direct；
-- sing-box version/capability/check；
-- generation prepare/publish；
-- launchd stop/bootstrap；
-- utun 地址、LaunchDaemon 和当前 generation 的 DNS 接管 health；
-- `_run` 看护 sing-box，先恢复 DNS 再结束核心；control daemon 回收崩溃后遗留的 `state/dns-restore.json`，卸载在删除 helper/state 前再次恢复；
-- atomic Apply record、status 和 cleanup。
+- TUN 网卡的地址、MTU、`auto_route` 和不接管的地址范围。注意 `198.18.0.0/15` 里包含系统网络栈自己的 IPv4 对端地址，不能放进排除列表。
+- 端口 53 的 DNS 劫持规则和 ping 的路由。
+- 检查 sing-box 的版本和编译选项，让它校验生成的配置。
+- 生成和发布运行配置（generation）。
+- 用 launchd 停止和启动后台服务。
+- 检查 utun 地址、后台服务和 DNS 接管是否正常。
+- `_run` 作为子进程启动 sing-box 并看护它；停止时先恢复 DNS 再结束 sing-box。control 后台服务会处理崩溃后留下的 `state/dns-restore.json`；卸载时，在删除程序和状态目录前也会再恢复一次 DNS。
+- 记录每次应用的结果、读取状态、清理。
 
-默认运行目录为：
+默认目录：
 
 ```text
 /Library/Application Support/Steer/config/config.json
@@ -101,43 +153,43 @@ GUI 的 Diagnostics 只检查当前发布 generation 是否包含预期 `inbound
 /Library/Application Support/Steer/geodata-seed/rules/*.srs
 ```
 
-`_run` 只供 LaunchDaemon 使用。它在冷启动时准备 current generation，然后直接 `exec` sing-box，不成为第二个 supervisor。
+`_run` 只给 LaunchDaemon 用。它的 plist 设置了 `RunAtLoad`，所以开机或安装时总会被加载一次；如果 Saved 里 `enabled=false`，它会直接退出。因此 Steer 停用时，「系统」页可能显示这个后台服务已加载但没有在运行，这是正常的，不需要修复。判断安装是否完整只看程序、sing-box、三个 plist、配置文件、Geo 数据、control 和订阅两个后台服务以及 control socket。
 
-## Release 安装
+## 从 Release 安装
 
-稳定或预发布 tag 在 GitHub `xcode-27` Apple Silicon runner 上使用 Xcode 27.0/macOS 27 SDK 构建：
+稳定版和预发布版在 GitHub 的 `xcode-27` Apple Silicon 机器上用 Xcode 27.0 和 macOS 27 SDK 构建，产物是：
 
 ```text
 steer-macos-arm64.dmg
 ```
 
-DMG 内的 `Steer.app` 包含同架构 Swift GUI、`steer-macos`、SagerNet 官方 sing-box、运行/control/订阅调度三个 LaunchDaemon plist、完整 Geo seed、许可证和 embedded installer。构建过程严格校验上游 archive SHA、Mach-O 架构、版本/tags/revision、Geo manifest、helper validate/parse-nodes、bundle 布局与可执行权限，然后对嵌套二进制和 App 做 ad-hoc 签名并运行 `codesign --verify --deep --strict`。
+DMG 里的 `Steer.app` 包含：图形界面、`steer-macos`、SagerNet 官方 sing-box、三个 LaunchDaemon 的 plist（运行、control、订阅定时）、完整的 Geo 数据、许可证和安装器。构建时会校验上游压缩包的 SHA、二进制架构、sing-box 版本/编译选项/提交、Geo 数据清单，还会实际运行一遍 `steer-macos` 的校验和节点解析，检查目录结构和可执行权限，最后对内部程序和整个应用做 ad-hoc 签名并用 `codesign --verify --deep --strict` 验证。
 
-项目目前没有付费 Apple Developer/Developer ID，因此 DMG **没有公证**。ad-hoc 签名只保证 bundle 在构建后未被意外改写，不能让 Gatekeeper 自动放行。用户流程是：
+项目没有付费的 Apple 开发者账号，所以 DMG **没有公证**。ad-hoc 签名只能保证构建后文件没被改动，Gatekeeper 不会因此自动放行。安装步骤：
 
-1. 从 GitHub Release 下载 Apple Silicon（arm64）DMG，并校验 `SHA256SUMS`；可选运行 `gh attestation verify steer-macos-arm64.dmg -R gsh20040816/steer`。
-2. 把 `Steer.app` 拖入 `/Applications`，按 macOS 的“未认证开发者”流程手动确认首次打开。
-3. 在“系统”页点击“安装系统组件”，输入一次管理员密码。
-4. 后续从 GUI 保存、Apply、启停和升级配置时不再重复输入密码。
+1. 从 GitHub Release 下载 DMG，核对 `SHA256SUMS`。也可以运行 `gh attestation verify steer-macos-arm64.dmg -R gsh20040816/steer` 确认它来自本仓库的发布流程。
+2. 把 `Steer.app` 拖进「应用程序」，按 macOS 打开未认证开发者应用的步骤手动确认。
+3. 在「系统」页点「安装系统组件」，输入一次管理员密码。
+4. 之后保存、应用、启停和更新配置都不再需要密码。
 
-“系统”页不会仅凭 helper 存在就声称完整安装。任一必需文件、LaunchDaemon、配置、Geo manifest 或 control socket 缺失，以及 embedded payload 版本不一致，都会列出具体事实并显示 Repair。Repair 仍只执行 App 内固定安装器，默认保留 config/state，完成后自动重新验收。
+构件证明（attestation）只能证明文件来自对应 tag 的构建流程，不能代替 Developer ID 签名或公证，也不会改变 Gatekeeper 的判断。
 
-“卸载系统组件”只执行 App 内固定卸载器：先 bootout 三个 LaunchDaemon，再删除 helper、sing-box、plist、control socket、runtime 与 Geo 程序组件。默认保留 `/Library/Application Support/Steer/config`、`state` 和 `/Library/Logs/Steer`；“同时删除用户数据”位于独立的第二次破坏性确认中。卸载器不接受路径或命令参数，重复执行安全。
+「系统」页不会因为程序文件存在就认为安装完整。任何必需文件、后台服务、配置、Geo 清单或 control socket 缺失，或者应用内附带的组件版本对不上，都会逐项列出并提供「修复」。修复只运行应用内固定的安装器，默认保留配置和状态，完成后会重新检查一遍。
 
-artifact attestation 证明文件来自对应 tag workflow，但不会替代 Developer ID 或 notarization，也不会自动改变 Gatekeeper 判断。
+「卸载系统组件」只运行应用内固定的卸载器：先停掉三个后台服务，再删除程序、sing-box、plist、control socket、运行目录和 Geo 数据。默认保留 `/Library/Application Support/Steer/config`、`state` 和 `/Library/Logs/Steer`；要连这些一起删，需要在第二次确认里单独勾选。卸载器不接受路径或命令参数，重复运行也没问题。
 
-## 源码开发安装
+## 从源码安装（开发用）
 
-先安装 sing-box，再安装 helper 和 LaunchDaemon：
+先装 sing-box，再装后台程序和 LaunchDaemon：
 
 ```sh
 brew install sing-box
 sudo macos/scripts/install-launchdaemon.sh
 ```
 
-开发安装器把 `command -v sing-box` 选中的构件复制到 root-owned `/usr/local/libexec/steer/sing-box`，并安装运行、常驻 control 与订阅调度三个 LaunchDaemon。它只服务源码开发；正式 App 使用 `Contents/Resources/Installer` 的固定 payload，不依赖 PATH，也不在用户机器上运行 `go build`。
+这个开发用安装器会把 `command -v sing-box` 找到的 sing-box 复制到 root 所有的 `/usr/local/libexec/steer/sing-box`，并安装三个 LaunchDaemon。正式应用使用的是 `Contents/Resources/Installer` 里的固定文件，不依赖 PATH，也不会在用户电脑上编译。
 
-构建 GUI：
+构建图形界面：
 
 ```sh
 cd macos
@@ -145,7 +197,7 @@ swift build --disable-sandbox --build-system native
 swift run --build-system native SteerApp
 ```
 
-也可以直接使用 helper：
+也可以直接用命令行：
 
 ```sh
 sudo /usr/local/libexec/steer/steer-macos validate
@@ -154,17 +206,15 @@ sudo /usr/local/libexec/steer/steer-macos health
 sudo /usr/local/libexec/steer/steer-macos status
 ```
 
-## 限制
+## 不支持的功能
 
-当前 macOS 目标明确不支持：
+- 按来源 MAC 匹配（`source_mac_address`）。
+- IPv6 内核直连（`direct_bypass`）。
+- Tor 节点的自定义程序路径、启动参数和数据目录。
+- Linux 的 `auto_redirect`、nftables，以及 macOS 的 pf。
+- 独立的 SmartDNS 进程。
+- 识别应用自带的 DoH/DoQ 查询。
 
-- `source_mac_address`；
-- Linux `auto_redirect`、nftables、pf；
-- SmartDNS 独立进程；
-- 应用自带 DoH/DoQ 的明文查询识别。
+Geo 规则可以正常使用。DMG 里附带的 `geodata-seed/` 和发布流程完全匹配并经过校验；Geo 格式转换在 CI 里完成，用户电脑上不装 geoview，也不读 DAT 文件。
 
-Geo 表达式可以使用。正式 DMG 内置与当前 tag workflow 匹配并完整验证的 `geodata-seed/`；Geo 转换在 CI/release 阶段完成，目标机不安装 geoview，也不读取 DAT。
-
-当前分发不声称 Developer ID 签名或 notarization；如果未来取得签名凭据，可以在不改变 embedded payload、control IPC 和 canonical 配置语义的前提下加入正式签名与公证。
-
-系统 DNS 接管的边界：管理启用的 Ethernet/IEEE80211 网络服务；不抢占 VPN 的专用 resolver。启动先验证 IPv4/IPv6 DNS 地址路由到具有 Steer 地址的本机 utun，再验证 DNS 回复和默认 resolver 使用 Steer 地址；未生效则撤销接管并报告失败。避免路由器 DNS 劫持导致的远端回复被误判为本机核心就绪。DNS 入口连续三次健康探测失败也会恢复原设置并退出。系统 DNS 的持久 journal 保证异常退出后可恢复；独立控制后台被同时停止时，需要重新启动或运行 `steer-macos cleanup` 执行恢复。
+目前的发布版没有 Developer ID 签名和公证。以后如果有了签名证书，可以直接加上签名和公证，不需要改动安装包内容、后台服务接口或配置格式。

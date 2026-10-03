@@ -338,7 +338,7 @@ func compileSingBox(intent model.Intent, target Target, dnsPaths []DNSPath, geoR
 			routeMatch["outbound"] = routeTag(rule.Route)
 		}
 		routeRules = append(routeRules, routeMatch)
-		if dnsMatch := compileDNSMatch(rule); len(dnsMatch) > 0 {
+		if dnsMatch := compileRuleMatch(rule, true); len(dnsMatch) > 0 {
 			if routes[rule.Route].Kind == "block" {
 				if len(model.DNSProjectionUnsupportedConditions(rule)) > 0 {
 					continue
@@ -626,10 +626,10 @@ func compileTransport(node model.Node) map[string]any {
 	}
 }
 
-func compileTLS(serverName string, insecure bool, fingerprint, publicKey, shortID string, alpn ...[]string) map[string]any {
+func compileTLS(serverName string, insecure bool, fingerprint, publicKey, shortID string, alpn []string) map[string]any {
 	result := map[string]any{"enabled": true, "server_name": serverName, "insecure": insecure}
-	if len(alpn) > 0 && len(alpn[0]) > 0 {
-		result["alpn"] = append([]string(nil), alpn[0]...)
+	if len(alpn) > 0 {
+		result["alpn"] = append([]string(nil), alpn...)
 	}
 	if fingerprint != "" {
 		result["utls"] = map[string]any{"enabled": true, "fingerprint": fingerprint}
@@ -694,10 +694,6 @@ func compileRuleMatch(rule model.Rule, dns bool) map[string]any {
 		}
 	}
 	return combine(groups, "and")
-}
-
-func compileDNSMatch(rule model.Rule) map[string]any {
-	return compileRuleMatch(rule, true)
 }
 
 func compileDomainGroup(expressions []string) map[string]any {

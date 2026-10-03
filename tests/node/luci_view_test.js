@@ -362,6 +362,7 @@ function createEnvironment(sections) {
 		creationDefaults: (collection, overrides) => Object.fromEntries(Object.entries({
 			...(uiSpec.creation_defaults[collection] || {}), ...(overrides || {})
 		}).map(([key, value]) => [key, typeof value == 'boolean' ? (value ? '1' : '0') : String(value)])),
+		nextSectionID: (collection) => `${uiSpec.id_policy.collection_prefixes[collection]}_1`,
 		disambiguateReferences: (references) => {
 			const counts = {};
 			references.forEach((reference) => { counts[reference.label] = (counts[reference.label] || 0) + 1; });
@@ -573,21 +574,7 @@ function loadUcodeRPC(runtime) {
 	};
 	runtime.files ||= {};
 	runtime.importInputs ||= [];
-	runtime.accessCalls ||= [];
 	let lastFSError = null;
-	const access = (file, mode) => {
-		runtime.accessCalls.push({ file, mode: mode || '' });
-		if (runtime.programMissing) {
-			lastFSError = 'No such file or directory';
-			return null;
-		}
-		if (mode == 'x' && runtime.programNotExecutable) {
-			lastFSError = 'Permission denied';
-			return null;
-		}
-		lastFSError = null;
-		return true;
-	};
 	const fs_error = () => lastFSError;
 	const popen = (command, mode) => {
 		runtime.commands.push(command);
@@ -632,7 +619,6 @@ function loadUcodeRPC(runtime) {
 		throw new Error(`unexpected open mode ${mode}`);
 	};
 	const globals = {
-		access,
 		fs_error,
 		mkdtemp: () => `/tmp/test-candidate-${runtime.documents.length}`,
 		open,
@@ -847,27 +833,17 @@ function testNodeImportUcodeUsesTargetCompatibleStringPopen() {
 		"/usr/sbin/steer _parse-nodes --output '/tmp/test-candidate-0/result.json'",
 		'target ucode receives one fixed string command with a shell-quoted private output path');
 	assert.ok(!runtime.commands[0].includes(document), 'node credentials and links never enter the shell command');
-	assert.deepEqual(runtime.accessCalls.slice(0, 2), [
-		{ file: '/usr/sbin/steer', mode: '' }, { file: '/usr/sbin/steer', mode: 'x' }
-	]);
 
 	runtime.importStatus = 1;
 	assert.equal(callUcodeMethod(methods.node_import, { document }).error_code, 'IMPORT_PARSE_FAILED');
 	runtime.importStatus = 0;
-	runtime.programMissing = true;
-	assert.equal(callUcodeMethod(methods.node_import, { document }).error_code, 'IMPORT_PROGRAM_MISSING');
-	runtime.programMissing = false;
-	runtime.programNotExecutable = true;
-	assert.equal(callUcodeMethod(methods.node_import, { document }).error_code, 'IMPORT_PROGRAM_NOT_EXECUTABLE');
-	runtime.programNotExecutable = false;
 	runtime.processStartFailure = 'Invalid argument';
 	const startFailure = callUcodeMethod(methods.node_import, { document });
 	assert.equal(startFailure.error_code, 'IMPORT_START_FAILED');
 	assert.equal(startFailure.error, 'Invalid argument', 'fs.error supplies bounded startup context');
 	runtime.processStartFailure = '';
 	runtime.importStatus = 127;
-	assert.equal(callUcodeMethod(methods.node_import, { document }).error_code, 'IMPORT_PROGRAM_MISSING',
-		'a parser disappearing after access preflight remains distinguishable from parse failure');
+	assert.equal(callUcodeMethod(methods.node_import, { document }).error_code, 'IMPORT_PROGRAM_MISSING');
 	runtime.importStatus = 126;
 	assert.equal(callUcodeMethod(methods.node_import, { document }).error_code, 'IMPORT_PROGRAM_NOT_EXECUTABLE');
 }

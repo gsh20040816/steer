@@ -36,16 +36,6 @@ var errUnterminatedValue = errors.New("unterminated quoted or escaped value")
 func IsIdentifier(value string) bool { return identifierPattern.MatchString(value) }
 
 func Parse(r io.Reader) (Document, error) {
-	return parse(r, true)
-}
-
-// ParseSystemConfig accepts anonymous sections used by OpenWrt-owned files.
-// Steer's own intent continues to use Parse and therefore requires stable IDs.
-func ParseSystemConfig(r io.Reader) (Document, error) {
-	return parse(r, false)
-}
-
-func parse(r io.Reader, requireSectionID bool) (Document, error) {
 	var document Document
 	var current *Section
 	scanner := bufio.NewScanner(r)
@@ -57,21 +47,14 @@ func parse(r io.Reader, requireSectionID bool) (Document, error) {
 		}
 		switch tokens[0] {
 		case "config":
-			if len(tokens) < 2 || len(tokens) > 3 || tokens[1] == "" {
-				return fmt.Errorf("UCI line %d: config requires a type and optional section ID", sourceLine)
-			}
-			if requireSectionID && (len(tokens) != 3 || tokens[2] == "") {
+			if len(tokens) != 3 || tokens[1] == "" || tokens[2] == "" {
 				return fmt.Errorf("UCI line %d: config requires a type and an explicit section ID", sourceLine)
 			}
-			if requireSectionID && !IsIdentifier(tokens[2]) {
+			if !IsIdentifier(tokens[2]) {
 				return fmt.Errorf("UCI line %d: invalid Steer section ID %q", sourceLine, tokens[2])
 			}
-			id := ""
-			if len(tokens) == 3 {
-				id = tokens[2]
-			}
 			document.Sections = append(document.Sections, Section{
-				Type: tokens[1], ID: id, Line: sourceLine,
+				Type: tokens[1], ID: tokens[2], Line: sourceLine,
 				Options: make(map[string]string), Lists: make(map[string][]string),
 			})
 			current = &document.Sections[len(document.Sections)-1]

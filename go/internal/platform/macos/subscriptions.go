@@ -5,6 +5,7 @@ package macos
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -18,35 +19,6 @@ import (
 type SubscriptionSnapshot = subscription.Snapshot
 type SubscriptionStatus = subscription.Status
 type SubscriptionUpdateError = subscription.UpdateError
-
-var _ subscription.Store = IntentStore{}
-
-func (store IntentStore) ReplaceNodes(_ context.Context, subscriptionID string, existing, replacement []model.Node) error {
-	value, revision, err := store.Load()
-	if err != nil {
-		return err
-	}
-	value.Nodes = subscription.Replace(value.Nodes, subscriptionID, replacement)
-	_, err = store.Save(value, revision)
-	return err
-}
-
-func (store IntentStore) RemoveNode(_ context.Context, subscriptionID, nodeID string) error {
-	value, revision, err := store.Load()
-	if err != nil {
-		return err
-	}
-	filtered := make([]model.Node, 0, len(value.Nodes))
-	for _, node := range value.Nodes {
-		if node.ID == nodeID && node.SourceSubscription == subscriptionID {
-			continue
-		}
-		filtered = append(filtered, node)
-	}
-	value.Nodes = filtered
-	_, err = store.Save(value, revision)
-	return err
-}
 
 func existingNodes(nodes []model.Node, subscriptionID string) []model.Node {
 	result := make([]model.Node, 0, len(nodes))
@@ -87,6 +59,7 @@ func UpdateConfiguredSubscriptions(ctx context.Context, client *http.Client, con
 	}
 	scheduleTime := time.Now()
 	var snapshots []SubscriptionSnapshot
+	var failures []error
 	for _, configured := range value.Subscriptions {
 		if !configured.Enabled || (id != "" && configured.ID != id) {
 			continue
@@ -112,20 +85,22 @@ func UpdateConfiguredSubscriptions(ctx context.Context, client *http.Client, con
 		if err != nil {
 			failure := subscription.FailedSnapshot(configured, previous, err, time.Now())
 			if saveErr := saveSubscriptionSnapshot(stateDirectory, failure); saveErr != nil {
-				return nil, subscription.NewUpdateError(configured.ID, saveErr)
+				err = saveErr
 			}
-			return nil, subscription.NewUpdateError(configured.ID, err)
+			// One broken subscription must not hold back the others.
+			failures = append(failures, subscription.NewUpdateError(configured.ID, err))
+			continue
 		}
 		old := existingNodes(value.Nodes, configured.ID)
 		merged := subscription.Merge(configured.ID, old, fetched.Nodes, value.Routes)
 		value.Nodes = subscription.Replace(value.Nodes, configured.ID, merged)
 		snapshots = append(snapshots, subscription.SuccessfulSnapshot(configured, previous, old, merged, fetched, time.Now()))
 	}
-	if id != "" && len(snapshots) == 0 {
+	if id != "" && len(snapshots) == 0 && len(failures) == 0 {
 		return nil, fmt.Errorf("enabled subscription %q was not found", id)
 	}
 	if len(snapshots) == 0 {
-		return snapshots, nil
+		return nil, errors.Join(failures...)
 	}
 	if _, err := store.Save(value, revision); err != nil {
 		return nil, err
@@ -135,7 +110,7 @@ func UpdateConfiguredSubscriptions(ctx context.Context, client *http.Client, con
 			return nil, err
 		}
 	}
-	return snapshots, nil
+	return snapshots, errors.Join(failures...)
 }
 
 func CleanSubscriptionNode(configPath, stateDirectory, id, nodeID string) (SubscriptionSnapshot, error) {

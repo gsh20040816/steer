@@ -26,9 +26,9 @@ func TestParseTUICALPNAllowInsecureAndEmptyPassword(t *testing.T) {
 	if !reflect.DeepEqual(node.ALPN, []string{"h3", "h2"}) || node.CongestionControl != "bbr" || node.UDPRelayMode != "quic" || node.TLSServerName != "example.com" || node.Insecure {
 		t.Fatalf("TUIC compatibility fields were not lowered: %#v", node)
 	}
-	result, err := ParseList(raw)
-	if err != nil || result.Skipped != 0 || len(result.Nodes) != 1 {
-		t.Fatalf("TUIC link was not accepted by ParseList: result=%#v err=%v", result, err)
+	result := ParseList(raw)
+	if result.Skipped != 0 || len(result.Nodes) != 1 {
+		t.Fatalf("TUIC link was not accepted by ParseList: %#v", result)
 	}
 }
 
@@ -62,11 +62,8 @@ func TestParseTUICAllowInsecureAliases(t *testing.T) {
 }
 
 func TestParseStandardURIs(t *testing.T) {
-	result, err := ParseList("vless://00000000-0000-4000-8000-000000000001@example.com:443?security=tls&sni=edge.example.com&type=ws&path=%2Fproxy\n" +
+	result := ParseList("vless://00000000-0000-4000-8000-000000000001@example.com:443?security=tls&sni=edge.example.com&type=ws&path=%2Fproxy\n" +
 		"ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ@example.com:8388#ss")
-	if err != nil {
-		t.Fatal(err)
-	}
 	nodes := result.Nodes
 	if len(nodes) != 2 || nodes[0].Type != "vless" || nodes[0].Transport != "ws" || nodes[1].Type != "shadowsocks" {
 		t.Fatalf("unexpected parsed nodes: %#v", nodes)
@@ -82,10 +79,7 @@ func TestParseStandardURIs(t *testing.T) {
 func TestParseBase64VMess(t *testing.T) {
 	raw := `{"v":"2","ps":"fixture","add":"vmess.example.com","port":"443","id":"00000000-0000-4000-8000-000000000001","aid":"0","scy":"auto","net":"ws","tls":"tls","sni":"edge.example.com","host":"edge.example.com","path":"/ws","type":"none"}`
 	encoded := base64.StdEncoding.EncodeToString([]byte(raw))
-	result, err := ParseList(encoded)
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := ParseList(encoded)
 	nodes := result.Nodes
 	if len(nodes) != 1 || nodes[0].Type != "vmess" || nodes[0].Transport != "ws" || nodes[0].Network != "" {
 		t.Fatalf("unexpected VMess node: %#v", nodes)
@@ -115,10 +109,7 @@ func TestCredentialProxyDefaultPortsFollowScheme(t *testing.T) {
 		}
 	}
 
-	result, err := ParseList("socks://socks.example\nhttp://http.example\nhttps://https.example")
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := ParseList("socks://socks.example\nhttp://http.example\nhttps://https.example")
 	if len(result.Nodes) != 3 || result.Nodes[0].ServerPort != 1080 || result.Nodes[1].ServerPort != 80 || result.Nodes[2].ServerPort != 443 {
 		t.Fatalf("subscription list did not reuse scheme defaults: %#v", result.Nodes)
 	}
@@ -136,9 +127,9 @@ func TestParseEmptyPCSCertificatePinCompatibilityMarker(t *testing.T) {
 		"trojan://secret@example.com:443?sni=edge.example&pcs",
 		"anytls://secret@example.com:443?sni=edge.example&type=tcp&pcs=",
 	}, "\n")
-	result, err := ParseList(raw)
-	if err != nil || result.Skipped != 0 || len(result.Nodes) != 3 {
-		t.Fatalf("empty pcs compatibility markers were not ignored: result=%#v err=%v", result, err)
+	result := ParseList(raw)
+	if result.Skipped != 0 || len(result.Nodes) != 3 {
+		t.Fatalf("empty pcs compatibility markers were not ignored: %#v", result)
 	}
 }
 
@@ -170,13 +161,10 @@ func TestRejectInvalidAndConflictingParameters(t *testing.T) {
 }
 
 func TestParsePassWallCompatibleAliases(t *testing.T) {
-	result, err := ParseList(
+	result := ParseList(
 		"trojan://secret@example.com:443?type=tcp&sni=edge.example&peer=edge.example&allowInsecure=1#trojan\n" +
 			"anytls://secret@example.com:443?type=tcp&sni=edge.example&insecure=1#anytls\n" +
 			"hysteria://secret@example.com:443?peer=edge.example&allowInsecure=1&upmbps=100&downmbps=100#hysteria\n")
-	if err != nil {
-		t.Fatal(err)
-	}
 	nodes := result.Nodes
 	if len(nodes) != 3 {
 		t.Fatalf("unexpected compatible node count: %d", len(nodes))
@@ -189,12 +177,9 @@ func TestParsePassWallCompatibleAliases(t *testing.T) {
 }
 
 func TestParseListSkipsOnlyInvalidNodes(t *testing.T) {
-	result, err := ParseList("not-a-node\n" +
+	result := ParseList("not-a-node\n" +
 		"socks5://user:password@example.com:1080#SOCKS\n" +
 		"trojan://secret@example.com:443?sni=edge.example#bad%0Aname\n")
-	if err != nil {
-		t.Fatal(err)
-	}
 	if result.Skipped != 2 || len(result.Nodes) != 1 || len(result.SkippedReasons) != 2 || result.Nodes[0].Type != "socks" {
 		t.Fatalf("unexpected lenient parse result: %#v", result)
 	}
@@ -207,10 +192,7 @@ func TestParseListSkipsOnlyInvalidNodes(t *testing.T) {
 }
 
 func TestParseListAllowsAllNodesToBeSkipped(t *testing.T) {
-	result, err := ParseList("not-a-node\nstill-not-a-node\n")
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := ParseList("not-a-node\nstill-not-a-node\n")
 	if result.Skipped != 2 || len(result.Nodes) != 0 {
 		t.Fatalf("all-invalid subscription did not become an empty result: %#v", result)
 	}
@@ -237,7 +219,7 @@ func TestParseOpaqueBase64PayloadsContainingSlash(t *testing.T) {
 	}
 }
 
-func TestParseVMessCommonTLSFieldsAndRejectUnknownJSON(t *testing.T) {
+func TestParseVMessCommonTLSFields(t *testing.T) {
 	raw := `{"v":"2","ps":"fixture","add":"vmess.example.com","port":"443","id":"00000000-0000-0000-0000-000000000001","aid":"0","scy":"auto","net":"ws","tls":"tls","sni":"edge.example.com","host":"edge.example.com","path":"/ws","type":"none","alpn":"h2,http/1.1","fp":"chrome","allowInsecure":"0"}`
 	// Use a valid version-4 UUID as required by the shared validator.
 	raw = strings.Replace(raw, "00000000-0000-0000-0000-000000000001", "00000000-0000-4000-8000-000000000001", 1)
@@ -249,10 +231,17 @@ func TestParseVMessCommonTLSFieldsAndRejectUnknownJSON(t *testing.T) {
 	if !reflect.DeepEqual(node.ALPN, []string{"h2", "http/1.1"}) || node.UTLSFingerprint != "chrome" || node.Insecure {
 		t.Fatalf("VMess TLS fields were not lowered: %#v", node)
 	}
-	unknown := strings.Replace(raw, `,"fp":"chrome"`, `,"unknown":"value","fp":"chrome"`, 1)
-	unknownEncoded := base64.StdEncoding.EncodeToString([]byte(unknown))
-	if _, err := ParseURI("vmess://" + unknownEncoded); err == nil {
-		t.Fatal("unknown VMess JSON field was silently accepted")
+}
+
+func TestParseVMessV2rayNExport(t *testing.T) {
+	// v2rayN exports a numeric "v", empty "alpn"/"fp" and client-specific keys.
+	raw := `{"v":2,"ps":"fixture","add":"vmess.example.com","port":443,"id":"00000000-0000-4000-8000-000000000001","aid":0,"scy":"auto","net":"ws","tls":"tls","sni":"","host":"","path":"/ws","type":"none","alpn":"","fp":"","insecure":"0"}`
+	node, err := ParseURI("vmess://" + base64.StdEncoding.EncodeToString([]byte(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(node.ALPN) != 0 || node.TLSServerName != "vmess.example.com" {
+		t.Fatalf("v2rayN VMess export was not lowered: %#v", node)
 	}
 }
 
@@ -354,9 +343,9 @@ func TestParseBase64WrappedCRLFDocument(t *testing.T) {
 		wrapped.WriteString(encoded[index:end])
 		wrapped.WriteString("\r\n")
 	}
-	result, err := ParseList(wrapped.String())
-	if err != nil || len(result.Nodes) != 1 || result.Skipped != 1 {
-		t.Fatalf("Base64 wrapped CRLF document was not parsed independently: result=%#v err=%v", result, err)
+	result := ParseList(wrapped.String())
+	if len(result.Nodes) != 1 || result.Skipped != 1 {
+		t.Fatalf("Base64 wrapped CRLF document was not parsed independently: %#v", result)
 	}
 }
 

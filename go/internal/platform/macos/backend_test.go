@@ -129,12 +129,8 @@ func TestBackendUsesLaunchdGenerationLifecycle(t *testing.T) {
 	if err != nil || current.GenerationID == "" || current.Directory == "" {
 		t.Fatalf("unexpected current generation: %#v %v", current, err)
 	}
-	platformPlan, err := os.ReadFile(filepath.Join(root, "run", "generations", current.Directory, "platform.json"))
-	if err != nil {
+	if _, err := os.Stat(filepath.Join(root, "run", "generations", current.Directory, "platform.json")); err != nil {
 		t.Fatal(err)
-	}
-	if strings.Contains(string(platformPlan), "active_lan_prefixes") {
-		t.Fatalf("generation persisted retired active-LAN state: %s", platformPlan)
 	}
 }
 

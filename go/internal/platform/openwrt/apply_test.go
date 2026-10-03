@@ -104,7 +104,7 @@ func TestDisableStopsAndRemovesRuntimeState(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := &applyRunner{}
-	backend := NewBackend(runner, value, BackendOptions{RunDirectory: runDirectory, InitScript: "/test/init"})
+	backend := NewBackend(runner, value, BackendOptions{RunDirectory: runDirectory, InitScript: "/test/init", NFTBinary: "/test/nft"})
 	result, err := coreapply.Run(context.Background(), value, backend.CompilerOptions(), backend)
 	if err != nil || !result.OK {
 		t.Fatalf("disable failed: %#v %v", result, err)
@@ -118,6 +118,9 @@ func TestDisableStopsAndRemovesRuntimeState(t *testing.T) {
 	calls := strings.Join(runner.calls, "\n")
 	if !strings.Contains(calls, "/test/init stop_runtime") {
 		t.Fatalf("disable did not use the trigger-preserving runtime stop: %v", runner.calls)
+	}
+	if !strings.Contains(calls, "/test/nft -j list tables") {
+		t.Fatalf("disable did not clean up the nftables shim: %v", runner.calls)
 	}
 	for _, call := range runner.calls {
 		if call == "/test/init stop" {

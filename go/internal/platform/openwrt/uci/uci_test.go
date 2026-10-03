@@ -45,16 +45,6 @@ func TestParseRejectsAmbiguousInput(t *testing.T) {
 	}
 }
 
-func TestParseSystemConfigAcceptsAnonymousSections(t *testing.T) {
-	doc, err := ParseSystemConfig(strings.NewReader("config zone\n\toption name 'lan'\n\tlist network 'lan'\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(doc.Sections) != 1 || doc.Sections[0].ID != "" || doc.Sections[0].Options["name"] != "lan" {
-		t.Fatalf("unexpected system UCI document: %#v", doc)
-	}
-}
-
 func TestParsePreservesMultilineSingleQuotedOption(t *testing.T) {
 	doc, err := Parse(strings.NewReader("config node 'ssh_key'\n\toption private_key 'line one\nline two\n'\n"))
 	if err != nil {

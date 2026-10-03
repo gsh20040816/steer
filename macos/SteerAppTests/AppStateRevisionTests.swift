@@ -43,7 +43,7 @@ final actor RevisionBackend: BackendClient {
         let revision = "applied-\(snapshot.revision)"
         snapshot = ConfigurationSnapshot(document: document, revision: revision)
         return ApplyOutcome(
-            status: RuntimeStatus(), saved: true, applied: true,
+            status: RuntimeStatus(), applied: true,
             revision: revision, error: "", validation: ValidationResult(ok: true, errors: [], warnings: [])
         )
     }
@@ -123,7 +123,7 @@ final class AppStateRevisionTests: XCTestCase {
             if operation == .save {
                 model.saveDraft()
             } else {
-                model.apply()
+                model.saveAndApplyDraft()
             }
             try await waitUntil { !model.isBusy && model.revisionConflict != nil }
 

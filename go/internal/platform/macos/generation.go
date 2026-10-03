@@ -23,44 +23,6 @@ type PreparedGeneration struct {
 	Metadata GenerationMetadata
 }
 
-// Prepare compiles a validated intent and writes an immutable candidate. The
-// launchd backend publishes it only after sing-box has passed its native config
-// check and the new utun generation becomes healthy.
-func Prepare(value model.Intent, paths Paths) (PreparedGeneration, error) {
-	validation := Validate(value)
-	if !validation.OK {
-		return PreparedGeneration{}, ValidationError{Validation: validation}
-	}
-	if err := paths.Ensure(); err != nil {
-		return PreparedGeneration{}, err
-	}
-	plan := NewPlan(value)
-	compiled := compiler.Compile(value, plan.CompilerOptions(paths.StateDirectory))
-	candidate, err := generation.Create(paths.GenerationsDirectory, value, compiled.SingBox)
-	if err != nil {
-		return PreparedGeneration{}, err
-	}
-	keepCandidate := false
-	defer func() {
-		if !keepCandidate {
-			_ = os.RemoveAll(candidate.Directory)
-		}
-	}()
-	metadata := GenerationMetadata{
-		SchemaVersion: RuntimeSchemaVersion,
-		GenerationID:  compiled.IntentDigest,
-		IntentDigest:  compiled.IntentDigest,
-	}
-	if err := generation.WriteJSON(filepath.Join(candidate.Directory, "macos.json"), plan); err != nil {
-		return PreparedGeneration{}, err
-	}
-	if err := generation.WriteJSON(filepath.Join(candidate.Directory, "generation.json"), metadata); err != nil {
-		return PreparedGeneration{}, err
-	}
-	keepCandidate = true
-	return PreparedGeneration{Candidate: candidate, Metadata: metadata}, nil
-}
-
 type CurrentGeneration struct {
 	SchemaVersion int    `json:"schema_version"`
 	GenerationID  string `json:"generation_id"`

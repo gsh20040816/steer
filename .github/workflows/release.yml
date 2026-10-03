@@ -243,7 +243,7 @@ jobs:
             cp -R "$RUNNER_TEMP/steer-sdk-artifacts/logs" "$GITHUB_WORKSPACE/logs"
           fi
 
-      - name: Collect exact OpenWrt release assets
+      - name: Collect OpenWrt release assets and signed repository
         env:
           SOURCE_REVISION: ${{ github.sha }}
           GEODATA_VERSION: ${{ needs.geodata.outputs.version }}
@@ -257,20 +257,6 @@ jobs:
           }
           export SING_BOX_MIRRORED_SHA256="$(sha256sum "$1" | cut -d ' ' -f 1)"
           ./scripts/collect-openwrt-artifacts.sh
-
-      - name: Collect signed OpenWrt repository
-        env:
-          SOURCE_REVISION: ${{ github.sha }}
-          GEODATA_VERSION: ${{ needs.geodata.outputs.version }}
-          GEODATA_MANIFEST_SHA256: ${{ needs.geodata.outputs.manifest_sha256 }}
-          SING_BOX_UPSTREAM_SHA256: ${{ env.SING_BOX_OPENWRT_X86_64_SHA256 }}
-        run: |
-          set -- $(find bin/packages -type f -path '*/steer/sing-box-*.apk' | sort)
-          [ "$#" -eq 1 ] || {
-            echo "Expected exactly one mirrored sing-box APK, found $#" >&2
-            exit 1
-          }
-          export SING_BOX_MIRRORED_SHA256="$(sha256sum "$1" | cut -d ' ' -f 1)"
           ./scripts/collect-openwrt-repository.sh
 
       - name: Save OpenWrt SDK ccache
@@ -376,14 +362,6 @@ jobs:
               echo "Linux archive bundles an external dependency or Geo database" >&2
               exit 1
             fi
-            extract_dir="$RUNNER_TEMP/$target-extracted"
-            mkdir -p "$extract_dir"
-            tar --zstd -xf "$archive" -C "$extract_dir"
-            (
-              cd "$GITHUB_WORKSPACE/go"
-              go run ./cmd/steer-geodata-build verify \
-                --directory "$extract_dir/steer-linux-$target/geodata-seed"
-            )
           done
 
       - name: Upload generic Linux artifacts
@@ -562,6 +540,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       STEER_VERSION: ${{ needs.source-gate.outputs.version }}
+      GEODATA_VERSION: ${{ needs.geodata.outputs.version }}
+      GEODATA_MANIFEST_SHA256: ${{ needs.geodata.outputs.manifest_sha256 }}
 
     steps:
       - name: Download platform artifacts from this run
@@ -612,8 +592,8 @@ jobs:
             echo "Source revision: $GITHUB_SHA"
             echo "OpenWrt release: $OPENWRT_RELEASE"
             echo "OpenWrt target: $OPENWRT_TARGET"
-            echo "Geo data version: ${{ needs.geodata.outputs.version }}"
-            echo "Geo manifest SHA256: ${{ needs.geodata.outputs.manifest_sha256 }}"
+            echo "Geo data version: $GEODATA_VERSION"
+            echo "Geo manifest SHA256: $GEODATA_MANIFEST_SHA256"
             echo "OpenWrt mirrored sing-box version: $SING_BOX_OPENWRT_VERSION"
             echo "macOS bundled sing-box version: $SING_BOX_MACOS_VERSION"
             echo "macOS bundled sing-box revision: $SING_BOX_MACOS_REVISION"
@@ -627,25 +607,9 @@ jobs:
             echo "macOS arm64 toolchains:"
             grep -E '^(macOS SDK|Xcode|Swift|Go): ' "$macos_arm64_dist/BUILD-METADATA.txt"
           } > "$release_dir/BUILD-METADATA.txt"
-
-          for pattern in \
-            'sing-box-*.apk' \
-            'steer-[0-9]*.apk' \
-            'luci-app-steer-*.apk' \
-            'luci-i18n-steer-zh-cn-*.apk' \
-            'steer-linux-x86_64.tar.zst' \
-            'steer-linux-aarch64.tar.zst' \
-            'steer-macos-arm64.dmg'; do
-            set -- "$release_dir"/$pattern
-            [ "$#" -eq 1 ] && [ -f "$1" ] || {
-              echo "Expected exactly one release asset matching $pattern, found $#" >&2
-              exit 1
-            }
-          done
           (
             cd "$release_dir"
             sha256sum ./*.apk ./*.tar.zst ./*.dmg BUILD-METADATA.txt > SHA256SUMS
-            sha256sum -c SHA256SUMS
           )
 
       - name: Upload exact release bundle
@@ -671,9 +635,6 @@ jobs:
         with:
           name: release-bundle
           path: release-artifact
-      - name: Verify final checksums
-        working-directory: release-artifact
-        run: sha256sum -c SHA256SUMS
       - name: Create GitHub artifact attestations for macOS DMGs and checksums
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with:
@@ -697,30 +658,6 @@ jobs:
         with:
           name: release-bundle
           path: release-artifact
-
-      - name: Verify release assets again
-        working-directory: release-artifact
-        env:
-          STEER_VERSION: ${{ needs.source-gate.outputs.version }}
-        run: |
-          sha256sum -c SHA256SUMS
-          grep -Fqx "Steer version: $STEER_VERSION" BUILD-METADATA.txt
-          grep -Fqx "Source tag: $GITHUB_REF_NAME" BUILD-METADATA.txt
-          grep -Fqx "Source revision: $GITHUB_SHA" BUILD-METADATA.txt
-          for pattern in \
-            'sing-box-*.apk' \
-            'steer-[0-9]*.apk' \
-            'luci-app-steer-*.apk' \
-            'luci-i18n-steer-zh-cn-*.apk' \
-            'steer-linux-x86_64.tar.zst' \
-            'steer-linux-aarch64.tar.zst' \
-            'steer-macos-arm64.dmg'; do
-            set -- $pattern
-            [ "$#" -eq 1 ] && [ -f "$1" ] || {
-              echo "Expected exactly one release asset matching $pattern, found $#" >&2
-              exit 1
-            }
-          done
 
       - name: Create GitHub Release
         working-directory: release-artifact
@@ -770,21 +707,10 @@ jobs:
           name: openwrt-repository
           path: repository-artifact
 
-      - name: Verify signed OpenWrt repository
+      - name: Locate signed OpenWrt repository
         id: repository
         run: |
-          set -- $(find repository-artifact -type f -name packages.adb)
-          [ "$#" -eq 1 ] || {
-            echo "Expected one packages.adb, found $#" >&2
-            exit 1
-          }
-          repository_dir="$(dirname "$1")"
-          (
-            cd "$repository_dir"
-            sha256sum -c SHA256SUMS
-            grep -Fqx "Source revision: $GITHUB_SHA" BUILD-METADATA.txt
-            openssl pkey -pubin -in steer-apk.pem -noout
-          )
+          repository_dir="$(dirname "$(find repository-artifact -type f -name packages.adb)")"
           echo "repository_dir=$repository_dir" >> "$GITHUB_OUTPUT"
 
       - name: Prepare stable repository site

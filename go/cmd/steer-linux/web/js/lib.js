@@ -1,12 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* 共享小工具：DOM 构造、转义、图标、格式化。 */
+/* 共享小工具：DOM 构造、图标、格式化。 */
 'use strict';
 (function () {
   const S = (window.S = window.S || {});
-
-  const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => (
-    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-  ));
 
   /* 轻量 DOM 构造器：h('div', {class, onclick, ...}, child…) */
   function h(tag, attrs = {}, ...children) {
@@ -47,10 +43,6 @@
   const asList = (value) => (value == null ? [] : (Array.isArray(value) ? value : [value]));
 
   const fmtTime = (iso) => (iso ? new Date(iso).toLocaleString('zh-CN', { hour12: false }) : '—');
-  const fmtRevision = (value) => {
-    const revision = String(value || '').replace(/^"|"$/g, '');
-    return revision.length > 22 ? `${revision.slice(0, 15)}…` : (revision || '—');
-  };
 
   function fmtLatestProbe(result) {
     if (!result) return { text: '尚未测试', ok: null, stale: false };
@@ -62,15 +54,9 @@
     };
   }
 
-  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-  const debounce = (fn, ms) => {
-    let timer;
-    return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
-  };
   const uid = (prefix) => `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
 
   Object.assign(S, {
-    esc, h, icon, asList, fmtTime, fmtRevision,
-    fmtLatestProbe, sleep, debounce, uid
+    h, icon, asList, fmtTime, fmtLatestProbe, uid
   });
 })();

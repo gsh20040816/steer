@@ -51,6 +51,11 @@ func (backend *Backend) Disable(ctx context.Context) error {
 	if _, err := backend.runner.Output(ctx, backend.options.InitScript, "stop_runtime"); err != nil {
 		return fmt.Errorf("stop Steer runtime while disabling: %w", err)
 	}
+	// stop_runtime keeps the procd object, so service_stopped never runs the
+	// cleanup hook; drop the DNS shim here or LAN DNS points at a dead port.
+	if err := CleanupPlatform(ctx, backend.runner, backend.options.NFTBinary); err != nil {
+		return err
+	}
 	if err := os.Remove(filepath.Join(backend.options.RunDirectory, "current")); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove disabled current generation: %w", err)
 	}
@@ -81,12 +86,6 @@ func waitHealthy(ctx context.Context, runner Runner, plan Plan, timeout time.Dur
 }
 
 func WaitCurrentHealthy(ctx context.Context, runner Runner, runDirectory, nftBinary string, timeout time.Duration) error {
-	if runDirectory == "" {
-		runDirectory = "/run/steer"
-	}
-	if nftBinary == "" {
-		nftBinary = "/usr/sbin/nft"
-	}
 	plan, err := readCurrentPlan(runDirectory)
 	if err != nil {
 		return err

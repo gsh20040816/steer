@@ -139,3 +139,33 @@ func TestFailedRefreshKeepsLastSuccessfulSubscriptionStatus(t *testing.T) {
 		t.Fatalf("failed refresh destroyed successful facts: %#v", status)
 	}
 }
+
+func TestOneFailingSubscriptionDoesNotBlockOthers(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/broken" {
+			http.Error(writer, "gone", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = writer.Write([]byte("socks://user:pass@127.0.0.1:1080#Imported\n"))
+	}))
+	defer server.Close()
+	root := t.TempDir()
+	configPath := filepath.Join(root, "config.json")
+	stateDirectory := filepath.Join(root, "state")
+	value := validIntent()
+	value.Subscriptions = []model.Subscription{
+		{ID: "broken", Enabled: true, URL: server.URL + "/broken", UpdateInterval: "1h"},
+		{ID: "working", Enabled: true, URL: server.URL + "/working", UpdateInterval: "1h"},
+	}
+	if _, err := (IntentStore{Path: configPath}).Save(value, ""); err != nil {
+		t.Fatal(err)
+	}
+	snapshots, err := UpdateConfiguredSubscriptions(context.Background(), server.Client(), configPath, stateDirectory, "")
+	if err == nil || len(snapshots) != 1 || snapshots[0].SubscriptionID != "working" {
+		t.Fatalf("working subscription was held back: %#v %v", snapshots, err)
+	}
+	loaded, _, err := (IntentStore{Path: configPath}).Load()
+	if err != nil || len(loaded.Nodes) != len(value.Nodes)+1 {
+		t.Fatalf("working subscription nodes were not saved: %#v %v", loaded.Nodes, err)
+	}
+}

@@ -24,15 +24,7 @@ import (
 
 type TestReport = probe.Report
 
-const defaultProbeConfigPath = "/Library/Application Support/Steer/config/config.json"
-
 func ProbeOverview(ctx context.Context, configPath, runDirectory, kind string, client *http.Client) (TestReport, error) {
-	if configPath == "" {
-		configPath = defaultProbeConfigPath
-	}
-	if runDirectory == "" {
-		runDirectory = "/Library/Application Support/Steer/run"
-	}
 	value, err := readProbeIntent(configPath)
 	if err != nil {
 		return TestReport{}, fmt.Errorf("load saved macOS configuration for probe: %w", err)
@@ -146,9 +138,6 @@ func runTemporaryProbe(ctx context.Context, singBoxPath string, bootstrap model.
 	}
 	if err := os.WriteFile(configPath, append(encoded, '\n'), 0o600); err != nil {
 		return TestReport{}, err
-	}
-	if singBoxPath == "" {
-		singBoxPath = "/usr/local/libexec/steer/sing-box"
 	}
 	if output, err := exec.CommandContext(ctx, singBoxPath, "check", "-c", configPath).CombinedOutput(); err != nil {
 		return TestReport{}, fmt.Errorf("sing-box test config check failed: %w: %s", err, output)

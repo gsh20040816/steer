@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func RenderFirewall(plan Plan) (string, error) {
+func RenderFirewall(plan Plan) string {
 	var lines []string
 	add := func(values ...string) { lines = append(lines, values...) }
 	add("table inet steer {",
@@ -39,5 +39,5 @@ func RenderFirewall(plan Plan) (string, error) {
 		"\tchain system_output {", "\t\ttype route hook output priority mangle - 2; policy accept;",
 		fmt.Sprintf("\t\tmeta l4proto udp udp dport 123 counter meta mark set 0x%x", plan.Resources.AutoRedirectOutputMark), "\t}")
 	add("}", "")
-	return strings.Join(lines, "\n"), nil
+	return strings.Join(lines, "\n")
 }

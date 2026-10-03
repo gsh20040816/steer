@@ -41,12 +41,6 @@
   const probeResultKey = (result) => result?.scope === 'overview'
     ? `overview:${result.kind}`
     : `${result?.scope || ''}:${result?.object_id || ''}:${result?.kind || ''}`;
-  const fetchDiagnostics = () => typeof S.api.diagnostics === 'function'
-    ? S.api.diagnostics()
-    : Promise.resolve(diagnostics);
-  const fetchProbeResults = () => typeof S.api.probeResults === 'function'
-    ? S.api.probeResults()
-    : Promise.resolve(probeResults);
   const installIntent = (value) => {
     intent = normalizeIntent(value);
     draftText = serializeIntent();
@@ -94,8 +88,8 @@
     async init() {
       const [config, ov, runtimeInfo, probeDiagnostics, persistedProbeResults] = await Promise.all([
         S.api.config(), S.api.overview(), S.api.runtime(),
-        fetchDiagnostics().catch(() => ({ warnings: ['诊断状态暂时不可用'] })),
-        fetchProbeResults().catch(() => ({ latest_results: [], warnings: ['最近测试结果暂时不可用'] }))
+        S.api.diagnostics().catch(() => ({ warnings: ['诊断状态暂时不可用'] })),
+        S.api.probeResults().catch(() => ({ latest_results: [], warnings: ['最近测试结果暂时不可用'] }))
       ]);
       installIntent(config.intent);
       revision = config.revision;
@@ -190,8 +184,8 @@
       if (saving || reloading || applying) return { ok: false, busy: true };
       const expectedState = stateEpoch;
       const [refreshedOverview, refreshedRuntime, refreshedDiagnostics, refreshedProbeResults] = await Promise.all([
-        S.api.overview(), S.api.runtime(), fetchDiagnostics().catch(() => diagnostics),
-        fetchProbeResults().catch(() => probeResults)
+        S.api.overview(), S.api.runtime(), S.api.diagnostics().catch(() => diagnostics),
+        S.api.probeResults().catch(() => probeResults)
       ]);
       if (expectedState !== stateEpoch) return { ok: false, superseded: true };
       overview = refreshedOverview;
@@ -245,7 +239,7 @@
           const refreshedOverview = await S.api.overview();
           if (expectedState === stateEpoch) {
             overview = refreshedOverview;
-            const [nextDiagnostics, nextProbeResults] = await Promise.allSettled([fetchDiagnostics(), fetchProbeResults()]);
+            const [nextDiagnostics, nextProbeResults] = await Promise.allSettled([S.api.diagnostics(), S.api.probeResults()]);
             if (nextDiagnostics.status === 'fulfilled') diagnostics = normalizeDiagnostics(nextDiagnostics.value);
             if (nextProbeResults.status === 'fulfilled') probeResults = normalizeProbeResults(nextProbeResults.value);
             emit();
@@ -317,8 +311,8 @@
       emit();
       try {
         const [config, ov, probeDiagnostics, persistedProbeResults] = await Promise.all([
-          S.api.config(), S.api.overview(), fetchDiagnostics().catch(() => diagnostics),
-          fetchProbeResults().catch(() => probeResults)
+          S.api.config(), S.api.overview(), S.api.diagnostics().catch(() => diagnostics),
+          S.api.probeResults().catch(() => probeResults)
         ]);
         if (operation !== stateEpoch) return { ok: false, superseded: true };
         if (mutationEpoch !== startedMutation) return { ok: false, staleDraft: true };
@@ -341,13 +335,13 @@
     },
 
     async refreshDiagnostics() {
-      diagnostics = normalizeDiagnostics(await fetchDiagnostics());
+      diagnostics = normalizeDiagnostics(await S.api.diagnostics());
       emit();
       return diagnostics;
     },
 
     async refreshProbeResults() {
-      probeResults = normalizeProbeResults(await fetchProbeResults());
+      probeResults = normalizeProbeResults(await S.api.probeResults());
       emit();
       return probeResults;
     },

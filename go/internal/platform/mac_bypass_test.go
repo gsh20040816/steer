@@ -17,10 +17,7 @@ func TestWholeMACBypassUsesNativeTUNAndExemptsLocalDNS(t *testing.T) {
 	for _, mode := range []string{"off", "static", "dns"} {
 		value.Main.DirectBypass = mode
 		lp, op := linux.NewPlan(value), openwrt.NewPlan(value)
-		of, err := openwrt.RenderFirewall(op)
-		if err != nil {
-			t.Fatal(err)
-		}
+		of := openwrt.RenderFirewall(op)
 		for _, tc := range []struct {
 			name     string
 			target   compiler.Target

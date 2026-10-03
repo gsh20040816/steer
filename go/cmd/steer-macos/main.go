@@ -129,10 +129,7 @@ func runParseNodes(args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("read node import: %w", err)
 	}
-	parsed, err := subscription.ParseList(string(content))
-	if err != nil {
-		return err
-	}
+	parsed := subscription.ParseList(string(content))
 	if len(parsed.Nodes) == 0 {
 		return fmt.Errorf("node import contained no valid nodes (%d skipped)", parsed.Skipped)
 	}

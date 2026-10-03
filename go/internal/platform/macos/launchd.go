@@ -15,30 +15,15 @@ import (
 	"github.com/gsh20040816/steer/go/internal/compiler"
 )
 
-func (backend *Backend) launchDaemonLoaded(ctx context.Context) (bool, error) {
-	_, err := backend.runner.Output(ctx, backend.options.LaunchctlBinary, "print", "system/"+backend.options.LaunchDaemonLabel)
-	if err != nil {
-		// launchctl uses a non-zero exit status for an unloaded label. The next
-		// bootstrap operation remains the authoritative error if launchctl itself
-		// is unavailable or permissions are insufficient.
-		return false, nil
-	}
-	// A successful print means launchd still owns the label even when its
-	// process has exited and the state is "not running". Such a label must be
-	// booted out before bootstrap; otherwise launchctl reports EIO (exit 5).
-	return true, nil
-}
-
 func (backend *Backend) stopLaunchDaemon(ctx context.Context) error {
-	loaded, err := backend.launchDaemonLoaded(ctx)
+	// launchctl print exits non-zero for an unloaded label. A successful print
+	// means launchd still owns the label even when its process has exited, and
+	// such a label must be booted out before bootstrap or launchctl reports EIO.
+	output, err := backend.runner.Output(ctx, backend.options.LaunchctlBinary, "print", "system/"+backend.options.LaunchDaemonLabel)
 	if err != nil {
-		return err
-	}
-	if !loaded {
 		return backend.DNSManager().Restore(ctx)
 	}
-	output, err := backend.runner.Output(ctx, backend.options.LaunchctlBinary, "print", "system/"+backend.options.LaunchDaemonLabel)
-	if err == nil && launchdOutputIsRunning(string(output)) {
+	if launchdOutputIsRunning(string(output)) {
 		// Signal the supervisor first so it can restore DNS while the core is
 		// still alive. bootout may terminate the whole process group at once.
 		if _, err := backend.runner.Output(ctx, backend.options.LaunchctlBinary, "kill", "SIGTERM", "system/"+backend.options.LaunchDaemonLabel); err != nil {

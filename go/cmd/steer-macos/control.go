@@ -265,6 +265,7 @@ func (service *controlService) handle(request controlRequest) controlResponse {
 	}
 	service.mu.Lock()
 	defer service.mu.Unlock()
+	service.setDefaults()
 	if service.options.RunDirectory != "" {
 		lock, err := acquireLock(service.options.RunDirectory)
 		if err != nil {
@@ -356,9 +357,6 @@ func (service *controlService) handle(request controlRequest) controlResponse {
 			return response
 		}
 		run := service.probe
-		if run == nil {
-			run = performProbe
-		}
 		ctx, cancel := context.WithTimeout(context.Background(), controlDeadline)
 		defer cancel()
 		selection := probeSelection{
@@ -393,24 +391,14 @@ func (service *controlService) handle(request controlRequest) controlResponse {
 		return response
 	}
 	if request.Operation == "subscription-update" {
-		snapshots, err := macosplatform.UpdateConfiguredSubscriptions(context.Background(), &http.Client{Timeout: 30 * time.Second}, service.configPath, service.options.StateDirectory, request.ID)
-		if err != nil {
-			if permissionErr := setFailedSubscriptionStatePermissions(service.options.StateDirectory, request.ID, service.adminGID, err); permissionErr != nil {
-				response.Error = permissionErr.Error()
-				return response
-			}
+		snapshots, updateErr := macosplatform.UpdateConfiguredSubscriptions(context.Background(), &http.Client{Timeout: 30 * time.Second}, service.configPath, service.options.StateDirectory, request.ID)
+		if err := setSubscriptionUpdatePermissions(service.configPath, service.options.StateDirectory, service.adminGID, snapshots, updateErr); err != nil {
 			response.Error = err.Error()
 			return response
 		}
-		if err := setControlConfigurationPermissions(service.configPath, service.adminGID); err != nil {
-			response.Error = err.Error()
+		if updateErr != nil {
+			response.Error = updateErr.Error()
 			return response
-		}
-		for _, snapshot := range snapshots {
-			if err := setControlStatePermissions(filepath.Join(service.options.StateDirectory, "subscriptions", snapshot.SubscriptionID+".json"), service.adminGID); err != nil {
-				response.Error = err.Error()
-				return response
-			}
 		}
 		statuses, err := macosplatform.ReadSubscriptionStatus(service.configPath, service.options.StateDirectory)
 		if err != nil {
@@ -457,11 +445,7 @@ func (service *controlService) handle(request controlRequest) controlResponse {
 		response.Error = "expected Saved configuration revision is required"
 		return response
 	}
-	readRevision := service.revision
-	if readRevision == nil {
-		readRevision = currentControlRevision
-	}
-	currentRevision, err := readRevision(service.configPath)
+	currentRevision, err := service.revision(service.configPath)
 	if err != nil {
 		response.Error = err.Error()
 		return response
@@ -484,22 +468,14 @@ func (service *controlService) handle(request controlRequest) controlResponse {
 		response.Error = fmt.Sprintf("canonical configuration has %d validation error(s)", len(validation.Errors))
 		return response
 	}
-	write := service.write
-	if write == nil {
-		write = writeControlConfiguration
-	}
-	if err := write(service.configPath, document, service.adminGID); err != nil {
+	if err := service.write(service.configPath, document, service.adminGID); err != nil {
 		response.Error = err.Error()
 		return response
 	}
 	response.Saved = true
 	response.Revision = controlRevision(document)
 	if request.Operation == "apply" {
-		apply := service.apply
-		if apply == nil {
-			apply = applyControlConfiguration
-		}
-		if err := apply(value, service.options); err != nil {
+		if err := service.apply(value, service.options); err != nil {
 			status := service.readRuntimeStatus()
 			response.Status = &status
 			response.Error = err.Error()
@@ -544,13 +520,28 @@ func probeReportKind(selection probeSelection) string {
 }
 
 func (service *controlService) readRuntimeStatus() macosplatform.Status {
-	readStatus := service.status
-	if readStatus == nil {
-		readStatus = func(options macosplatform.BackendOptions) macosplatform.Status {
+	return service.status(service.options)
+}
+
+// setDefaults fills the operation hooks that tests replace with fakes.
+func (service *controlService) setDefaults() {
+	if service.write == nil {
+		service.write = writeControlConfiguration
+	}
+	if service.revision == nil {
+		service.revision = currentControlRevision
+	}
+	if service.apply == nil {
+		service.apply = applyControlConfiguration
+	}
+	if service.status == nil {
+		service.status = func(options macosplatform.BackendOptions) macosplatform.Status {
 			return macosplatform.NewBackend(macosplatform.ExecRunner{}, model.Intent{}, options).ReadStatus(context.Background())
 		}
 	}
-	return readStatus(service.options)
+	if service.probe == nil {
+		service.probe = performProbe
+	}
 }
 
 func controlRevision(content []byte) string {
@@ -599,23 +590,38 @@ func setControlStatePermissions(path string, adminGID int) error {
 	return nil
 }
 
-func setFailedSubscriptionStatePermissions(stateDirectory, requestedID string, adminGID int, updateErr error) error {
-	id := requestedID
-	var typed macosplatform.SubscriptionUpdateError
-	if errors.As(updateErr, &typed) && typed.SubscriptionID != "" {
-		id = typed.SubscriptionID
-	}
-	if id == "" {
-		return nil
-	}
-	path := filepath.Join(stateDirectory, "subscriptions", id+".json")
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return nil
+// setSubscriptionUpdatePermissions hands every file a subscription update
+// wrote back to the admin group, including snapshots of failed fetches.
+func setSubscriptionUpdatePermissions(configPath, stateDirectory string, adminGID int, snapshots []macosplatform.SubscriptionSnapshot, updateErr error) error {
+	if len(snapshots) > 0 {
+		if err := setControlConfigurationPermissions(configPath, adminGID); err != nil {
+			return err
 		}
-		return err
 	}
-	return setControlStatePermissions(path, adminGID)
+	ids := make([]string, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		ids = append(ids, snapshot.SubscriptionID)
+	}
+	failures := []error{updateErr}
+	if joined, ok := updateErr.(interface{ Unwrap() []error }); ok {
+		failures = joined.Unwrap()
+	}
+	for _, failure := range failures {
+		var typed macosplatform.SubscriptionUpdateError
+		if errors.As(failure, &typed) {
+			ids = append(ids, typed.SubscriptionID)
+		}
+	}
+	for _, id := range ids {
+		path := filepath.Join(stateDirectory, "subscriptions", id+".json")
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			continue
+		}
+		if err := setControlStatePermissions(path, adminGID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func applyControlConfiguration(value model.Intent, options macosplatform.BackendOptions) error {

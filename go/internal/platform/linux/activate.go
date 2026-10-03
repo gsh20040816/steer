@@ -14,12 +14,6 @@ import (
 )
 
 func ActivateGeneration(ctx context.Context, runner Runner, candidate generation.Candidate, runDirectory, nftBinary string) error {
-	if runDirectory == "" {
-		runDirectory = "/run/steer"
-	}
-	if nftBinary == "" {
-		nftBinary = "/usr/sbin/nft"
-	}
 	if err := CleanupPlatform(ctx, runner, nftBinary); err != nil {
 		return err
 	}
@@ -43,12 +37,6 @@ func ActivateGeneration(ctx context.Context, runner Runner, candidate generation
 }
 
 func EnsureCurrentFirewall(ctx context.Context, runner Runner, runDirectory, nftBinary string) error {
-	if runDirectory == "" {
-		runDirectory = "/run/steer"
-	}
-	if nftBinary == "" {
-		nftBinary = "/usr/sbin/nft"
-	}
 	if err := CleanupPlatform(ctx, runner, nftBinary); err != nil {
 		return err
 	}
@@ -59,9 +47,6 @@ func EnsureCurrentFirewall(ctx context.Context, runner Runner, runDirectory, nft
 }
 
 func CleanupPlatform(ctx context.Context, runner Runner, nftBinary string) error {
-	if nftBinary == "" {
-		nftBinary = "/usr/sbin/nft"
-	}
 	output, err := runner.Output(ctx, nftBinary, "-j", "list", "tables")
 	if err != nil {
 		return fmt.Errorf("list nftables tables: %w", err)
@@ -86,9 +71,6 @@ func CleanupPlatform(ctx context.Context, runner Runner, nftBinary string) error
 }
 
 func readCurrentPlan(runDirectory string) (Plan, error) {
-	if runDirectory == "" {
-		runDirectory = "/run/steer"
-	}
 	var plan Plan
 	file, err := os.Open(filepath.Join(runDirectory, "current", "platform.json"))
 	if err != nil {

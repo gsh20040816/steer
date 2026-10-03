@@ -28,7 +28,7 @@ func TestExportNativeDNSFixtures(t *testing.T) {
 		if platform == "openwrt" {
 			p := openwrt.NewPlan(intent.Intent{})
 			target = p.CompilerTarget()
-			firewall, _ = openwrt.RenderFirewall(p)
+			firewall = openwrt.RenderFirewall(p)
 		}
 		if platform == "macos" {
 			target = macos.NewPlan(intent.Intent{}).CompilerTarget()

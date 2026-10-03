@@ -15,6 +15,7 @@ import (
 	"github.com/gsh20040816/steer/go/internal/compiler"
 	"github.com/gsh20040816/steer/go/internal/generation"
 	model "github.com/gsh20040816/steer/go/internal/intent"
+	"github.com/gsh20040816/steer/go/internal/probe"
 )
 
 func TestSaveTestReport(t *testing.T) {
@@ -33,7 +34,7 @@ func TestSaveTestReport(t *testing.T) {
 			DownloadedBytes:      1024,
 		}},
 	}
-	if err := saveTestReport(stateDirectory, report); err != nil {
+	if err := probe.SaveReport(stateDirectory, report); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(stateDirectory, "logs", "tests", "nodes", "node_a", "download.json")
@@ -89,7 +90,7 @@ func TestReadLatestProbeResultsReturnsBackendDTO(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(minimalConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := saveTestReport(stateDirectory, TestReport{
+	if err := probe.SaveReport(stateDirectory, TestReport{
 		Scope: "overview", Kind: "direct", OK: true, TestedAt: time.Now(), Results: []TestResult{},
 	}); err != nil {
 		t.Fatal(err)
@@ -117,10 +118,7 @@ func TestReadDiagnosticsInspectsCurrentGenerationDNSCaptureArtifacts(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	firewall, err := RenderFirewall(plan)
-	if err != nil {
-		t.Fatal(err)
-	}
+	firewall := RenderFirewall(plan)
 	if err := os.WriteFile(filepath.Join(candidate.Directory, "firewall.nft"), []byte(firewall), 0o600); err != nil {
 		t.Fatal(err)
 	}

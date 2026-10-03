@@ -29,6 +29,25 @@ func ValidateWithGeoDataDirectory(value model.Intent, seedDirectory string) mode
 			Option: "direct_bypass", Message: "macOS does not support kernel direct bypass",
 		})
 	}
+	// The control daemon runs sing-box as root on behalf of any admin-group
+	// user without a password, so a Tor node must not choose what root runs.
+	for _, node := range value.Nodes {
+		if node.Type != "tor" {
+			continue
+		}
+		for option, set := range map[string]bool{
+			"executable_path": node.ExecutablePath != "",
+			"extra_args":      len(node.ExtraArgs) > 0,
+			"data_directory":  node.DataDirectory != "",
+		} {
+			if set {
+				validation.Errors = append(validation.Errors, model.Issue{
+					Code: "PLATFORM_UNSUPPORTED_TOR_OPTION", ObjectType: "node", ObjectID: node.ID,
+					Option: option, Message: "macOS does not allow custom Tor executables, arguments or data directories",
+				})
+			}
+		}
+	}
 	for _, rule := range value.Rules {
 		if !rule.Enabled {
 			continue

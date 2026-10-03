@@ -58,10 +58,10 @@ type Diagnostics struct {
 }
 
 func FailureReport(scope, objectID, kind string, err error) Report {
-	return SanitizeReport(Report{
+	return Report{
 		Scope: scope, ObjectID: objectID, Kind: kind,
 		Error: SafeError(err), TestedAt: time.Now().UTC(), Results: []Result{},
-	})
+	}
 }
 
 func BindReportIdentity(report Report, identity Identity) Report {
@@ -223,7 +223,6 @@ func ReadLatestProbeResults(stateDirectory string, identity Identity) LatestProb
 }
 
 func PresentLatestProbeResult(report Report, identity Identity) LatestProbeResult {
-	report = SanitizeReport(report)
 	result := LatestProbeResult{
 		Scope: report.Scope, ObjectID: report.ObjectID, Kind: report.Kind,
 		TestedAt: report.TestedAt, OK: report.OK, Stale: reportIsStale(report, identity),
@@ -357,12 +356,7 @@ func safeErrorSummary(report Report) string {
 			}
 		}
 	}
-	safe := errorValue
-	if safe != "probe timed out" && safe != "probe was cancelled" && safe != "TLS verification failed" &&
-		safe != "probe connection was refused" && safe != "probe target could not be resolved" &&
-		!strings.HasPrefix(safe, "probe target returned HTTP ") {
-		safe = SafeError(errors.New(errorValue))
-	}
+	safe := SafeError(errors.New(errorValue))
 	switch safe {
 	case "probe timed out":
 		return "连接超时"

@@ -36,11 +36,11 @@ type SkippedReason struct {
 	Detail    string `json:"detail"`
 }
 
-func ParseList(raw string) (ParseResult, error) {
+func ParseList(raw string) ParseResult {
 	result := ParseResult{Nodes: []model.Node{}}
 	text := strings.TrimSpace(raw)
 	if text == "" {
-		return result, nil
+		return result
 	}
 	if !strings.Contains(text, "://") {
 		decoded, err := decodeBase64(text)
@@ -51,22 +51,22 @@ func ParseList(raw string) (ParseResult, error) {
 			} else if strings.HasPrefix(candidate, "{") {
 				node, parseErr := parseVMessPayload(candidate)
 				appendParsedNode(&result, node, parseErr, "vmess")
-				return result, nil
+				return result
 			}
 		}
 	}
 	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		node, err := ParseURI(line)
 		appendParsedNode(&result, node, err, line)
 	}
-	return result, nil
+	return result
 }
 
-func appendParsedNode(result *ParseResult, node model.Node, err error, raw ...string) {
+func appendParsedNode(result *ParseResult, node model.Node, err error, raw string) {
 	if err == nil {
 		validation := model.ValidateNode(node)
 		if !validation.OK {
@@ -76,9 +76,7 @@ func appendParsedNode(result *ParseResult, node model.Node, err error, raw ...st
 	if err != nil {
 		result.Skipped++
 		reason := skippedReason(err)
-		if len(raw) > 0 {
-			reason.Scheme = uriScheme(raw[0])
-		}
+		reason.Scheme = uriScheme(raw)
 		result.SkippedReasons = append(result.SkippedReasons, reason)
 		return
 	}
@@ -432,7 +430,6 @@ func parseVMess(raw string) (model.Node, error) {
 
 func parseVMessPayload(decoded string) (model.Node, error) {
 	var value struct {
-		Version        string          `json:"v"`
 		Name           string          `json:"ps"`
 		Add            string          `json:"add"`
 		Port           json.Number     `json:"port"`
@@ -451,8 +448,9 @@ func parseVMessPayload(decoded string) (model.Node, error) {
 		AllowInsecure  json.RawMessage `json:"allowInsecure"`
 		SkipCertVerify json.RawMessage `json:"skip-cert-verify"`
 	}
+	// v2rayN-style payloads vary between clients ("v" may be a number, extra
+	// keys appear), so unknown fields are ignored.
 	decoder := json.NewDecoder(strings.NewReader(decoded))
-	decoder.DisallowUnknownFields()
 	decoder.UseNumber()
 	if err := decoder.Decode(&value); err != nil {
 		return model.Node{}, fmt.Errorf("invalid VMess JSON payload: %w", err)
@@ -478,22 +476,19 @@ func parseVMessPayload(decoded string) (model.Node, error) {
 	}
 	if len(value.ALPN) > 0 {
 		var alpnValue string
+		var alpnValues []string
 		if err := json.Unmarshal(value.ALPN, &alpnValue); err == nil {
-			var parseErr error
-			node.ALPN, parseErr = parseALPNValue(alpnValue)
-			if parseErr != nil {
-				return model.Node{}, parseErr
+			// v2rayN writes "alpn":"" when no ALPN is configured.
+			if alpnValue != "" {
+				alpnValues = strings.Split(alpnValue, ",")
 			}
-		} else {
-			var alpnValues []string
-			if err := json.Unmarshal(value.ALPN, &alpnValues); err != nil {
-				return model.Node{}, fmt.Errorf("VMess alpn must be a string or string list")
-			}
-			if err := validateALPNValues(alpnValues); err != nil {
-				return model.Node{}, err
-			}
-			node.ALPN = alpnValues
+		} else if err := json.Unmarshal(value.ALPN, &alpnValues); err != nil {
+			return model.Node{}, fmt.Errorf("VMess alpn must be a string or string list")
 		}
+		if err := validateALPNValues(alpnValues); err != nil {
+			return model.Node{}, err
+		}
+		node.ALPN = alpnValues
 	}
 	allowInsecure := value.AllowInsecure
 	if len(allowInsecure) == 0 {
@@ -664,12 +659,6 @@ func validateQueryValues(values url.Values) error {
 }
 
 func parseQueryBool(value, key string) (bool, error) {
-	if value == "0" {
-		return false, nil
-	}
-	if value == "1" {
-		return true, nil
-	}
 	parsed, err := strconv.ParseBool(value)
 	if err != nil {
 		return false, fmt.Errorf("URI parameter %q must be boolean", key)
@@ -720,18 +709,16 @@ func decodeBase64(value string) (string, error) {
 			return -1
 		}
 		return character
-	}, strings.TrimSpace(value))
+	}, value)
 	value = strings.ReplaceAll(strings.ReplaceAll(value, "-", "+"), "_", "/")
 	for len(value)%4 != 0 {
 		value += "="
 	}
-	for _, encoding := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding} {
-		decoded, err := encoding.DecodeString(value)
-		if err == nil {
-			return string(decoded), nil
-		}
+	decoded, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		return "", fmt.Errorf("invalid Base64")
 	}
-	return "", fmt.Errorf("invalid Base64")
+	return string(decoded), nil
 }
 
 func Fingerprint(node model.Node) string {

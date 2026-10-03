@@ -15,9 +15,6 @@ func ReadDiagnostics(configPath, runDirectory, stateDirectory string) probe.Diag
 	identity, warnings := readProbeIdentity(configPath, runDirectory)
 	latest := probe.ReadLatestProbeResults(stateDirectory, identity)
 	diagnostics := probe.Diagnostics{Warnings: append(warnings, latest.Warnings...)}
-	if runDirectory == "" {
-		runDirectory = "/run/steer"
-	}
 	currentPath := filepath.Join(runDirectory, "current")
 	diagnostics.DNSCapture = probe.InspectDNSCapture(
 		"native_hijack_with_local_shim", identity.ActiveGeneration,
@@ -44,9 +41,6 @@ func readProbeIdentity(configPath, runDirectory string) (probe.Identity, []strin
 		}
 	} else {
 		warnings = append(warnings, "the Saved configuration identity is unavailable")
-	}
-	if runDirectory == "" {
-		runDirectory = "/run/steer"
 	}
 	currentPath := filepath.Join(runDirectory, "current")
 	if value, err := generation.ReadIntent(currentPath); err == nil {

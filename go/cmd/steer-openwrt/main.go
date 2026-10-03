@@ -254,10 +254,7 @@ func runParseNodes(args []string) error {
 	if len(content) > 16<<20 {
 		return errors.New("node import exceeds 16 MiB")
 	}
-	parsed, err := subscription.ParseList(string(content))
-	if err != nil {
-		return err
-	}
+	parsed := subscription.ParseList(string(content))
 	if len(parsed.Nodes) == 0 {
 		return fmt.Errorf("node import contained no valid nodes (%d skipped)", parsed.Skipped)
 	}
@@ -357,10 +354,6 @@ func runApply(args []string) error {
 			Applied bool `json:"applied"`
 		}{Result: result, Saved: saved, Applied: result.OK})
 	})
-}
-
-func runLockedApply(runDirectory string, operation func() (coreapply.Result, error)) error {
-	return runLockedApplyOutput(runDirectory, operation, func(result coreapply.Result) { writeJSON(result) })
 }
 
 func runLockedApplyOutput(runDirectory string, operation func() (coreapply.Result, error), output func(coreapply.Result)) error {
@@ -680,18 +673,6 @@ func writeApplyRecord(runDirectory string, record coreapply.Record) error {
 	}
 	if err := os.Rename(temporaryPath, filepath.Join(runDirectory, "last-apply.json")); err != nil {
 		return fmt.Errorf("publish Apply result: %w", err)
-	}
-	return nil
-}
-
-func readJSON(path string, value any) error {
-	file, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("open %s: %w", path, err)
-	}
-	defer file.Close()
-	if err := json.NewDecoder(file).Decode(value); err != nil {
-		return fmt.Errorf("decode %s: %w", path, err)
 	}
 	return nil
 }
