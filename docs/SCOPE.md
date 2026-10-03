@@ -1,48 +1,46 @@
 # 项目范围
 
-本文描述 Steer 0.10、schema 9 的职责边界。共享核心定义用户配置语义，平台适配器负责操作系统资源和服务生命周期。
+这篇说明 Steer（0.11，schema 9）里哪些事归共享核心管，哪些归各平台自己管。简单说：配置是什么意思由共享核心决定，怎么落到操作系统上由平台适配器决定。
 
-## 第一层：共享语义
+## 共享核心
 
-共享核心提供：
+共享核心负责：
 
-- schema 9 Canonical Intent：主配置、Bootstrap、节点、订阅、逻辑路由、DNS Profile、本地代理和规则；
-- 严格解码：UCI 适配器拒绝未知 section/option 和 scalar/list 形态错误；Canonical JSON codec 拒绝未知字段与尾随数据；
-- 全局 ID、启用引用、协议参数、端口、URL、唯一 Direct、唯一 Default 等语义校验；
-- first-match 规则，同字段 OR、不同字段 AND，Default 决定最终 DNS 和业务路由；
-- 单节点路由前置链：目标必须存在、启用且同为 single，悬空、禁用、类型错误、自环和间接环全部拒绝；
-- 确定性 sing-box 最终配置编译，包括 Route 私有出站、DNS 路径、Geo 引用和能力需求；
-- 同步 Apply 生命周期 `Prepare → Activate → Healthy → Finalize` 与 `Disable`；
-- HTTP(S) 订阅的抓取、解析、合并、稳定 ID、stale pin 和窄持久化接口；
-- HTTP/TLS 测量、连接测试和完整下载报告格式。
+- schema 9 的配置格式（Canonical Intent）：全局设置、引导 DNS、节点、订阅、路由、DNS 配置、本地代理和规则；
+- 严格解码：UCI 里出现未知的 section/option 或者单值/列表写错，直接报错；Canonical JSON 出现未知字段或多余内容，也直接报错；
+- 语义校验：ID 是否唯一、引用的对象是否存在且启用、协议参数、端口、URL，以及「恰好一条直连路由、恰好一条默认规则」；
+- 规则匹配：按顺序命中第一条；同一个字段的多个值是「或」，不同字段之间是「且」；默认规则决定最终的 DNS 和路由；
+- 前置代理链：前置路由必须存在、启用、类型是 single，不能悬空、不能指向自己、不能绕成环；
+- 把配置确定性地编译成 sing-box 配置，包括每条路由的出口、DNS 路径、Geo 引用和所需的 sing-box 能力；
+- Apply 流程 `Prepare → Activate → Healthy → Finalize`，以及 `Disable`；
+- HTTP(S) 订阅：下载、解析、合并、保持节点 ID 稳定、保留被引用的过期节点；
+- 网络测试和测速的测量方式与报告格式。
 
-共享核心不认识 UCI、procd、launchd、systemd、nftables、pf、路由表号或平台目录。`status` 返回当前运行配置身份、健康状态和最近 Apply 记录；配置合法性由独立 `validate` 返回。
+共享核心不知道 UCI、procd、launchd、systemd、nftables、pf、路由表号或任何平台目录。`status` 只返回当前运行的配置、健康状态和最近一次 Apply；配置是否合法由单独的 `validate` 回答。
 
-## 第二层：平台实现
+## 平台适配器
 
-OpenWrt 适配器当前拥有：
+**OpenWrt**
 
-- UCI schema 9 codec 和 UCI 订阅节点持久化；
-- sing-box TUN `auto_route`/`auto_redirect` 入站；
-- 传统 TCP/UDP 53 DNS 捕获和 sing-box 原生 `source_mac_address` 规则；
-- nftables DNS shim、固定 TUN mark/table/priority/NFQUEUE 资源；
-- procd 生命周期、开机私有 `_start` 钩子、本地健康检查；
-- 包内完整 SRS seed、manifest 精确 selector 校验与 sing-box remote rule-set；
-- `/run/steer` generation、`/var/lib/steer` 日志和订阅状态；
-- LuCI、ucode RPC、ACL、OpenWrt 包和 cron 订阅调度。
+- UCI 格式的读写，订阅节点也存进 UCI；
+- sing-box TUN 入站（`auto_route`/`auto_redirect`）；
+- 53 端口 DNS 接管，来源 MAC 规则用 sing-box 原生的 `source_mac_address`；
+- 一小段 nftables DNS 规则，以及固定的 TUN mark、路由表、优先级和 NFQUEUE；
+- procd 服务、开机钩子、本地健康检查；
+- 包内的 SRS 数据和 manifest、sing-box 远端规则集更新；
+- `/run/steer` 下的运行配置，`/var/lib/steer` 下的日志和订阅状态；
+- LuCI 界面、ucode RPC、ACL、软件包和 cron 订阅调度。
 
-这些是 OpenWrt 实现，不得反向污染共享 Intent。Linux 使用 JSON 配置、systemd 和 loopback Web；macOS 使用 JSON 配置、SwiftUI GUI、launchd 和 sing-box TUN。只要共享语义和 Apply 生命周期一致，平台目录、前端形式、网络接管方式、权限模型和服务管理器可以不同。
+**Linux**：JSON 配置、systemd、只监听本机的网页界面。详见 [Linux](LINUX.md)。
 
-macOS 适配器当前拥有：
+**macOS**：JSON 配置、Darwin TUN、系统 DNS 的接管与恢复、root LaunchDaemon，以及 SwiftUI 图形界面。图形界面和 LuCI、Linux 网页界面是同一层的东西，只调用后端，不处理流量。详见 [macOS](MACOS.md)。
 
-- Canonical JSON 配置、Darwin TUN `auto_route`、系统 DNS 接管与恢复，以及进入 TUN 的 TCP/UDP 目标端口 53 capture；
-- root LaunchDaemon、generation、Geo seed、Apply/health/status/cleanup；
-- SwiftUI GUI 配置与运维前端。GUI 与 LuCI、Linux Web 同级，只调用平台后端，不承载数据面。
+平台相关的东西不进共享配置格式。只要配置含义和 Apply 流程一致，各平台的目录、界面、接管网络的方式、权限和服务管理都可以不同。
 
-## 交付与运行边界
+## 交付和运行
 
-OpenWrt 提供签名 APK 软件源，Linux 提供通用 tar.zst，macOS 提供 ad-hoc 签名 DMG 和首次安装系统组件的授权流程。具体平台与发布要求见 [打包与发布](PACKAGING.md)。
+OpenWrt 提供签名的 APK 软件源，Linux 提供通用 tar.zst，macOS 提供 ad-hoc 签名的 DMG，第一次安装系统组件时要管理员授权。细节见[打包与发布](PACKAGING.md)。
 
-Apply 在切换前完成配置和环境检查；切换后的失败返回错误并保留现场，供诊断和重试。配置保存、运行态应用和订阅库存更新是独立操作，前端分别展示其结果。
+Apply 在切换之前做完配置和环境检查；切换之后才出错的，返回错误并保持现状，方便排查和重试。保存配置、应用配置、更新订阅是三件独立的事，界面分别显示结果。
 
-新增共享字段需要同时更新 codec、校验、编译和三端表单。平台差异在适配器内实现；修改通过对应的行为测试和目标系统验证。
+新增一个共享字段时，要一起改解码、校验、编译和三端界面。平台差异放在适配器里，并用对应平台的测试验证。

@@ -1,6 +1,12 @@
 # 配置与使用
 
-当前公开配置是 schema 9。OpenWrt 的 `/etc/config/steer` 是唯一配置真相，LuCI 只编辑这份 UCI；Linux 的 `/etc/steer/config.json` 与 macOS 的 `/Library/Application Support/Steer/config/config.json` 是严格 Canonical JSON 真相。Linux Web 和 macOS GUI 都只编辑各自平台的这份配置，不维护第二套前端 schema。Geo category 由包内 manifest 精确校验，不再配置 DAT 路径。
+配置格式是 schema 9。每个平台只有一份配置，界面只编辑这一份：
+
+- OpenWrt：`/etc/config/steer`（UCI），用 LuCI 编辑；
+- Linux：`/etc/steer/config.json`（Canonical JSON），用网页界面编辑；
+- macOS：`/Library/Application Support/Steer/config/config.json`（Canonical JSON），用 App 编辑。
+
+下面的例子用 UCI 写法，JSON 里字段名相同。
 
 ## 基本配置
 
@@ -23,17 +29,17 @@ config bootstrap 'bootstrap'
 	option strategy 'prefer_ipv4'
 ```
 
-三个测试地址都必须是没有凭据和 fragment 的单个 HTTPS URL：
+三个测试网址都必须填，而且必须是 HTTPS，不能带用户名密码或 `#` 片段。没有默认值。
 
-- `probe_direct`：使用设备当前网络环境访问的直连测试目标；
-- `probe_proxy`：使用设备当前网络环境访问的代理测试目标，以及裸节点和路由链临时测试的默认目标；
-- `speedtest_proxy`：完整下载测速。
+- `probe_direct`：直连测试的目标；
+- `probe_proxy`：代理测试的目标，也是单独测试节点和路由时的默认目标；
+- `speedtest_proxy`：下载测速的目标。
 
-后端不会补默认 URL。Bootstrap 只支持 UDP/TCP，服务器必须是 IP 字面量，策略为 `prefer_ipv4`、`prefer_ipv6`、`ipv4_only` 或 `ipv6_only`。Bootstrap 只解析 DNS 上游等基础设施主机名；Direct UDP/TCP Bootstrap 可能产生明文 53，但其中不是原始业务查询域名。
+引导 DNS（Bootstrap）只支持 UDP/TCP，服务器必须写 IP。`strategy` 可选 `prefer_ipv4`、`prefer_ipv6`、`ipv4_only`、`ipv6_only`。引导 DNS 只用来解析 DNS 服务器这类基础设施的域名；直连的 UDP/TCP 引导 DNS 会发出明文 53 查询，但里面没有用户访问的域名。
 
 ## 节点、路由和前置代理
 
-规则引用 Route，不直接引用 Node。Route 可以是 `direct`、`block` 或 `single`：
+规则指向路由，不直接指向节点。路由有三种：`direct`（直连）、`block`（拒绝）、`single`（走某个节点）。
 
 ```uci
 config node 'front_node'
@@ -66,11 +72,13 @@ config route 'block'
 	option kind 'block'
 ```
 
-`detour` 可留空，表示节点直接拨号；非空时必须引用另一条启用的 single Route。链可以多级，但不能自环或间接成环。Direct/Reject 不能携带或充当前置 Route。为兼容已有配置，Reject 仍写为 `kind 'block'`；编译后为 sing-box route/DNS `action: reject`，不生成已废弃的 block outbound。后端是唯一语义裁决者，Apply 会拒绝完整非法路径。
+- `detour` 留空表示节点直接连接；填了就必须指向另一条启用的 single 路由。可以多层嵌套，但不能指向自己或绕成环。
+- 直连和拒绝路由不能有 `detour`，也不能被当作别人的 `detour`。
+- 拒绝路由为了兼容旧配置仍写作 `kind 'block'`，编译后是 sing-box 的 `action: reject`，不会生成已废弃的 block 出站。
 
-支持的节点类型：`socks http shadowsocks vmess vless trojan hysteria shadowtls tuic hysteria2 anytls ssh naive tor`。具体字段由协议决定；未知字段、错误字段形态和该协议不支持的选项都会明确失败。三端节点列表都可以把可表示的当前节点导出为分享链接；分享链接的输入/输出格式、参数闭环和 manual-only 类型见[分享链接兼容矩阵](SUBSCRIPTION_COMPATIBILITY.md)。
+支持的节点类型：`socks http shadowsocks vmess vless trojan hysteria shadowtls tuic hysteria2 anytls ssh naive tor`。具体字段看协议；未知字段、写错的字段和协议不支持的选项都会报错。三端都可以把节点导出成分享链接，格式和限制见[分享链接兼容性](SUBSCRIPTION_COMPATIBILITY.md)。
 
-## DNS Profile
+## DNS 配置
 
 ```uci
 config dns_profile 'secure_dns'
@@ -81,13 +89,26 @@ config dns_profile 'secure_dns'
 	option path '/dns-query'
 ```
 
-协议支持 `udp tcp tls https quic h3`。规则选择代理 Route 时，DNS transport 使用同一 Route 及其完整前置链。本地 SOCKS、HTTP 或 Mixed 入口收到域名目标后，会在业务路由前通过 sing-box 原生 `resolve` action 复用同一组 DNS rules，因此按匹配规则选择 DNS Profile；Direct 不会再用 Bootstrap 解析业务域名，Proxy 也使用所选 Profile 的解析结果。已经是 IP 的目标不会触发该查询。Steer 不设置全局 `dns.strategy`，普通客户端明确发出的 A/AAAA 查询保持透明；DNS server 使用域名时，其 `domain_resolver.strategy` 来自独立的 `bootstrap.strategy`。sing-box 1.14 已废弃 DNS rule action 的 query-level `strategy`，schema 9 删除了原 `dns_profile.strategy`，Steer 不再生成该字段。缓存容量、持久化与乐观缓存是全局设置。
+- 协议支持 `udp tcp tls https quic h3`。
+- 规则选了代理路由时，DNS 查询也走同一条路由和它的整条前置链。
+- 本地 SOCKS/HTTP/Mixed 入口收到域名时，会先用 sing-box 的 `resolve` 按同一套 DNS 规则解析，再做路由。所以直连不会用引导 DNS 解析业务域名，代理也用规则选中的 DNS 配置。目标已经是 IP 的不解析。
+- Steer 不设置全局的 `dns.strategy`，客户端自己发的 A/AAAA 查询原样处理。DNS 服务器写的是域名时，用引导 DNS 的 `strategy` 解析它。sing-box 1.14 废弃了 DNS 规则里的 `strategy`，所以 schema 9 也去掉了 `dns_profile.strategy`。
+- 缓存容量、持久化和乐观缓存是全局设置。
 
-平台 capture 只接管进入各自捕获路径的 TCP/UDP 目标端口 53；ICMP echo（ping）遵循共享 L3 策略，保留适用规则顺序和 Direct/WireGuard/Block，普通代理目标回退 Direct。Linux/OpenWrt 对可路由源地址执行内核 bypass，本机 TUN 源地址改用 Direct 转发；macOS 通过 TUN 完成真实转发。应用自带 DoH、DoT、DoQ 是普通业务流量，port-53 capture 本身无法识别或重定向；除非另有经过验证的阻断/重定向策略，否则 UI 和文档都不承诺“全部 DNS 必然经过所选 Profile”。Diagnostics 的 DNS 检查只核对已发布 Active generation 中的预期 sing-box/nftables 配置，不是流量抓包，也不证明零泄漏。为保持网络稳定，Steer 不把整个 TUN 或本地链路流量无差别送入 DNS hijack。
+**DNS 接管的范围**
+
+- 各平台只接管进入各自接管路径的 TCP/UDP 53 端口查询。
+- 应用自己发的 DoH、DoT、DoQ 是普通流量，53 端口接管认不出来，也改不了。所以界面和文档都不承诺「所有 DNS 都经过选定的 DNS 配置」。
+- 诊断页的 DNS 检查只核对当前运行的配置里有没有预期的 sing-box/nftables 规则，不是抓包，不能证明没有泄漏。
+- 为了网络稳定，Steer 不会把整个 TUN 或本地链路的流量都丢给 DNS 劫持。
+
+**ping**
+
+ICMP echo 按共享的三层规则处理，规则顺序和直连、WireGuard、拒绝都照常生效；命中普通代理路由的改走直连。Linux/OpenWrt 上来源地址可路由的交给内核转发，来源是本机 TUN 地址的由 sing-box 直连出口发出；macOS 全部经 TUN 转发。
 
 ## 规则
 
-规则严格按 UCI 顺序 first-match。最后必须恰好有一条启用的 Default；Default 之后不能再有启用普通规则。
+规则严格按配置里的顺序匹配，命中第一条就停。最后必须有且只有一条启用的默认规则，默认规则后面不能再有启用的普通规则。
 
 ```uci
 config rule 'service'
@@ -105,21 +126,21 @@ config rule 'default'
 	option route 'direct'
 ```
 
-条件包括：
+可用的条件：
 
-- `inbound`：本地 SOCKS、HTTP 或 Mixed 入口 ID；
-- `domain_match`：普通关键字、`full:`、`domain:`、`regexp:`、`geosite:`；
+- `inbound`：本地 SOCKS、HTTP 或 Mixed 入口的 ID；
+- `domain_match`：关键字，或 `full:`、`domain:`、`regexp:`、`geosite:` 开头；
 - `ip_match`：CIDR 或 `geoip:`；
 - `source_ip_cidr`、`source_mac_address`；
 - `network`、`protocol`、`port`。
 
-同一字段多值为 OR，不同非空字段为 AND。目标 IP、网络、协议和端口只参与业务路由，不参与 DNS 选择。
+同一个字段的多个值是「或」，不同字段之间是「且」。目标 IP、网络、协议和端口只影响流量走哪条路由，不影响选哪个 DNS 配置。
 
-`geosite:` 与 `geoip:` 引用必须精确存在于包内 manifest；`geosite:steam@cn` 之类属性 selector 也按完整名称校验。Apply 在停止当前 generation 前验证所需 seed 的路径、大小和 SHA-256。sing-box 随后使用本地 `initial_path` 启动，并每 24 小时后台检查 `https://gsh20040816.github.io/steer/geodata/latest/`。远端失败不会把有效 seed/cache 伪装成失败，错误保留在 sing-box 日志中。
+`geosite:` 和 `geoip:` 必须是安装包 manifest 里确实存在的分类，`geosite:steam@cn` 这种带属性的写法也按完整名称检查。Apply 在停掉当前配置之前，先校验需要的 Geo 文件路径、大小和 SHA-256。sing-box 启动时用本地文件，之后每 24 小时在后台检查 `https://gsh20040816.github.io/steer/geodata/latest/`。远端更新失败不影响已有数据，错误只记在 sing-box 日志里。
 
-## 本地入口和订阅
+## 本地入口
 
-本地入口支持 `socks`、`http` 与 `mixed`，监听地址必须是 loopback：
+支持 `socks`、`http`、`mixed`，只能监听回环地址：
 
 ```uci
 config local_proxy 'local'
@@ -128,7 +149,9 @@ config local_proxy 'local'
 	option listen_port '1090'
 ```
 
-订阅只管理节点：
+## 订阅
+
+订阅只管节点：
 
 ```uci
 config subscription 'public'
@@ -144,11 +167,24 @@ steer subscription status
 steer subscription clean --id public --node <node-id>
 ```
 
-三端新增订阅的默认更新周期统一为 `6h`。`update_interval` 留空时订阅仅允许手动更新；平台每 15 分钟运行一次轻量调度器，只有非空周期首次抓取或已到期时才下载。带 `--id` 的显式更新属于手动操作，始终忽略周期限制。
+**更新时机**
 
-URL 必须是可访问的 HTTP 或 HTTPS 地址，允许私网地址和正常重定向。订阅内容可为逐行标准代理 URI 或整段 Base64 URI 列表。单条无效节点会被跳过并计数；如果没有任何有效节点，更新失败并保留上次成功节点库。非空更新使用稳定 ID，保留本地启用状态；上游消失且未被 Route 引用的节点在本次更新中自动删除，仍被 Route 引用的节点才会保留并标为 `pinned_stale`，同时产生提醒尽快解除引用的 warning。解除引用后可等待下次更新自动删除，或显式 clean；cleanup 不级联改写 Route。订阅提交节点后不自动 Apply、不创建仅由库存变化触发的 generation；三端提示同时展示 added/current/stale/skipped，并明确当前 Active 配置未改变。
+- 新建订阅的默认更新周期是 `6h`。`update_interval` 留空表示只能手动更新。
+- 各平台每 15 分钟检查一次，只有从没更新过或者到期了才会下载。
+- 用 `--id` 手动更新时不看周期。
 
-三端共用同一状态契约：`never_fetched`、可空的 `last_success`、独立的 `last_failure`、`node_count`、`current`、`added`、`skipped` 和逐节点 `stale`。失败只写入时间与脱敏摘要，不覆盖上次成功时间和节点库；`stale.referenced_by` 列出阻止清理的 Route。已停用订阅不能 Update。
+**更新内容**
+
+- URL 必须是 HTTP 或 HTTPS，可以是私网地址，可以重定向。
+- 内容可以是逐行的分享链接，也可以是整段 Base64。
+- 无效的节点跳过并计数。一个有效节点都没有时，这次更新算失败，保留上次的节点。
+- 节点 ID 在多次更新之间保持不变，本地设置的启用状态也保留。
+- 上游消失、又没有被路由引用的节点，这次更新直接删掉。被路由引用的保留下来，标为 `pinned_stale` 并给出警告，提醒尽快换掉引用。换掉之后，等下次更新自动删除，或者手动 `clean`。`clean` 不会顺带改路由。
+- 订阅更新不会自动 Apply，也不会因为节点列表变了就生成新的运行配置。三端都会提示新增、现有、过期、跳过的数量，并说明正在运行的配置没变。
+
+**状态字段**
+
+三端用同一组字段：`never_fetched`、`last_success`（可能为空）、`last_failure`、`node_count`、`current`、`added`、`skipped`，以及每个节点的 `stale`。失败只记时间和去掉敏感信息的摘要，不会覆盖上次成功的时间和节点。`stale.referenced_by` 列出还在引用它的路由。停用的订阅不能更新。
 
 ## Apply、状态和测试
 
@@ -159,9 +195,11 @@ steer health --timeout 10s
 steer status
 ```
 
-`validate` 只做严格解码和共享语义校验。`apply` 还会执行能力检查、Geo 准备、sing-box/nftables 原生检查、切换与本地健康检查。`status` 只包含 Active generation/Intent/Runtime digest、`healthy` 和可选 `last_apply`；Draft、Saved、配置合法性和组件明细不会混入 Active 状态对象。
+- `validate` 只做解码和配置校验。
+- `apply` 还会检查 sing-box 能力、准备 Geo 数据、跑 sing-box/nftables 自带的配置检查、切换配置、做本地健康检查。
+- `status` 只返回当前运行配置的身份（generation、Intent 和运行时的 digest）、`healthy`，以及可选的 `last_apply`。草稿、已保存配置和校验结果都不在里面。
 
-概览测试读取 Saved 配置中的三个 URL，并直接使用设备当前网络环境；Steer 未启用或没有 Active generation 时仍可运行。三端按测试种类持久化最近一次结果，并在 Saved 或测试时网络环境变化后标记为过期。`saved_digest`、`active_generation`、`active_digest` 等身份只用于后端判断，不进入普通测试结果 UI：
+网络测试读取已保存配置里的三个网址，直接用设备当前的网络访问，Steer 没启用也能测：
 
 ```sh
 steer probe --kind direct
@@ -169,7 +207,7 @@ steer probe --kind proxy
 steer probe --kind speedtest
 ```
 
-裸节点和路由链测试读取磁盘 UCI并启动临时环回 sing-box，不切换当前运行态：
+节点和路由测试读取已保存的配置，在回环地址上临时起一个 sing-box，不影响正在运行的配置：
 
 ```sh
 steer probe --kind speedtest --node <node-id>
@@ -178,40 +216,52 @@ steer probe --kind speedtest --route <route-id>
 steer probe --kind speedtest --route <route-id> --download
 ```
 
-连接测试内部记录 TCP、TLS、首字节、HTTP 状态和尝试次数；下载测试内部记录字节、耗时和速率。平台 state 按 overview/node/route 与测试 kind 各保留一个原始报告，但普通控制面读取的是后端生成的 `LatestProbeResult`：`scope/object_id/kind/tested_at/ok/stale/summary/error_summary`。读取不按全局条数截断，失败动作也会返回或重新读取刚持久化的 DTO。普通 UI 不展示原始报告或历史列表，不比较 Saved/Active digest，也不自行计算 stale、延迟、吞吐率或错误分类；它只本地化时间并在测试入口展示后端摘要。完整阶段数据仅供受控排错使用，并继续去除 credentials、URL path/query values 与进程诊断。概览请求从 Saved 配置读取 URL，直接使用设备当前网络环境访问，不要求 Steer 已启用；成功只证明 URL 当时可达，不证明具体 outbound、DNS resolver 或 DNS 无泄漏。节点/路由测试只验证隔离临时链路，不证明当前规则选择了该链路。
+**测试结果**
 
-## 版本与升级
+- 连接测试在内部记录 TCP、TLS、首字节、HTTP 状态和重试次数；下载测试记录字节数、耗时和速率。完整报告只留给后台排错，并去掉凭据、URL 路径和参数、进程信息。
+- 每个「网络 / 节点 / 路由 + 测试类型」只保留最近一次结果。界面拿到的是后台算好的摘要：`scope/object_id/kind/tested_at/ok/stale/summary/error_summary`。界面只负责本地化时间和显示，不自己判断是否过期，也不自己算延迟或速率。
+- 已保存配置或网络环境变了，旧结果标为过期。测试失败也会立即返回刚保存的结果。
+- 网络测试成功只说明网址当时能访问，不说明走了哪个出口、用了哪个 DNS，也不说明没有 DNS 泄漏。节点和路由测试只验证那条临时链路，不说明你的规则会选中它。
 
-0.8.0 及更高版本只接受 schema 9。Linux、OpenWrt 和发行版包均不再提供旧 schema 迁移命令或安装 hook；旧版本配置必须在升级前完成转换，否则 Validate/Apply 会明确失败。`bootstrap.strategy` 只服务内部域名解析，DNS Profile 不再包含客户端地址族 strategy。
+## 版本升级
+
+0.8.0 起只接受 schema 9。各平台都没有旧格式的迁移命令或安装钩子，旧配置要在升级前自己改好，否则校验和 Apply 会报错。
+
+## 整设备直连（按 MAC）
+
+Linux/OpenWrt 上，如果一条规则只有 `source_mac_address` 条件、并且指向直连，它会被编译成 TUN 的 `exclude_mac_address`：这台设备的 IPv4/IPv6 TCP、UDP、ICMP 全部不进 TUN，平台的本机 DNS 拦截也跳过它。这台设备发给外部 DNS 的查询不再经过 Steer，发给路由器自己的 DNS 查询照常由那个 DNS 服务处理。这样做还能在 Docker 对进入 TUN 的 UDP 做 MASQUERADE 之前认出设备，不会因为来源被改写而误走默认代理。
+
+只有在这条规则之前没有可能命中同一台设备的非直连规则时，才会这样处理。其他 MAC 的规则、或者明确限定了本地代理入口的规则不算冲突。如果 MAC 规则还带了域名、IP、端口、协议、网络或入口条件，就按普通规则处理。需要整设备直连时，把纯 MAC 的直连规则放到可能冲突的代理/拒绝规则前面。
+
+macOS 不生成这个选项。它和下面的 `direct_bypass` 互不相关。
 
 ## IPv6 内核直连（0.11.0）
 
-在 Linux/OpenWrt 上，仅包含 `source_mac_address` 条件、指向 Direct 的整设备规则会生成 TUN 原生 `exclude_mac_address`，同时跳过平台的本机 DNS 拦截 shim。此语义独立于下面的 IPv6 `direct_bypass` 优化，覆盖 IPv4/IPv6 TCP、UDP 和 ICMP；设备发送给外部 DNS 的请求也不再被 Steer 接管，发送给路由器自身 DNS 的请求仍由该 DNS 服务按其配置处理。
+`main.direct_bypass` 是可选字段，不写或写 `off` 就和以前一样。OpenWrt 写 `option direct_bypass 'dns'`，JSON 写 `"direct_bypass": "dns"`，LuCI 和 Linux 网页的基础设置里也有这个选项。macOS 不支持，开启会报错。
 
-只有在此前不存在可能匹配该设备的非 Direct 规则时才提升为整设备绕过；不同 MAC 或显式本地代理入口的规则不构成冲突。带域名、目的/源 IP、端口、协议、网络或入口附加条件的 MAC 规则保留常规路由语义。需要整设备绕过时，应将纯 MAC Direct 规则放在可能冲突的代理/拒绝规则之前。这样可在 Docker 对进入 TUN 的 UDP 做 MASQUERADE 之前识别设备，避免源身份丢失后误走默认代理。macOS 不生成这个 Linux 专用选项。
-
-`main.direct_bypass` 是 schema 9 的可选字段，省略或 `off` 保持既有行为。
-LuCI/Linux 基础设置提供同一选项；OpenWrt 对应 `option direct_bypass 'dns'`，
-Canonical JSON 对应 `"direct_bypass": "dns"`。
-
-| 值 | 行为 |
+| 值 | 效果 |
 |---|---|
-| `off` | 先 sniff，再执行完整业务规则。 |
-| `static` | 根据 IP、源 CIDR、端口、传输层协议和已确认的源 MAC 提前证明 Direct。域名条件保持未知。 |
-| `dns` | 在 static 基础上，接受 DNS reverse mapping 域名参与提前判断；缺失域名仍是未知。 |
+| `off` | 先嗅探，再走完整的规则匹配。 |
+| `static` | 根据 IP、来源网段、端口、传输层协议和已知的来源 MAC，提前判断一定走直连的流量。域名条件当作未知。 |
+| `dns` | 在 `static` 基础上，用 DNS 反查得到的域名参与判断；查不到域名的仍当作未知。 |
 
-仅 OpenWrt/Linux auto_redirect 的 IPv6 流量参与新旁路，不附加传输层协议限制；
-规则显式指定的 TCP/UDP 条件仍按实际报文匹配。TCP/UDP 53 继续由 DNS 接管，
-IPv4 和显式 HTTP/SOCKS/Mixed 入口保持原路径。macOS 拒绝启用该选项。
-已配置的 ICMP 旁路独立于此选项。
+**适用范围**
 
-前置 Proxy/Reject 规则必须能够被排除；缺少域名不能视为域名规则不匹配。
-前面的未知规则如果同样指向 Direct，则不阻止后面已经确定的 Direct。
-例如前置域名 Proxy 后的 `geoip:cn → Direct`，在无域名时必须回退 sniff。
-应用协议规则在预匹配阶段未知，但同一规则内明确不匹配的端口、网络或源网段可排除整条规则。
-源 MAC 匹配失败可能是邻居信息缺失，因此不会被用于证明前置 MAC Proxy/Reject 不匹配。
+- 只对 Linux/OpenWrt 经 `auto_redirect` 的 IPv6 流量生效。规则里明确写的 TCP/UDP 条件照常按实际报文匹配。
+- TCP/UDP 53 仍由 DNS 接管；IPv4 和显式的 HTTP/SOCKS/Mixed 入口不受影响。
+- ICMP 的旁路是另一套机制，和这个选项无关。
+- DNS 传输、订阅和测试的流量不会因为这个选项改走内核。
 
-DNS 辅助旁路接受共享 IP、CNAME、缓存等带来的域名歧义；它不保证与稍后 SNI/Host 相同。
-不能提前证明 Direct 时，仍先 sniff/resolve，再从第一条完整业务规则开始判断。
-普通 Direct outbound 不能保证保留客户端公网 IPv6；真正 bypass 还需要正常 IPv6 转发、回程路由且无源地址改写。
-DNS transport、订阅与探测不会因为该选项改为内核旁路。
+**判断规则**
+
+- 前面的代理/拒绝规则必须能被确定排除。没有域名不等于域名规则不匹配。
+- 前面的未知规则如果同样指向直连，不影响后面已经确定的直连。
+- 例子：先有一条按域名走代理的规则，后面是 `geoip:cn → 直连`。没有域名时无法排除前一条，只能退回嗅探。
+- 应用协议条件在预判阶段是未知的；但如果同一条规则里的端口、网络或来源网段明确不匹配，整条规则可以排除。
+- 来源 MAC 匹配失败可能只是邻居表里没有记录，所以不能用它证明前面的 MAC 代理/拒绝规则不匹配。
+
+**注意**
+
+- `dns` 模式接受共享 IP、CNAME、缓存带来的域名歧义，结果不一定和之后的 SNI/Host 一致。
+- 无法提前确定直连时，仍然先嗅探/解析，再从第一条规则开始完整匹配。
+- 普通的直连出站不保证保留客户端的公网 IPv6。真正的内核直连还需要正常的 IPv6 转发、回程路由，并且中间没有改写来源地址。

@@ -1,18 +1,16 @@
-# ADR 0002：macOS 使用 LaunchDaemon + sing-box TUN
+# ADR 0002：macOS 用 LaunchDaemon + sing-box TUN
 
 ## 状态
 
-Accepted；这是 macOS 唯一受支持的数据面架构。
+已采纳。这是 macOS 唯一支持的流量处理方式。
 
 ## 背景
 
-项目不购买 Apple Developer Program。sing-box 已经提供 macOS TUN 和
-`auto_route`，Steer 不需要重新实现数据面。SwiftUI GUI 只作为配置与运维
-前端，数据面继续由 root LaunchDaemon 管理。
+项目不打算付费加入 Apple Developer Program，所以用不了 Network Extension。sing-box 本身就支持 macOS 的 TUN 和 `auto_route`，Steer 没必要自己实现。SwiftUI 图形界面只负责配置和运维，流量交给 root 运行的 LaunchDaemon。
 
-## 决策
+## 决定
 
-macOS 使用普通 sing-box 二进制，由 root LaunchDaemon 启动：
+用普通的 sing-box 可执行文件，由 root LaunchDaemon 启动：
 
 ```text
 steer-macos apply
@@ -21,43 +19,57 @@ launchctl bootstrap
         ↓
 steer-macos _run
         ↓
-supervise sing-box + system DNS lease
+看护 sing-box，接管系统 DNS
         ↓
 Darwin utun + auto_route
 ```
 
-平台 plan：
+TUN 的设置：
 
-- TUN inbound 不设置 `interface_name`，让 Darwin/utun 自动选择设备；
-- 设置 `auto_route`、`stack=system`、MTU 和地址；
-- 不再追加 IPv4 RFC1918、CGNAT 与 IPv6 ULA 大网段路由；
-- `route_exclude_address` 继续保留回环、链路本地、组播和文档/保留地址，但不再排除上述私网；
-- 不设置 Linux-only `auto_redirect`、iproute2 mark、nftables 或 pf。
+- 不设 `interface_name`，由系统自动分配 utun 设备；
+- 开启 `auto_route`，`stack=system`，设置 MTU 和地址；
+- `route_address` 只有默认路由（启用 WireGuard 时再加上它的网段），不额外加 RFC1918、CGNAT、IPv6 ULA 这些私网路由；
+- `route_exclude_address` 排除回环、链路本地、组播、文档地址和其他保留地址；
+- 不用 Linux 才有的 `auto_redirect`，也不用 iproute2 mark、nftables 或 pf。
 
-DNS 由同一份 sing-box DNS Router 负责。TUN 使用 `dns_mode=hijack`，不显式填写 `dns_address`，让核心派生 `198.18.0.2` 与 `fdfe:dcba:9876::2` 并自动处理发往这些地址的 DNS。macOS CLI 缺少原生系统 DNS 设置，所以 `_run` 在 DNS 健康后按物理网络服务 UUID 保存并接管系统 DNS，退出时恢复；独立 control daemon 回收崩溃遗留 journal。恢复仅处理当前仍等于 Steer 写入值的服务，不覆盖用户后续修改；VPN 专用服务和搜索域保持不变。
+DNS 全部由 sing-box 的 DNS 模块处理。TUN 设置 `dns_mode=hijack`，不写 `dns_address`，由 sing-box 自己用 `198.18.0.2` 和 `fdfe:dcba:9876::2` 接收 DNS 查询。macOS 的命令行版 sing-box 不会修改系统 DNS，所以 `_run` 在确认 DNS 可用后，按网络服务的 UUID 记下原来的 DNS 并改成上面两个地址，退出时再改回去。进程崩溃留下的记录由常驻的 control 服务负责恢复。恢复时只处理 DNS 仍是 Steer 写入的那些服务，用户后来自己改过的不动；VPN 的网络服务和搜索域也不动。
 
-route 第一条仍明确匹配 `inbound=steer-tun + network=[tcp,udp] + port=[53]` 执行 `hijack-dns`，随后对 `icmp` bypass，再是私网 Direct。此规则只覆盖已经进入 TUN 的请求，不能修复直连/作用域路由绕过；系统 DNS 接管承担默认解析路径的修复。网络轮询只处理 OS DNS，不重新生成配置或隐式 Apply 草稿。
+进入 TUN 的流量按这个顺序处理：
+
+1. `inbound=steer-tun`、TCP/UDP、目标端口 53 → `hijack-dns`；
+2. ICMP 走专门的处理；
+3. 私网目标 → 直连；
+4. 协议嗅探，然后是用户规则。
+
+第 1 条只管已经进入 TUN 的查询，管不到走直连或按网卡绑定的路由绕开 TUN 的查询，所以还需要接管系统 DNS 来覆盖默认的解析路径。网络变化时只重新处理系统 DNS，不会重新生成配置，也不会悄悄应用未保存的修改。
 
 ## 生命周期
 
-`steer-macos apply` 通过同步 backend 完成：
+`steer-macos apply` 是同步完成的：
 
 ```text
-Validate → Compile → sing-box check → generation prepare
-       → launchctl bootout old
-       → atomic publish current.json
-       → launchctl bootstrap new
-       → check launchd + utun addresses
-       → prune old generations
+校验 → 编译 → sing-box check → 准备新配置目录
+     → launchctl bootout 旧服务
+     → 原子替换 current.json
+     → launchctl bootstrap 新服务
+     → 检查 launchd 和 utun 地址
+     → 删除旧配置目录
 ```
 
-LaunchDaemon 使用 `RunAtLoad=true`、`KeepAlive=false`。禁用时由 `cleanup`/Apply unload 服务并删除 current generation，避免 disabled 配置造成 launchd 重启循环。
+LaunchDaemon 设置 `RunAtLoad=true`、`KeepAlive=false`。禁用时由 `cleanup` 或 Apply 卸载服务并删除当前配置，这样停用状态的配置不会让 launchd 反复重启服务。
+
+## 健康检查
+
+健康检查只报告状态，失败或超时都不会停掉 sing-box。
+
+- DNS 入口还没确认可用时，先不接管系统 DNS，每 5 秒重试一次。
+- 已经接管后检查失败，sing-box 和 DNS 设置都保持不变，恢复正常后清除错误状态。
+- 系统默认解析器里只能有 Steer 的 IPv4 或 IPv6 地址，不能混进别的 DNS。VPN 自己的作用域解析器不能拿来证明默认 DNS 已经接管。
+- 主动停止或 sing-box 退出时，仍然会恢复 DNS。
 
 ## 不做的事
 
-- 不把 Swift GUI 放入数据面或 Apply 编译路径；
-- 不引入 SmartDNS；
-- 不让 macOS 复用 Linux 的 forwarded DNS PREROUTING 逻辑；
-- 不让 GUI 绕过 helper 直接写 generation 或启动 sing-box。
-
-健康检查只报告状态，不因失败或超时停止核心。DNS 入口尚未验证时暂缓接管，后台每 5 秒重试；接管后的检查失败保留核心和 DNS 设置，恢复后清除错误状态。系统默认解析器允许只显示受管 IPv4 或 IPv6 DNS，但不得混入其他 DNS；作用域 VPN 解析器不能用来证明默认 DNS 已接管。显式停止或核心退出时仍执行 DNS 恢复。
+- 图形界面不处理流量，也不参与编译和 Apply；
+- 不用 SmartDNS；
+- 不照搬 Linux 处理转发 DNS 的 PREROUTING 规则；
+- 图形界面不能绕过后台服务直接写配置目录或启动 sing-box。

@@ -1,20 +1,27 @@
-# Linux 适配器
+# Linux
 
-Linux 第一版面向 systemd 发行版，覆盖 Linux 主机以及由该主机转发的 VM/Docker 公网流量。主仓库发布平台中立的 x86_64/aarch64 tar.zst，并维护 Arch AUR 源码配方；CI 不构建或发布 deb、rpm、`.pkg.tar.zst` 等发行版二进制包。
+Linux 版面向使用 systemd 的发行版。它接管本机流量，也接管经本机转发出去的虚拟机和 Docker 流量。本仓库只发布通用的 x86_64/aarch64 tar.zst 包，另外维护一份 Arch AUR 的源码配方；CI 不打 deb、rpm 或 `.pkg.tar.zst`。
 
-## 范围
+## 工作方式
 
-- 配置：严格 Canonical JSON schema 9 的用户 Intent 位于 `/etc/steer/config.json`；没有第二份 Linux platform settings。
-- 数据面：无版本锁定的 sing-box 提供 TUN `auto_route + strict_route + auto_redirect`；Apply 用 native config check 判断当前构建是否支持所用字段，源 MAC 使用被接受时的 `source_mac_address` 原生匹配。
-- DNS：TUN 启用 `dns_mode: hijack` 和 `auto_redirect`，由 sing-box 处理普通 TCP/UDP 53 重定向及 systemd-resolved 接口 DNS。ICMP echo（ping）使用共享 L3 策略，普通代理目标回退 Direct；可路由源地址执行内核 bypass，本机 TUN 源地址通过 Direct 重新选择物理源地址。Steer 仅保留发往主机自身地址的 DNS shim：`PREROUTING` 覆盖 LAN/VM/Docker 查询本机，`OUTPUT` DNAT 加必要 SNAT 覆盖本机查询回环或自身网卡地址。两条拦截链均由 `fib daddr type != local return` 限定范围；普通目的地址交给原生接管。IPv4/IPv6 专用入口仍监听 1053/1054，`input` 只允许 DNAT 后访问。应用自带加密 DNS 不在此范围内。
-- 生命周期：systemd `steer.service`，`_run` 完成准备后直接 exec sing-box；`cleanup` 由 `ExecStopPost` 调用。`steer.service` 是 `nftables.service` 的 `PartOf`，正常重启 nftables 时会在其后重启并重建 Steer 数据面。
-- 管理：统一 CLI `steer` 和只监听 loopback 的 `steer web`。
-- 订阅：systemd timer 更新 JSON 配置，不自动 Apply；更新失败或 HTTP 200 但没有有效节点时保留旧配置。
-- Geo：发行归档携带完整的 Loyalsoldier-compatible SRS seed 与 manifest；Steer 精确校验 selector，sing-box 使用 remote rule-set 后台更新。
+- **配置**：只有一份，`/etc/steer/config.json`，格式是 schema 9 的 Canonical JSON。没有额外的「平台设置」文件。
+- **流量**：sing-box TUN 开启 `auto_route`、`strict_route` 和 `auto_redirect`。sing-box 不锁版本，Apply 时用它自带的配置检查判断当前版本支不支持用到的字段。来源 MAC 规则用 sing-box 原生的 `source_mac_address`。
+- **DNS**：TUN 开启 `dns_mode: hijack`，普通的 TCP/UDP 53 查询和 systemd-resolved 的网卡 DNS 都由 sing-box 自己接管。Steer 只额外处理「发给本机地址的 DNS 查询」：
+  - `PREROUTING` 处理局域网、虚拟机和 Docker 发给本机的查询；
+  - `OUTPUT` 处理本机发给回环地址或自己网卡地址的查询（DNAT，必要时 SNAT）。
+  - 两条链都以 `fib daddr type != local return` 开头，目标不是本机的查询直接交给 sing-box。
+  - 转发目标是 IPv4 的 1053 端口和 IPv6 的 1054 端口，`input` 链只放行经过 DNAT 的连接。
+  - 应用自己发的加密 DNS（DoH/DoT/DoQ）不在接管范围内。
+- **ping**：走共享的三层策略，命中代理路由的 ping 改走直连。来源地址可路由的交给内核转发；来源是本机 TUN 地址的由 sing-box 直连出口重新选源地址。
+- **IPv6 内核直连**：支持可选的 `direct_bypass`，见[配置说明](CONFIGURATION.md#ipv6-内核直连0110)。
+- **服务**：systemd 的 `steer.service`。`steer _run` 做完准备后直接 `exec` 成 sing-box，`ExecStopPost` 调用 `steer cleanup` 清理。`steer.service` 声明了 `PartOf=nftables.service`，重启 nftables 时 Steer 会跟着重启并重建规则。
+- **管理**：命令行 `steer`，以及只监听本机的网页界面 `steer web`。
+- **订阅**：systemd timer 定时更新配置文件里的节点，不会自动 Apply。更新失败，或者返回 200 但没有一个有效节点时，保留原来的节点。
+- **Geo 数据**：安装包里带了完整的 SRS 数据和 manifest。Steer 按 manifest 精确校验规则里引用的分类，sing-box 之后在后台从远端更新。
 
-Linux 第一版明确不提供非 systemd、通用 LAN 网关配置向导、多用户权限分离、远程 Web、NetworkManager/systemd-resolved 深度集成、DIRECT kernel bypass、Clash API、实时连接图和 macOS GUI。Linux TUN 不使用 workstation-only 的接口白名单；主机转发的 VM/Docker 公网流量随主机规则进入代理，私有/链路本地目的地址仍按平台排除规则处理。
+不支持的：非 systemd 系统、通用的局域网网关配置向导、多用户权限、远程访问网页界面、NetworkManager/systemd-resolved 深度集成、Clash API、实时连接图。TUN 不按网卡做白名单，所以转发的虚拟机/Docker 流量和本机流量走同一套规则；私网和链路本地目标照常排除在外。
 
-## 通用发行产物与安装
+## 安装
 
 GitHub Release 提供：
 
@@ -23,7 +30,7 @@ steer-linux-x86_64.tar.zst
 steer-linux-aarch64.tar.zst
 ```
 
-每个归档包含 `/usr/bin/steer` 所需的单一可执行文件、systemd unit、两个示例配置、许可证和 `geodata-seed/`；不包含 sing-box、geoview、DAT 或发行版安装脚本。以 x86_64 为例：
+包里有 `steer` 可执行文件、systemd 单元、两个示例配置、许可证和 `geodata-seed/`。不包含 sing-box、geoview、DAT 数据库，也没有安装脚本。以 x86_64 为例：
 
 ```sh
 tar --zstd -xf steer-linux-x86_64.tar.zst
@@ -36,14 +43,14 @@ sudo install -d -m 755 /usr/share/steer/geodata-seed
 sudo cp -a geodata-seed/. /usr/share/steer/geodata-seed/
 sudo install -m 644 systemd/*.service systemd/*.timer /etc/systemd/system/
 sudoedit /etc/steer/web.json
-sudo steer web-token  # 输出配置中的 token，粘贴到 Web 登录页
+sudo steer web-token  # 打印配置里的 token，粘贴到网页登录页
 systemctl daemon-reload
 systemctl enable --now steer.service steer-web.service steer-subscription.timer
 ```
 
-也可以从 source tag 的 `go/` 目录构建：`CGO_ENABLED=0 go build -trimpath -o ../steer ./cmd/steer-linux`。发行版包必须把它安装为 `/usr/bin/steer`。
+也可以从源码 tag 构建：在 `go/` 目录运行 `CGO_ENABLED=0 go build -trimpath -o ../steer ./cmd/steer-linux`。发行版打包时请装到 `/usr/bin/steer`。
 
-实际启用前必须通过系统包管理器安装匹配版本的 sing-box、nftables、iproute2 和 ca-certificates。Geo seed 已在归档内，不再安装 geoview 或另行选择 DAT。随后运行：
+启用前，用系统包管理器装好合适版本的 sing-box、nftables、iproute2 和 ca-certificates。然后：
 
 ```sh
 steer validate
@@ -51,36 +58,53 @@ steer apply
 steer health
 ```
 
-Web 默认只监听 `127.0.0.1:9080`，远程访问使用 SSH 端口转发；不支持把 Web 绑定到公网地址。
+## 网页界面
 
-Web 顶部状态条提供 Steer 启用/禁用开关。切换开关会立即保存 `/etc/steer/config.json` 并执行 Apply；Apply 失败会明确提示并保留已保存配置，禁用会清理运行态资源。所有配置页共享 Save、Save and Apply 与 `Apply 已保存配置`；后者不依赖浏览器工作副本的 dirty 状态，并在已保存运行投影待切换时保持可用。
+网页界面默认只监听 `127.0.0.1:9080`，要远程用就走 SSH 端口转发，不支持绑定公网地址。
 
-Advanced JSON textarea 是同一个浏览器 Draft 的原文视图，不是第二份编辑缓存。有效 JSON 与结构化页面双向同步；无效 JSON 原文会保留，并阻止 Save 与结构化导航。dirty 时顶部提供“放弃修改”，确认后重新载入 Saved Intent、revision 与 overview，并重绘当前页面；切页不会丢失 Draft，浏览器 reload/关闭继续使用统一的未保存保护。
+登录 token 只来自 `/etc/steer/web.json`（schema 1）里的 `token` 字段，要求 32–256 个可见 ASCII 字符、不含空格。`steer web-token` 只是把它打印出来，不会生成或迁移 token。
 
-异步 Save 使用请求时的不可变 Intent 快照和 Draft epoch；请求期间继续编辑不会被旧响应清成 clean。Save、Apply Saved 与 reload 串行互斥。订阅更新或 stale 清理期间若 Draft 发生变化，Web 保留本地 Draft 并提示 inventory 已变化，不自动 reload，也不重绘已经离开的订阅页面。订阅列表区分未抓取、最近成功和最近失败，并持久显示 skipped/stale；已停用订阅的 Update 按钮不可用。
+**启停和保存**
 
-状态条、总览和诊断中的 Active generation/digest 只读取 `/run/steer/current`。最近 Apply 作为带时间、candidate 和错误摘要的独立记录展示；失败 candidate 不会被冒充为 Active。三个概览测试从 `/etc/steer/config.json` 读取 Saved URL，并直接使用主机当前网络环境，因此 Steer 未启用时仍可运行。Diagnostics 同时读取 sanitized Overview/Node/Route 报告、Active generation 中 port-53 sing-box/nftables 配置检查，并聚合 `steer`、`steer-web`、`steer-subscription` 三个 systemd unit 的日志。该检查不是流量观察，不证明加密 DNS 被阻断或零泄漏。订阅更新只改变节点库存时不制造 pending Apply；无引用的消失节点自动删除，被 Route 引用的消失节点保留为 stale 并显示 warning。
+- 顶部状态栏有启用开关。切换后立即保存配置并 Apply；Apply 失败会提示，已保存的配置保留。禁用会停止服务、清理 nftables 规则并删除运行中的配置。
+- 所有配置页共用「保存」「保存并应用」「应用已保存配置」三个按钮。「应用已保存配置」不看浏览器里有没有未保存修改，只要已保存的配置和正在运行的不一样，它就可以点。
+- 有未保存修改时，顶部有「放弃修改」，确认后重新载入已保存配置。切换页面不会丢修改，刷新或关闭浏览器会提示未保存。
 
-页面可见时每 30 秒低频刷新 Saved revision 与 Active status，顶部也提供显式 Refresh。检测到 CLI、timer 或其他页面改写 Saved 时，dirty Draft 始终保留并显示 revision 冲突；clean Draft 提供“一键重载最新 Saved”，成功后同步 Intent、revision、overview 与当前对象页。刷新运行状态本身不会自动替换 Draft。
+**编辑**
 
-Web Bearer token 的唯一配置源是严格 schema 1 的 `/etc/steer/web.json`。用户直接设置 `token`（32–256 个无空格可见 ASCII 字符）；`steer web-token` 只读取并输出当前配置，不生成、不迁移、不维护第二份 token 文件。
+- 「高级」页的 JSON 文本框和结构化页面编辑的是同一份草稿，两边实时同步。JSON 写错时原文保留，但不能保存，也不能切到结构化页面。
+- 保存时发送的是点击那一刻的草稿快照。保存期间继续编辑，新的修改不会被旧响应清掉。保存、应用、重新载入同一时间只能进行一个。
+- 订阅更新或清理期间如果草稿变了，界面保留草稿并提示节点列表已变化，不会自动重新载入。
 
-`geo-catalog` 从包内 manifest 返回完整 category/attribute selector。Web“系统”页只显示 seed 版本、规则数量和运行时事实，不再维护无内容的 `/api/v1/platform`。配置编辑器离线加载同一 catalog，未知 selector 在保存/Apply 前失败。
+**状态和刷新**
 
-## 运行时路径
+- 页面可见时每 30 秒刷新一次已保存配置的版本和运行状态，顶部也有手动刷新按钮。
+- 如果命令行、timer 或别的页面改了配置：有未保存修改时保留草稿并提示冲突；没有修改时提供一键重新载入。刷新运行状态不会自动替换草稿。
+- 「当前运行」的配置只读 `/run/steer/current`。最近一次 Apply 单独显示时间、结果和错误摘要，失败的配置不会被当成正在运行的。
+- 订阅列表区分「从未更新」「最近成功」「最近失败」，并显示跳过和过期的节点数。停用的订阅不能点更新。订阅更新只改了节点列表时，不会提示需要 Apply；消失且没被路由引用的节点直接删除，被引用的保留为过期并显示提醒。
+
+**测试和诊断**
+
+- 三个网络测试读取已保存配置里的网址，直接用本机当前网络访问，Steer 没启用也能测。
+- 诊断页显示测试结果摘要、当前运行配置里的 53 端口接管检查，以及 `steer`、`steer-web`、`steer-subscription` 三个 systemd 单元的日志。53 端口检查只核对配置，不是抓包，不能证明加密 DNS 被拦住或没有泄漏。
+- 「系统」页显示 Geo 数据版本、规则数和运行信息。Geo 分类列表来自安装包里的 manifest，编辑器离线可用，写错的分类在保存或 Apply 前就会报错。
+
+## 文件位置
 
 ```text
-/etc/steer/config.json              0600，用户 Canonical Intent
-/etc/steer/web.json                 0600，Web bearer token
-/usr/share/steer/geodata-seed       只读 SRS seed 与 manifest
-/run/steer/current                  当前 generation 链接
-/run/steer/generations/<id>/        intent、sing-box、platform、firewall
-/run/steer/operation.lock           Apply、配置写入和订阅变更共用锁
-/run/steer/last-apply.json          最近 Apply 结果
-/var/lib/steer/cache.db             sing-box remote SRS 与可选 DNS cache
-/var/lib/steer/subscriptions        订阅 snapshot
+/etc/steer/config.json              0600，用户配置
+/etc/steer/web.json                 0600，网页登录 token
+/usr/share/steer/geodata-seed       只读的 SRS 数据和 manifest
+/run/steer/current                  指向当前运行配置的链接
+/run/steer/generations/<id>/        每次 Apply 生成的 intent、sing-box、platform、firewall
+/run/steer/operation.lock           Apply、保存配置、订阅更新共用的锁
+/run/steer/last-apply.json          最近一次 Apply 的结果
+/var/lib/steer/cache.db             sing-box 的远端 SRS 和可选的 DNS 缓存
+/var/lib/steer/subscriptions        订阅快照
 ```
 
-Linux 适配器不更改 `/etc/resolv.conf`、NetworkManager connection 或 systemd-resolved drop-in；sing-box 原生管理运行期间的 systemd-resolved link DNS。Bootstrap 只解析 DNS 上游等基础设施主机名；Direct UDP/TCP Bootstrap 可使用明文 53，但不携带原始业务查询名。应用自带 DoT/DoH/DoQ 作为普通业务流量处理，传统 53 端口 shim 无法识别或重定向，除非另有可验证策略，否则不承诺全部 DNS 经过所选 Profile。
+Steer 不改 `/etc/resolv.conf`、NetworkManager 连接或 systemd-resolved 的配置片段；运行期间 systemd-resolved 的网卡 DNS 由 sing-box 自己管理。引导 DNS 只解析 DNS 服务器这类基础设施的域名，直连 UDP/TCP 引导 DNS 会有明文 53 查询，但里面没有用户访问的域名。
 
-发布门会在一次性 privileged systemd 容器中运行 `tests/integration/run-linux-system.sh`。测试使用两个独立 netns，覆盖主机与转发流量的 IPv4/IPv6 TCP、UDP、UDP/TCP53、listener 访问限制、禁用/启用、`steer.service` 重启和 `nftables.service` 重启恢复；不会修改开发机或 CI runner 本身的网络规则。
+## 测试
+
+发布前会在一次性的特权 systemd 容器里跑 `tests/integration/run-linux-system.sh`。它用两个独立的网络命名空间，测试本机和转发流量的 IPv4/IPv6 TCP、UDP、DNS（UDP/TCP 53）、监听端口的访问限制、禁用再启用、重启 `steer.service`、重启 `nftables.service` 后恢复。测试不改动开发机或 CI 机器本身的网络。
