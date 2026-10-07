@@ -17,7 +17,7 @@
 5. 安装包只依赖 `sing-box` 这个包名，不限版本。应用配置时，Steer 让实际安装的 sing-box 检查生成的配置并读取它的编译选项，不兼容就报错，让用户换合适的版本。CI、Geo 转换、OpenWrt 软件源里的 sing-box 和 macOS DMG 目前都固定用官方 `1.14.1`，但这不是 Linux/Arch 上的最低版本要求，能不能用以实际检查为准。
 6. master 分支不构建、也不保存正式发布包。tag 必须指向 `origin/master` 上已有的提交；稳定版 tag 还要求同一个提交在 master 上的 CI 已经通过。GitHub Actions 出故障时，预发布版可以用完整的本地检查代替 master CI；tag 推送事件丢了的话，可以手动触发同一个 tag 的发布。两种方式都必须是 tag（`GITHUB_REF_TYPE=tag`），走完全相同的构建、检查、证明和发布流程。预发布不会覆盖稳定版的 OpenWrt 软件源。
 
-当前稳定版是 `v0.11.7`。OpenWrt APK、Arch 的 `pkgver`、Git tag、Linux 和 macOS 产物都用 `0.11.7`。
+当前稳定版是 `v0.11.8`。OpenWrt APK、Arch 的 `pkgver`、Git tag、Linux 和 macOS 产物都用 `0.11.8`。
 
 ## Geo 数据
 
@@ -51,13 +51,13 @@ Pages 只放当前版本，不保留历史版本。tag 发布流程先下载并�
 
 ## OpenWrt
 
-`v0.11.7` 面向 OpenWrt 25.12.5 x86/64：
+`v0.11.8` 面向 OpenWrt 25.12.5 x86/64：
 
 | 包 | 版本 | 内容 |
 |---|---|---|
-| `steer` | `0.11.7-r1` | 控制程序、默认 UCI 配置、procd 启动脚本、完整的只读 Geo 数据 |
-| `luci-app-steer` | `0.11.7-r1` | LuCI 页面、ucode RPC、权限配置 |
-| `luci-i18n-steer-zh-cn` | `0.11.7-r1` | 简体中文翻译 |
+| `steer` | `0.11.8-r1` | 控制程序、默认 UCI 配置、procd 启动脚本、完整的只读 Geo 数据 |
+| `luci-app-steer` | `0.11.8-r1` | LuCI 页面、ucode RPC、权限配置 |
+| `luci-i18n-steer-zh-cn` | `0.11.8-r1` | 简体中文翻译 |
 | `sing-box` | `1.14.1-r0` | SagerNet 官方 x86_64 APK，核对内容后改用 Steer 的密钥签名 |
 
 Steer 不重新编译 sing-box。CI 先核对官方 APK 的 SHA-256，重签后比较除签名外的元数据是否一致，再用仓库公钥验证。软件源里的四个 APK 和 `packages.adb` 都用同一把 Steer P-256 密钥签名。私钥只存在 GitHub Actions 的 Secret `OPENWRT_APK_PRIVATE_KEY` 里，不能出现在源码、构建产物、Release 或 Pages 上。
