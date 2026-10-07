@@ -363,9 +363,8 @@ function createRulesEnvironment(intent) {
       class: `${baseClass || ''} entity-row`, dataset: { ruleId: item.id }
     }),
     collectionDragHandle: () => h('button', { class: 'collection-drag-handle' }, '⠿'),
-    collectionOrderToolbar: () => h('div', {}, [
-      h('button', { disabled: true }, '上移'), h('button', { disabled: true }, '下移')
-    ]),
+    rowMenu: (items) => h('details', {}, items.filter((item) => item && item !== 'separator')
+      .map((item) => h('button', { onclick: item.onclick }, item.label))),
     input: ({ value }) => Object.assign(new Element('input'), { value }),
     toggle: () => new Element('button'),
     selectWithMissing: (options) => options,
@@ -392,6 +391,7 @@ function createRulesEnvironment(intent) {
   const S = {
     uiSpec,
     h,
+    icon: () => new Element('span'),
     asList: (value) => value == null ? [] : (Array.isArray(value) ? value : [value]),
     uid: () => `rule_${nextID++}`,
     api: { geodata: () => Promise.resolve({ readable: true, names: [], count: 0 }) },
@@ -1247,11 +1247,11 @@ async function testSharedProbeDiagnosticsAndDisabledActions() {
   await environment.S.views.overview.render(overviewRoot);
   assert.strictEqual(findAll(overviewRoot, (element) => element.tag === 'button' && text(element) === '运行测试').length, 0,
     'Overview must not duplicate Diagnostics probes');
-  assert.match(text(overviewRoot), /执行模型、配置生命周期与当前工作副本概览/);
+  assert.match(text(overviewRoot), /Steer 的运行状态与当前配置概况/);
   assert.deepEqual(findAll(overviewRoot, (element) => element.attributes?.['data-overview-region'])
     .map((element) => element.attributes['data-overview-region']),
   ['execution_model', 'configuration_lifecycle', 'object_scale', 'validation_summary', 'last_apply_and_actions']);
-  for (const expected of ['节点', '路由', 'DNS Profile', '本地入口', '规则', '订阅', '打开诊断', '系统信息'])
+  for (const expected of ['节点', '路由', 'DNS 配置', '本地代理', '规则', '订阅', '打开诊断', '系统信息'])
     assert.match(text(overviewRoot), new RegExp(expected), `Linux Overview must render ${expected}`);
   assert.doesNotMatch(text(overviewRoot), /systemd refused start|candidate\.failed-new|candidate\.active-old/,
     'Linux Overview keeps raw errors and internal runtime identities out of ordinary DOM');
@@ -2124,7 +2124,7 @@ function testLocalProxyBlocksExposedUnauthenticatedDraftAndCreatesCredentials() 
   const environment = createEnvironment(async () => ({ ok: true }), intent);
   loadView(environment, 'proxies');
   environment.S.views.proxies.render(environment.view);
-  buttonWithText(environment.view, '添加端点').listeners.click();
+  buttonWithText(environment.view, '添加本地代理').listeners.click();
 
   proxyControl(environment, '名称', 'input').value = 'LAN entry';
   const listen = proxyControl(environment, '监听地址', 'input');

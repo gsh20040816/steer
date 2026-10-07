@@ -3,7 +3,7 @@
 'use strict';
 (function () {
   const S = window.S;
-  const { h, fmtLatestProbe } = S;
+  const { h, icon, fmtLatestProbe } = S;
   const ui = S.ui;
   let routeButtons = [];
 
@@ -99,23 +99,20 @@
     return btn;
   }
 
-  function kindCard(kind, title, desc, route) {
-    const color = kind === 'direct' ? 'ok' : 'err';
-    if (!route) {
-      return h('section', { class: `card card--edge edge--${color}` }, [
-        h('div', { class: 'card__head' }, h('div', {}, h('span', { class: 'eyebrow' }, kind === 'direct' ? 'Direct' : 'Reject'), h('div', { class: 'card__title' }, title))),
-        h('p', { class: 'alert alert--err' }, `缺少必需的 ${kind === 'direct' ? 'Direct' : 'Reject'} 系统路由，请从高级配置恢复。`)
-      ]);
-    }
-    const status = kind === 'direct'
-      ? h('span', { class: 'badge badge--ok', title: 'Direct 是系统必需路由，始终启用' }, '固定启用')
-      : ui.toggle(route.enabled, (v) => { route.enabled = v; S.store.touch(); });
-    return h('section', { class: `card card--edge edge--${color}` }, [
-      h('div', { class: 'card__head' }, [
-        h('div', {}, h('span', { class: 'eyebrow' }, kind === 'direct' ? 'Direct · 必须恰好一个' : 'Reject'), h('div', { class: 'card__title' }, title)),
-        status
+  function systemRoute(kind, title, desc, route) {
+    const missing = !route;
+    const control = missing
+      ? h('span', { class: 'badge badge--err' }, '缺失')
+      : (kind === 'direct'
+          ? h('span', { class: 'badge', title: '直连是必需的系统路由，始终启用' }, '始终启用')
+          : ui.toggle(route.enabled, (v) => { route.enabled = v; S.store.touch(); }, '启用拒绝路由'));
+    return h('section', { class: 'card system-route' }, [
+      h('span', { class: 'system-route__icon', 'aria-hidden': 'true' }, icon(kind === 'direct' ? 'arrow' : 'ban', 17)),
+      h('div', { class: 'system-route__body' }, [
+        h('strong', {}, title),
+        h('span', {}, missing ? `缺少必需的${title}路由，请从高级配置恢复。` : desc)
       ]),
-      h('p', { class: 'muted' }, desc)
+      control
     ]);
   }
 
@@ -153,11 +150,8 @@
           h('div', { class: 'drawer-section' }, h('div', { class: 'drawer-section__title' }, '路由'), [
             ui.field('名称', name, null, 'name'),
             ui.field('启用', enabled, null, 'enabled'),
-            ui.field('类型', h('span', { class: 'badge' }, '单节点'), '系统直连与拒绝路由不能从此处创建或转换'),
-            h('div', { class: 'field--row' }, [
-              ui.field('节点', nodeSel, '用于连接网络的出口节点', 'node'),
-              ui.field('前置代理', detourSel, '先连接所选前置路由；留空表示直接连接', 'detour')
-            ]),
+            ui.field('节点', nodeSel, '用于连接网络的出口节点', 'node'),
+            ui.field('前置代理', detourSel, '先连接所选前置路由；留空表示直接连接', 'detour'),
             warn
           ])
         );
@@ -195,27 +189,32 @@
       const block = intent.routes.find((r) => r.kind === 'block');
       const singles = intent.routes.filter((r) => r.kind === 'single');
 
+      const deleteRoute = (route) => {
+        if (!ui.guardCollectionDeletion('routes', route.id, route.name || route.id)) return;
+        S.store.intent.routes = S.store.intent.routes.filter((r) => r.id !== route.id);
+        S.store.touch();
+        ui.toast(`已删除路由 ${route.name || route.id} · 未保存`, 'warn');
+        view.render(root);
+      };
       const table = h('table', { class: 'table' }, [
-        h('thead', {}, h('tr', {}, ['顺序', '状态', '路由', '链路（出口 ← 前置）', '测试', '操作'].map((t) => h('th', {}, t)))),
+        h('thead', {}, h('tr', {}, [
+          h('th', { class: 'collection-drag-column', 'aria-label': '顺序' }),
+          h('th', {}, '启用'), h('th', {}, '路由'), h('th', {}, '链路（出口 ← 前置）'), h('th', {}, '测试'),
+          h('th', { class: 'col-actions', 'aria-label': '操作' })
+        ])),
         h('tbody', {}, singles.map((route) => h('tr', ui.collectionRowAttributes(
           'routes', route, singles, () => view.render(root), route.enabled === false ? 'is-disabled' : ''
         ), [
           h('td', { class: 'collection-drag-column' }, ui.collectionDragHandle('routes', route, singles, () => view.render(root))),
-          h('td', {}, ui.toggle(route.enabled, (v) => { route.enabled = v; S.store.touch(); view.render(root); })),
+          h('td', {}, ui.toggle(route.enabled, (v) => { route.enabled = v; S.store.touch(); view.render(root); }, `启用 ${route.name || route.id}`)),
           h('td', {}, h('strong', {}, route.name || route.id)),
           h('td', {}, chain(intent, route)),
           h('td', {}, h('div', { class: 'row-actions row-actions--probe' },
             probeAction(routeTestButton('链测试', false, route.id, route.enabled !== false)),
             probeAction(routeTestButton('下载', true, route.id, route.enabled !== false)))),
-          h('td', {}, h('div', { class: 'row-actions' }, [
-            h('button', { class: 'btn btn--sm', onclick: () => openRouteEditor(route) }, '编辑'),
-            h('button', { class: 'btn btn--sm btn--danger', onclick: () => {
-              if (!ui.guardCollectionDeletion('routes', route.id, route.name || route.id)) return;
-              S.store.intent.routes = S.store.intent.routes.filter((r) => r.id !== route.id);
-              S.store.touch();
-              ui.toast(`已删除路由 ${route.name || route.id} · 未保存`, 'warn');
-              view.render(root);
-            } }, '删除')
+          h('td', { class: 'col-actions' }, h('div', { class: 'row-actions' }, [
+            h('button', { class: 'btn btn--sm btn--ghost', onclick: () => openRouteEditor(route) }, '编辑'),
+            ui.rowMenu([{ label: '删除', danger: true, onclick: () => deleteRoute(route) }])
           ]))
         ])))
       ]);
@@ -226,33 +225,31 @@
         isCurrent.onDispose(unsubscribe);
       }
 
+      const addButton = () => h('button', {
+        class: 'btn btn--primary',
+        disabled: intent.nodes.length === 0,
+        title: intent.nodes.length === 0 ? '请先添加节点' : '添加经由节点出网的路由',
+        onclick: () => openRouteEditor(ui.creationDraft('routes', {
+          node: intent.nodes.find((node) => node.enabled !== false)?.id || ''
+        }))
+      }, icon('plus', 15), '添加路由');
+
       root.append(
-        ui.viewHead('路由', '管理网络出站路由与前置代理链路', [
-          ui.collectionOrderToolbar('routes', singles, () => view.render(root)),
-          h('button', {
-            class: 'btn btn--primary',
-            disabled: intent.nodes.length === 0,
-            title: intent.nodes.length === 0 ? '请先添加节点' : '添加单节点路由',
-            onclick: () => openRouteEditor(ui.creationDraft('routes', {
-              node: intent.nodes.find((node) => node.enabled !== false)?.id || ''
-            }))
-          }, '添加单节点路由')
+        ui.viewHead('路由', '规则命中后流量的去向。直连与拒绝是固定的系统路由；其余路由经由节点出网，可设置前置代理。', [addButton()]),
+        h('div', { class: 'system-routes' }, [
+          systemRoute('direct', '直连', '不经过代理，直接访问目标。', direct),
+          systemRoute('block', '拒绝', '直接拒绝匹配的连接。', block)
         ]),
-        h('div', { class: 'grid-2' }, [
-          kindCard('direct', 'Direct 直连', '匹配流量直接出网。启用配置必须恰好存在一个 Direct 路由。', direct),
-          kindCard('block', 'Reject 拒绝', '匹配的流量将被直接拒绝连接。', block)
-        ]),
-        h('section', { class: 'card' }, [
-          h('div', { class: 'card__head' }, h('div', {}, h('span', { class: 'eyebrow' }, '单节点路由'), h('div', { class: 'card__title' }, '节点链'))),
-          h('p', { class: 'muted' }, '流量通过出口节点连接，支持指定前置代理节点先行建立连接。同一节点可在不同路由中配置不同前置链。'),
-          singles.length ? h('div', { class: 'clipped' }, h('div', { class: 'table-wrap' }, table)) : h('div', { class: 'empty' }, '还没有单节点路由')
-        ])
+        h('h2', { class: 'section-title' }, '节点路由'),
+        singles.length
+          ? h('div', { class: 'card table-card' }, h('div', { class: 'table-wrap' }, table))
+          : ui.emptyState(intent.nodes.length ? '还没有节点路由。添加后可以在规则中选择它。' : '还没有节点路由。请先在“节点”页添加节点。', [addButton()], 'route')
       );
 
       const focus = ui.takeObjectFocus('route');
       const focusedRoute = focus && intent.routes.find((route) => route.id === focus.object_id);
       if (focusedRoute?.kind === 'single') openRouteEditor(focusedRoute, focus.option);
-      else if (focusedRoute) ui.toast(`已定位系统路由 ${focusedRoute.name || focusedRoute.id}；Direct/Reject 不可删除`, 'info');
+      else if (focusedRoute) ui.toast(`已定位系统路由 ${focusedRoute.name || focusedRoute.id}；直连和拒绝路由不可删除`, 'info');
     }
   };
 

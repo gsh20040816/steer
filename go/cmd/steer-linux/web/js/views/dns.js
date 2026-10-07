@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* DNS Profile：六种传输 + TLS + 规则引用计数。 */
+/* DNS 配置：六种传输 + TLS + 规则引用计数。 */
 'use strict';
 (function () {
   const S = window.S;
-  const { h } = S;
+  const { h, icon } = S;
   const ui = S.ui;
   const PROTOCOL_LABEL = Object.fromEntries(S.uiSpec.dns_protocols.map((item) => [item.value, item.label]));
   const DNS_FIELDS = new Set(S.uiSpec.dns_protocols.flatMap((item) => item.fields));
@@ -44,14 +44,14 @@
   function openEditor(profile, focusOption) {
     const isNew = !S.store.intent.dns_profiles.includes(profile);
     const opened = ui.drawer({
-      eyebrow: isNew ? '新建 DNS Profile' : '编辑 DNS Profile', title: profile.name || '未命名', submitLabel: '保存到工作副本',
+      eyebrow: isNew ? '新建 DNS 配置' : '编辑 DNS 配置', title: profile.name || '未命名', submitLabel: '保存到工作副本',
       renderBody(body) {
         const draft = JSON.parse(JSON.stringify(profile));
         const initialSpec = protocolSpec(draft.protocol);
         cleanupProtocolFields(draft);
-        const name = ui.input({ value: draft.name || '', placeholder: 'Profile 名称' });
+        const name = ui.input({ value: draft.name || '', placeholder: '名称' });
         const enabled = ui.toggle(draft.enabled, (v) => { draft.enabled = v; });
-        const server = ui.input({ value: draft.server || '', placeholder: 'dns.example.com 或 IP' });
+        const server = ui.input({ value: draft.server || '', placeholder: 'dns.example.com 或 IP', mono: true });
         const port = ui.input({ type: 'number', value: draft.server_port || '', placeholder: '53 / 853 / 443' });
         const protocolFields = h('div', {});
         const protocolOptions = S.uiSpec.dns_protocols.map((item) => [item.value, item.label]);
@@ -70,13 +70,13 @@
             switch (field) {
             case 'tls_server_name':
               fields.push(ui.field('TLS 服务器名', ui.input({
-                value: draft.tls_server_name || '', placeholder: 'dns.example.com',
+                value: draft.tls_server_name || '', placeholder: 'dns.example.com', mono: true,
                 oninput: (event) => { draft.tls_server_name = event.target.value; }
               }), '加密 DNS 必填', 'tls_server_name'));
               break;
             case 'path':
               fields.push(ui.field('HTTP 路径', ui.input({
-                value: draft.path || '', placeholder: '/dns-query',
+                value: draft.path || '', placeholder: '/dns-query', mono: true,
                 oninput: (event) => { draft.path = event.target.value; }
               }), 'DoH / DoH3 使用', 'path'));
               break;
@@ -94,7 +94,7 @@
             ui.field('名称', name, null, 'name'),
             ui.field('启用', enabled, null, 'enabled'),
             ui.field('协议', protocol, null, 'protocol'),
-            h('div', { class: 'field--row' }, [ui.field('服务器', server, null, 'server'), ui.field('端口', port, null, 'server_port')]),
+            h('div', { class: 'field--row field--endpoint' }, [ui.field('服务器', server, null, 'server'), ui.field('端口', port, null, 'server_port')]),
             protocolFields
           ])
         );
@@ -121,7 +121,7 @@
       onSubmit(profile) {
         if (isNew) S.store.intent.dns_profiles.push(profile);
         S.store.touch();
-        ui.toast(`DNS Profile ${profile.name || profile.id} 已${isNew ? '创建' : '更新'} · 未保存`, 'info');
+        ui.toast(`DNS 配置 ${profile.name || profile.id} 已${isNew ? '创建' : '更新'} · 未保存`, 'info');
         view.render(document.querySelector('#view'));
         return true;
       }
@@ -135,38 +135,41 @@
     render(root) {
       ui.beginRender(root);
       const intent = S.store.intent;
+      const remove = (p) => {
+        if (!ui.guardCollectionDeletion('dns_profiles', p.id, p.name || p.id)) return;
+        S.store.intent.dns_profiles = S.store.intent.dns_profiles.filter((x) => x.id !== p.id);
+        S.store.touch();
+        ui.toast(`已删除 ${p.name || p.id} · 未保存`, 'warn');
+        view.render(root);
+      };
       const table = h('table', { class: 'table' }, [
-        h('thead', {}, h('tr', {}, ['顺序', '状态', '名称', '协议', '服务器', '规则引用', '操作'].map((t) => h('th', {}, t)))),
+        h('thead', {}, h('tr', {}, [
+          h('th', { class: 'collection-drag-column', 'aria-label': '顺序' }),
+          h('th', {}, '启用'), h('th', {}, '名称'), h('th', {}, '协议'), h('th', {}, '服务器'),
+          h('th', { class: 'num' }, '规则引用'), h('th', { class: 'col-actions', 'aria-label': '操作' })
+        ])),
         h('tbody', {}, intent.dns_profiles.map((p) => h('tr', ui.collectionRowAttributes(
           'dns_profiles', p, intent.dns_profiles, () => view.render(root), p.enabled === false ? 'is-disabled' : ''
         ), [
           h('td', { class: 'collection-drag-column' }, ui.collectionDragHandle('dns_profiles', p, intent.dns_profiles, () => view.render(root))),
-          h('td', {}, ui.toggle(p.enabled, (v) => { p.enabled = v; S.store.touch(); })),
+          h('td', {}, ui.toggle(p.enabled, (v) => { p.enabled = v; S.store.touch(); }, `启用 ${p.name || p.id}`)),
           h('td', {}, h('strong', {}, p.name || p.id)),
-          h('td', {}, h('span', { class: 'badge badge--dns' }, PROTOCOL_LABEL[p.protocol] || p.protocol)),
+          h('td', {}, h('span', { class: 'tag' }, PROTOCOL_LABEL[p.protocol] || p.protocol)),
           h('td', { class: 'mono' }, `${p.server}:${p.server_port}${p.path ? p.path : ''}`),
-          h('td', { class: 'mono num' }, String(refCount(intent, p.id))),
-          h('td', {}, h('div', { class: 'row-actions' }, [
-            h('button', { class: 'btn btn--sm', onclick: () => openEditor(p) }, '编辑'),
-            h('button', { class: 'btn btn--sm btn--danger', onclick: () => {
-              if (!ui.guardCollectionDeletion('dns_profiles', p.id, p.name || p.id)) return;
-              S.store.intent.dns_profiles = S.store.intent.dns_profiles.filter((x) => x.id !== p.id);
-              S.store.touch();
-              ui.toast(`已删除 ${p.name} · 未保存`, 'warn');
-              view.render(root);
-            } }, '删除')
+          h('td', { class: 'num' }, String(refCount(intent, p.id))),
+          h('td', { class: 'col-actions' }, h('div', { class: 'row-actions' }, [
+            h('button', { class: 'btn btn--sm btn--ghost', onclick: () => openEditor(p) }, '编辑'),
+            ui.rowMenu([{ label: '删除', danger: true, onclick: () => remove(p) }])
           ]))
         ])))
       ]);
+      const addButton = () => h('button', { class: 'btn btn--primary', onclick: () => openEditor(ui.creationDraft('dns_profiles')) }, icon('plus', 15), '添加 DNS 配置');
 
       root.append(
-        ui.viewHead('DNS Profile', '配置上游 DNS 解析器；支持 UDP、TCP、TLS、HTTPS (DoH)、QUIC (DoQ) 与 HTTP/3', [
-		  ui.collectionOrderToolbar('dns_profiles', intent.dns_profiles, () => view.render(root)),
-		  h('button', { class: 'btn btn--primary', onclick: () => openEditor(ui.creationDraft('dns_profiles')) }, '添加 Profile')
-		]),
+        ui.viewHead('DNS 配置', '规则按 DNS 配置选择上游解析器；支持 UDP、TCP、TLS、HTTPS (DoH)、QUIC (DoQ) 与 HTTP/3。', [addButton()]),
         intent.dns_profiles.length
           ? h('section', { class: 'card table-card' }, h('div', { class: 'table-wrap' }, table))
-          : h('div', { class: 'empty' }, '还没有 DNS Profile')
+          : ui.emptyState('还没有 DNS 配置', [addButton()], 'globe')
       );
       const focus = ui.takeObjectFocus('dns_profile');
       const focused = focus && intent.dns_profiles.find((profile) => profile.id === focus.object_id);

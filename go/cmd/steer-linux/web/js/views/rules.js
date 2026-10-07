@@ -3,7 +3,7 @@
 'use strict';
 (function () {
   const S = window.S;
-  const { h, asList } = S;
+  const { h, icon, asList } = S;
   const ui = S.ui;
 
   let catalogPromise = null;
@@ -17,7 +17,8 @@
 
   function routeLabel(intent, id) {
     const r = intent.routes.find((x) => x.id === id);
-    return r ? (r.name || id) : id;
+    if (!r) return id;
+    return r.name || ({ direct: '直连', block: '拒绝' })[r.kind] || id;
   }
   function dnsLabel(intent, id) {
     const p = intent.dns_profiles.find((x) => x.id === id);
@@ -43,7 +44,7 @@
 
   function summary(rule) {
     const labels = {
-      inbound: 'inbound', domain_match: '域名', ip_match: 'IP', source_ip_cidr: '源 CIDR',
+      inbound: '本地代理', domain_match: '域名', ip_match: 'IP', source_ip_cidr: '源 CIDR',
       source_mac_address: '源 MAC', network: '网络', protocol: '协议', port: '端口'
     };
     const parts = summaryTokens(rule).map((token) => {
@@ -71,7 +72,7 @@
         const name = ui.input({ value: draft.name || '', placeholder: '规则名称' });
         const enabled = ui.toggle(draft.enabled, (v) => { draft.enabled = v; });
         const dnsOpts = ui.referenceOptions('dns_profiles', intent.dns_profiles);
-        const dnsSel = ui.select(ui.selectWithMissing(dnsOpts, draft.dns_profile, '缺失 Profile'), draft.dns_profile, (v) => { draft.dns_profile = v; });
+        const dnsSel = ui.select(ui.selectWithMissing(dnsOpts, draft.dns_profile, '缺失 DNS 配置'), draft.dns_profile, (v) => { draft.dns_profile = v; });
         const routeOpts = ui.referenceOptions('routes', intent.routes);
         const routeSel = ui.select(ui.selectWithMissing(routeOpts, draft.route, '缺失路由'), draft.route, (v) => { draft.route = v; });
 
@@ -97,9 +98,9 @@
           h('div', { class: 'drawer-section' }, h('div', { class: 'drawer-section__title' }, '规则效果'), [
             ui.field('名称', name, null, 'name'),
             ui.field('启用', enabled, null, 'enabled'),
-            h('div', { class: 'field--row' }, [ui.field('DNS Profile', dnsSel, null, 'dns_profile'), ui.field('路由', routeSel, null, 'route')])
+            h('div', { class: 'field--row' }, [ui.field('DNS 配置', dnsSel, null, 'dns_profile'), ui.field('路由', routeSel, null, 'route')])
           ]),
-          h('div', { class: 'drawer-section' }, h('div', { class: 'drawer-section__title' }, '匹配条件 · 同一字段满足任一项，多个字段需同时满足'), [
+          h('div', { class: 'drawer-section' }, h('div', { class: 'drawer-section__title' }, '匹配条件'), h('p', { class: 'field__hint rule-match-hint' }, '同一字段内满足任一项即可，多个字段需要同时满足。'), [
             ui.field('本地代理入口', inboundControl, '可将规则限定到一个或多个本地代理入口', 'inbound'),
             ui.field('域名匹配', domain.el, `每行一条 · 支持域名与 GeoSite 规则${geo.geosite?.readable ? ` (${geo.geosite.count} 个 GeoSite 可补全)` : ''}`, 'domain_match'),
             ui.field('目标 IP 匹配', ip.el, `每行一条 · 支持 IP/CIDR 与 GeoIP 规则${geo.geoip?.readable ? ` (${geo.geoip.count} 个 GeoIP 可补全)` : ''} · 仅连接阶段`, 'ip_match'),
@@ -110,7 +111,7 @@
               ui.field('检测协议', protos, '仅连接阶段', 'protocol')
             ]),
             ui.field('目标端口', ports, '精确端口 · 仅连接阶段', 'port'),
-            h('div', { class: 'alert' }, '提示：仅包含目标 IP、网络、协议或端口的规则不影响 DNS 上游选择。')
+            h('div', { class: 'alert alert--info' }, '只包含目标 IP、网络、协议或端口的规则不影响 DNS 配置的选择。')
           ])
         );
         return {
@@ -143,32 +144,57 @@
     return opened;
   }
 
+  function intentTags(intent, rule) {
+    return h('div', { class: 'rule-row__intent' }, [
+      h('span', { class: 'faint' }, 'DNS'),
+      h('span', { class: 'tag', title: 'DNS 配置' }, dnsLabel(intent, rule.dns_profile)),
+      h('span', { class: 'faint' }, '路由'),
+      h('span', { class: 'tag', title: '路由' }, routeLabel(intent, rule.route))
+    ]);
+  }
+
   function renderRow(rule, index, ordered, root) {
     const intent = S.store.intent;
     const rowAttributes = ui.collectionRowAttributes(
       'rules', rule, ordered, () => view.render(root), `rule-row ${rule.enabled === false ? 'is-disabled' : ''}`
     );
     rowAttributes.dataset = { ...rowAttributes.dataset, ruleId: rule.id };
-    const row = h('div', rowAttributes, [
+    const remove = () => {
+      if (!ui.guardCollectionDeletion('rules', rule.id, rule.name || rule.id)) return;
+      S.store.intent.rules = S.store.intent.rules.filter((r) => r.id !== rule.id);
+      S.store.touch();
+      ui.toast(`已删除规则 ${rule.name || rule.id} · 未保存`, 'warn');
+      view.render(document.querySelector('#view'));
+    };
+    return h('div', rowAttributes, [
       ui.collectionDragHandle('rules', rule, ordered, () => view.render(root)),
-      h('span', { class: 'rule-row__order' }, String(index + 1).padStart(2, '0')),
-      h('div', { class: 'rule-row__name' }, h('strong', {}, rule.name || (rule.default ? 'Default' : rule.id)), h('span', { class: 'rule-row__summary' }, summary(rule))),
-      h('div', { class: 'rule-row__intent' }, [
-        h('span', { class: 'badge badge--dns' }, dnsLabel(intent, rule.dns_profile)),
-        h('span', { class: 'badge badge--route' }, routeLabel(intent, rule.route))
+      h('span', { class: 'rule-row__order' }, String(index + 1)),
+      h('div', { class: 'rule-row__name' }, [
+        h('strong', {}, rule.name || rule.id),
+        h('span', { class: 'rule-row__summary' }, `${rule.enabled === false ? '已停用 · ' : ''}${summary(rule)}`)
       ]),
+      intentTags(intent, rule),
       h('div', { class: 'rule-row__actions' }, [
-        h('button', { class: 'btn btn--sm', onclick: () => openRuleEditor(rule) }, '编辑'),
-        h('button', { class: 'btn btn--sm btn--danger', onclick: () => {
-          if (!ui.guardCollectionDeletion('rules', rule.id, rule.name || rule.id)) return;
-          S.store.intent.rules = S.store.intent.rules.filter((r) => r.id !== rule.id);
-          S.store.touch();
-          ui.toast(`已删除规则 ${rule.name} · 未保存`, 'warn');
-          view.render(document.querySelector('#view'));
-        } }, '删除')
+        h('button', { class: 'btn btn--sm btn--ghost', onclick: () => openRuleEditor(rule) }, '编辑'),
+        ui.rowMenu([{ label: '删除', danger: true, onclick: remove }])
       ])
     ]);
-    return row;
+  }
+
+  function renderDefault(defaultRule, position) {
+    const intent = S.store.intent;
+    return h('div', { class: 'rule-default', dataset: { ruleId: defaultRule.id } }, [
+      h('span', { class: 'rule-default__lock', title: '默认规则固定在最后，始终启用' }, icon('lock', 14)),
+      h('span', { class: 'rule-row__order' }, String(position)),
+      h('div', { class: 'rule-row__name' }, [
+        h('strong', {}, '默认规则'),
+        h('span', { class: 'rule-row__summary' }, '其余所有流量 · 只能修改 DNS 配置和路由')
+      ]),
+      h('div', { class: 'default-fields' }, [
+        ui.field('DNS 配置', ui.select(ui.referenceOptions('dns_profiles', intent.dns_profiles), defaultRule.dns_profile, (v) => { defaultRule.dns_profile = v; S.store.touch(); }), null, 'dns_profile'),
+        ui.field('路由', ui.select(ui.referenceOptions('routes', intent.routes), defaultRule.route, (v) => { defaultRule.route = v; S.store.touch(); }), null, 'route')
+      ])
+    ]);
   }
 
   const view = {
@@ -179,23 +205,12 @@
       const ordered = intent.rules.filter((r) => !r.default);
       const defaultRule = intent.rules.find((r) => r.default);
 
-      const list = h('div', { class: 'rule-list' }, ordered.map((rule, i) => renderRow(rule, i, ordered, root)));
-      if (!ordered.length) list.append(h('div', { class: 'empty' }, '还没有普通规则；Default 规则兜底'));
-
-      const defaultCard = h('section', { class: 'card default-card' }, [
-        h('div', { class: 'card__head' }, [
-          h('div', {}, h('span', { class: 'eyebrow' }, `第 ${ordered.length + 1} 条 · 始终启用`), h('div', { class: 'card__title' }, 'Default')),
-          h('span', { class: 'badge badge--match' }, '只有 DNS Profile 与路由可修改')
-        ]),
-        h('div', { class: 'default-fields' }, [
-          ui.field('DNS Profile', ui.select(ui.referenceOptions('dns_profiles', intent.dns_profiles), defaultRule.dns_profile, (v) => { defaultRule.dns_profile = v; S.store.touch(); }), null, 'dns_profile'),
-          ui.field('路由', ui.select(ui.referenceOptions('routes', intent.routes), defaultRule.route, (v) => { defaultRule.route = v; S.store.touch(); }), null, 'route')
-        ])
-      ]);
+      const list = h('div', { class: 'rule-list', role: 'list', 'aria-label': '规则（按匹配顺序）' }, ordered.map((rule, i) => renderRow(rule, i, ordered, root)));
+      if (!ordered.length) list.append(h('div', { class: 'rule-empty' }, '还没有普通规则，所有流量都由默认规则处理。'));
+      if (defaultRule) list.append(renderDefault(defaultRule, ordered.length + 1));
 
       root.append(
-        ui.viewHead('规则', '按列表顺序自上而下首条命中即停；支持拖拽调整顺序', [
-          ui.collectionOrderToolbar('rules', ordered, () => view.render(root)),
+        ui.viewHead('规则', '从上到下依次匹配，命中第一条即停止；拖动左侧手柄或按 ↑/↓ 调整顺序。', [
           h('button', { class: 'btn btn--primary', onclick: () => {
             const direct = intent.routes.find((route) => route.kind === 'direct' && route.enabled !== false)
               || intent.routes.find((route) => route.enabled !== false);
@@ -204,10 +219,9 @@
               route: direct?.id || ''
             });
             openRuleEditor(rule);
-          } }, '添加规则')
+          } }, icon('plus', 15), '添加规则')
         ]),
-        list,
-        defaultCard
+        list
       );
 
       const focus = ui.takeObjectFocus('rule');

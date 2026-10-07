@@ -22,11 +22,12 @@
       const editor = h('textarea', { class: 'textarea editor-tall', spellcheck: 'false', autocomplete: 'off' });
       editor.value = S.store.draftText || JSON.stringify(S.store.intent, null, 2);
       const syntax = h('div', { class: 'match-editor__status' });
-      const suggestions = h('div', { class: 'node-groups' });
+      const suggestions = h('div', { class: 'editor-suggestions' });
       const issues = h('div', {});
       const dirtyBadge = h('span', { class: 'badge badge--warn', hidden: !S.store.dirty }, '工作副本已修改');
       const invalidBadge = h('span', { class: 'badge badge--err', hidden: S.store.draftValid !== false }, '配置格式有误');
       const saveButton = h('button', { class: 'btn', onclick: () => ui.onSave(false) }, '保存');
+      const validateButton = h('button', { class: 'btn btn--ghost', onclick: validate }, '校验');
       const saveApplyButton = h('button', { class: 'btn btn--primary', onclick: () => ui.onSave(true) }, '保存并应用');
 
       let matches = [];
@@ -86,7 +87,7 @@
 		}
 		validationEpoch = requestedEpoch;
         issues.replaceChildren(
-          h('div', { class: 'card__head validation-head' }, h('div', {}, h('span', { class: 'eyebrow' }, '校验'), h('div', { class: 'card__title' }, `${v.errors.length} 错误 · ${v.warnings.length} 警告`))),
+          h('div', { class: 'card__head validation-head' }, h('h2', { class: 'card__title' }, `校验结果：${v.errors.length} 个错误 · ${v.warnings.length} 个警告`)),
           ui.issueList(v.errors, ui.jumpToObject),
           ui.issueList(v.warnings, ui.jumpToObject, true)
         );
@@ -105,14 +106,12 @@
       syncState();
 
       root.append(
-        ui.viewHead('高级配置', '直接查看与编辑 JSON 配置文本', [dirtyBadge, invalidBadge]),
+        ui.viewHead('高级配置', '直接查看和编辑 Canonical JSON。与结构化页面共用同一份工作副本。', [dirtyBadge, invalidBadge]),
         h('section', { class: 'card' }, [
           h('div', { class: 'editor-actions' }, [
-            h('button', { class: 'btn', onclick: validate }, '校验'),
-            saveButton,
-            saveApplyButton,
+            validateButton,
             h('button', {
-              class: 'btn', onclick: () => {
+              class: 'btn btn--ghost', onclick: () => {
                 try {
                   editor.value = JSON.stringify(JSON.parse(editor.value), null, 2);
                   S.store.editJSON(editor.value);
@@ -120,7 +119,10 @@
                 }
                 catch (e) { ui.toast(`无法格式化：${e.message}`, 'err'); }
               }
-            }, '格式化')
+            }, '格式化'),
+            h('span', { class: 'spacer' }),
+            saveButton,
+            saveApplyButton
           ]),
           editor,
           syntax,

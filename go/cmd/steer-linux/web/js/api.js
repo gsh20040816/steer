@@ -158,13 +158,13 @@
         }
       }
     }, [
-      S.h('span', { class: 'eyebrow' }, '本机管理控制台'),
+      S.h('span', { class: 'brand__mark' }, S.icon('steer', 20)),
       S.h('h1', { class: 'auth-title' }, '连接 Steer'),
-      S.h('p', { class: 'muted' }, '控制面仅监听本机回环地址。令牌只保存在当前浏览器标签页中。'),
+      S.h('p', { class: 'muted' }, '控制台只监听本机回环地址，令牌只保存在当前浏览器标签页中。'),
       S.h('label', { class: 'field' }, S.h('span', {}, 'Web 令牌'), input),
       errorText,
       S.h('div', { class: 'auth-actions' }, submit),
-      S.h('p', { class: 'auth-hint mono' }, 'sudo steer web-token')
+      S.h('p', { class: 'auth-hint' }, '在服务器上运行 ', S.h('code', {}, 'sudo steer web-token'), ' 获取令牌。')
     ]);
     const overlay = S.h('div', { class: 'dialog-overlay auth-overlay' },
       S.h('div', { class: 'dialog auth-dialog' }, form));

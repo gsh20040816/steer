@@ -1,19 +1,10 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* 总览：工作副本、已保存配置、运行状态与少量快捷操作。 */
+/* 总览：运行状态、配置状态、对象数量、校验摘要与最近一次应用。 */
 'use strict';
 (function () {
   const S = window.S;
-  const { h } = S;
+  const { h, icon } = S;
   const ui = S.ui;
-
-  function step(kind, num, title, sub) {
-    return h('div', { class: `step step--${kind}` }, [
-      num != null ? h('span', { class: 'step__num' }, num) : null,
-      h('strong', {}, title),
-      h('small', {}, sub)
-    ]);
-  }
-  const arrow = () => h('span', { class: 'arrow', 'aria-hidden': 'true' }, '→');
 
   function warningGroupLabel(group) {
     if (group.code === 'INSECURE_TLS' && group.object_type === 'dns_profile') return 'DNS 证书校验已关闭';
@@ -25,7 +16,7 @@
   }
 
   function warningGroupScope(group) {
-    return ({ node: '节点', route: '路由', dns_profile: 'DNS Profile', local_proxy: '本地入口', rule: '规则' })[group.object_type] || '对象';
+    return ({ node: '节点', route: '路由', dns_profile: 'DNS 配置', local_proxy: '本地代理', rule: '规则' })[group.object_type] || '对象';
   }
 
   function warningGroups(validation) {
@@ -38,6 +29,31 @@
       ]),
       group.destination ? h('button', { class: 'btn btn--sm', onclick: () => S.router?.(group.destination) }, `查看${warningGroupScope(group)}`) : null
     ])));
+  }
+
+  /* 一句话说明当前状态和下一步。 */
+  function headline({ savedEnabled, active, healthy, pendingApply, lastResult }) {
+    if (active && healthy) {
+      return {
+        tone: pendingApply ? 'warn' : 'ok', icon: 'check', title: '当前运行正常',
+        text: pendingApply ? '已保存的配置尚未应用；应用后运行配置才会更新。' : '运行配置与已保存配置一致。'
+      };
+    }
+    if (active) return { tone: 'err', icon: 'error', title: '运行异常', text: '分流服务正在运行但检查未通过；请打开诊断查看原因。' };
+    if (savedEnabled) {
+      return {
+        tone: 'err', icon: 'error', title: '已启用，但没有运行',
+        text: lastResult?.ok === false ? '上次应用没有成功，运行配置未切换。' : '已保存配置为启用，但分流服务没有运行。'
+      };
+    }
+    return { tone: 'off', icon: 'pause', title: 'Steer 已停用', text: '流量不经过 Steer。使用顶部开关启用后会立即保存并应用。' };
+  }
+
+  function stat(label, value, destination) {
+    return h('button', { class: 'stat', type: 'button', onclick: () => S.router?.(destination), title: `打开${label}` }, [
+      h('span', { class: 'stat__label' }, label),
+      h('span', { class: 'stat__value' }, String(value))
+    ]);
   }
 
   const view = {
@@ -55,93 +71,85 @@
       const savedEnabled = ov.saved_enabled === true;
       const pendingApply = ov.pending_apply === true;
       const externalChange = S.store.hasExternalChange === true;
+      const errors = validation.errors?.length || 0;
+      const warnings = validation.warnings?.length || 0;
+      const consistent = !pendingApply && savedEnabled === active;
 
-      const externalNotice = externalChange ? h('section', { class: 'card card--edge edge--err' }, [
-        h('div', { class: 'card__head' }, h('div', {}, h('span', { class: 'eyebrow' }, '配置冲突'), h('div', { class: 'card__title' }, '服务器配置已变化'))),
-        h('p', {}, S.store.dirty
+      const externalNotice = externalChange ? h('div', { class: 'alert alert--err', role: 'status' }, [
+        h('strong', {}, '服务器配置已变化'),
+        h('span', {}, S.store.dirty
           ? '当前工作副本已保留且不会自动覆盖。请先保存、放弃或在顶部处理配置冲突。'
           : '点击顶部“重新载入”即可更新为服务器上的最新配置。')
       ]) : null;
 
-      const pipeline = h('section', { class: 'card hero', 'data-overview-region': 'execution_model' }, [
-        h('div', { class: 'card__head' }, [
-          h('div', {}, h('span', { class: 'eyebrow' }, '执行模型'), h('div', { class: 'card__title' }, '流量如何被转向')),
-          h('span', { class: 'badge badge--match' }, '首条匹配 · 严格有序')
+      const state = headline({ savedEnabled, active, healthy, pendingApply, lastResult });
+      const flow = h('div', { class: 'flow', title: '规则按顺序首条命中即停' }, [
+        h('span', { class: 'flow__step' }, '规则', h('strong', {}, String(intent.rules.length))),
+        h('span', { class: 'flow__arrow', 'aria-hidden': 'true' }, '→'),
+        h('span', { class: 'flow__step' }, 'DNS 配置', h('strong', {}, String(intent.dns_profiles.length))),
+        h('span', { class: 'flow__arrow', 'aria-hidden': 'true' }, '→'),
+        h('span', { class: 'flow__step' }, '路由', h('strong', {}, String(intent.routes.length))),
+        h('span', { class: 'flow__arrow', 'aria-hidden': 'true' }, '→'),
+        h('span', { class: 'flow__step' }, '出口')
+      ]);
+      const hero = h('section', { class: `card hero is-${state.tone}`, 'data-overview-region': 'execution_model' }, [
+        h('span', { class: 'hero__icon', 'aria-hidden': 'true' }, icon(state.icon, 20)),
+        h('div', { class: 'hero__body' }, [
+          h('h2', { class: 'hero__title' }, state.title),
+          h('p', { class: 'hero__text' }, state.text),
+          flow
         ]),
-        h('div', { class: 'pipeline' }, [
-          step('match', intent.rules.length, '匹配规则', '首条命中即停'),
-          arrow(),
-          step('dns', intent.dns_profiles.length, 'DNS Profile', '独立解析路径'),
-          arrow(),
-          step('route', intent.routes.length, '路由', '直连 / 拒绝 / 节点链'),
-          arrow(),
-          step('net', null, '网络出口', '前置节点链路')
-        ])
+        state.tone === 'err' ? h('div', { class: 'hero__actions' },
+          h('button', { class: 'btn', onclick: () => S.router?.('diagnostics') }, '查看诊断')) : null
       ]);
 
-      const lifecycle = h('section', { class: 'card', 'data-overview-region': 'configuration_lifecycle' }, [
-        h('div', { class: 'card__head' }, [
-          h('div', {}, h('span', { class: 'eyebrow' }, '配置生命周期'), h('div', { class: 'card__title' }, 'Draft、Saved 与 Active')),
-          pendingApply || savedEnabled !== active ? h('span', { class: 'badge badge--warn' }, '状态不一致') : h('span', { class: 'badge badge--ok' }, '状态一致')
-        ]),
-        h('div', { class: 'facts' }, [
-          fact('工作副本', S.store.dirty ? '有未保存修改' : '已保存'),
-          fact('工作副本开关', intent.main?.enabled ? '启用' : '禁用'),
-          fact('已保存配置', savedEnabled ? '启用' : '禁用'),
-          fact('等待应用', pendingApply ? '是' : '否'),
-          fact('当前运行', active ? (healthy ? '正常' : '异常') : '已停止'),
-          fact('Saved / Active', pendingApply || savedEnabled !== active ? '不一致，等待处理' : '一致')
-        ])
-      ]);
+      const lifecycle = ui.section('配置状态', {
+        attrs: { 'data-overview-region': 'configuration_lifecycle' },
+        aside: consistent ? h('span', { class: 'badge badge--ok' }, '状态一致') : h('span', { class: 'badge badge--warn' }, '状态不一致')
+      }, ui.facts([
+        ['工作副本', S.store.dirty ? '有未保存修改' : '与已保存配置一致'],
+        ['已保存配置', savedEnabled ? '启用' : '禁用'],
+        ['当前运行', active ? (healthy ? '正常' : '异常') : '已停止'],
+        ['等待应用', pendingApply ? '是' : '否']
+      ], { single: true }));
 
-      const scale = h('section', { class: 'card', 'data-overview-region': 'object_scale' }, [
-        h('div', { class: 'card__head' }, [
-          h('div', {}, h('span', { class: 'eyebrow' }, '配置规模'), h('div', { class: 'card__title' }, '当前工作副本'))
-        ]),
-        h('div', { class: 'facts' }, [
-          fact('节点', intent.nodes.length), fact('路由', intent.routes.length),
-          fact('DNS Profile', intent.dns_profiles.length), fact('本地入口', intent.local_proxies.length),
-          fact('规则', intent.rules.length), fact('订阅', intent.subscriptions.length)
-        ])
-      ]);
+      const scale = ui.section('配置规模', {
+        sub: '当前工作副本中的对象数量',
+        attrs: { 'data-overview-region': 'object_scale' }
+      }, h('div', { class: 'stats stats--inset' }, [
+        stat('节点', intent.nodes.length, 'nodes'),
+        stat('路由', intent.routes.length, 'routes'),
+        stat('DNS 配置', intent.dns_profiles.length, 'dns'),
+        stat('本地代理', intent.local_proxies.length, 'proxies'),
+        stat('规则', intent.rules.length, 'rules'),
+        stat('订阅', intent.subscriptions.length, 'subscriptions')
+      ]));
 
-      const validationSummary = h('section', { class: 'card', 'data-overview-region': 'validation_summary' }, [
-        h('div', { class: 'card__head' }, [
-          h('div', {}, h('span', { class: 'eyebrow' }, '校验与警告摘要'), h('div', { class: 'card__title' }, '当前工作副本')),
-          validation.ok ? h('span', { class: 'badge badge--ok' }, '合法') : h('span', { class: 'badge badge--err' }, `${validation.errors.length} 错误`)
-        ]),
-        h('div', { class: 'facts' }, [
-          fact('错误', validation.errors?.length || 0),
-          fact('警告', validation.warnings?.length || 0),
-          fact('警告分组', validation.warning_groups?.length || 0)
-        ]),
-        warningGroups(validation),
-        h('p', { class: 'muted' }, validation.errors.length || validation.warnings.length
-          ? '同类警告已按正在使用的对象聚合；详细修复入口位于对应页面。'
-          : '当前工作副本校验通过。')
-      ]);
+      const validationSummary = ui.section('校验', {
+        sub: errors || warnings ? `${errors} 个错误 · ${warnings} 个警告` : '当前工作副本校验通过',
+        attrs: { 'data-overview-region': 'validation_summary' },
+        aside: [
+          validation.ok ? h('span', { class: 'badge badge--ok' }, '合法') : h('span', { class: 'badge badge--err' }, `${errors} 错误`),
+          errors || warnings ? h('button', { class: 'btn btn--sm', onclick: ui.onValidate }, '查看详情') : null
+        ]
+      }, warningGroups(validation));
 
-      const lastApplySummary = h('section', { class: 'card', 'data-overview-region': 'last_apply_and_actions' }, [
-        h('div', { class: 'card__head' }, [
-          h('div', {}, h('span', { class: 'eyebrow' }, '最近应用与快捷操作'), h('div', { class: 'card__title' }, lastApply ? `${ui.applyTime(lastApply)} · ${lastResult?.ok ? '成功' : '失败'}` : '尚无应用记录')),
-          h('div', { class: 'toolbar' }, [
-            h('button', { class: 'btn', onclick: ui.onRefreshState }, '刷新'),
-            h('button', { class: 'btn', onclick: () => S.router?.('diagnostics') }, '打开诊断'),
-            h('button', { class: 'btn', onclick: () => S.router?.('system') }, '系统信息')
-          ])
-        ]),
-        ui.applyRecord(status),
-        h('p', { class: 'muted' }, '保存、保存并应用、应用已保存配置和放弃修改由本页顶部全局状态区按当前 Draft 状态提供。')
-      ]);
-
-      function fact(label, value) {
-        return h('div', { class: 'fact' }, h('dt', {}, label), h('dd', {}, value));
-      }
+      const lastApplySummary = ui.section('最近一次应用', {
+        attrs: { 'data-overview-region': 'last_apply_and_actions' },
+        aside: [
+          h('button', { class: 'btn btn--sm', onclick: ui.onRefreshState }, '刷新'),
+          h('button', { class: 'btn btn--sm', onclick: () => S.router?.('diagnostics') }, '打开诊断'),
+          h('button', { class: 'btn btn--sm', onclick: () => S.router?.('system') }, '系统信息')
+        ]
+      }, ui.applyRecord(status));
 
       if (!isCurrent()) return;
       root.append(...[
-        ui.viewHead('总览', '执行模型、配置生命周期与当前工作副本概览'),
-        externalNotice, pipeline, lifecycle, scale, validationSummary, lastApplySummary
+        ui.viewHead('总览', 'Steer 的运行状态与当前配置概况'),
+        externalNotice,
+        hero,
+        h('div', { class: 'grid-2 overview-grid' }, [lifecycle, scale]),
+        h('div', { class: 'grid-2 overview-grid' }, [validationSummary, lastApplySummary])
       ].filter(Boolean));
     }
   };

@@ -3,7 +3,7 @@
 'use strict';
 (function () {
   const S = window.S;
-  const { h, fmtTime } = S;
+  const { h, icon, fmtTime } = S;
   const ui = S.ui;
 
   let statuses = null;
@@ -62,8 +62,8 @@
         const draft = sub ? JSON.parse(JSON.stringify(sub)) : ui.creationDraft('subscriptions');
         const name = ui.input({ value: draft.name || '', placeholder: '订阅名称' });
         const enabled = ui.toggle(draft.enabled, (v) => { draft.enabled = v; });
-        const url = ui.input({ value: draft.url || '', placeholder: 'https://sub.example.com/all' });
-        const interval = ui.input({ value: draft.update_interval || '', placeholder: defaultInterval });
+        const url = ui.input({ value: draft.url || '', placeholder: 'https://sub.example.com/all', mono: true });
+        const interval = ui.input({ value: draft.update_interval || '', placeholder: defaultInterval, mono: true });
         body.append(
           h('div', { class: 'drawer-section' }, h('div', { class: 'drawer-section__title' }, '订阅'), [
             ui.field('名称', name, null, 'name'),
@@ -96,7 +96,7 @@
   }
 
   function openCleanup(subscription, nodes, isCurrent, root) {
-    const box = h('div', {});
+    const box = h('div', { class: 'u-mt-10' });
     const renderList = () => {
       box.replaceChildren();
       const remaining = nodes.filter((n) => n.pinned_stale);
@@ -159,7 +159,12 @@
       });
 
       const table = h('table', { class: 'table' }, [
-        h('thead', {}, h('tr', {}, ['顺序', '状态', '订阅', 'URL', '间隔', '最近成功', '最近失败', '节点', '跳过 / 失效', '操作'].map((t) => h('th', {}, t)))),
+        h('thead', {}, h('tr', {}, [
+          h('th', { class: 'collection-drag-column', 'aria-label': '顺序' }),
+          h('th', {}, '启用'), h('th', {}, '订阅'), h('th', {}, '状态'), h('th', {}, '最近更新'),
+          h('th', { class: 'num' }, '节点'), h('th', { class: 'num' }, '跳过 / 失效'),
+          h('th', { class: 'col-actions', 'aria-label': '操作' })
+        ])),
         h('tbody', {}, statuses.map((s) => {
           const subscription = intent.subscriptions.find((item) => item.id === s.id) || s;
           const state = statusLabel(s);
@@ -199,50 +204,50 @@
             updateBtn.classList.remove('spinning');
             updateBtn.disabled = !s.enabled;
           }, disabled: !s.enabled, title: s.enabled ? '' : '已停用的订阅不能更新' }, '立即更新');
-          const cleanupBtn = s.stale?.length
-            ? h('button', {
-              class: 'btn btn--sm btn--danger',
-                onclick: () => openCleanup(s, intent.nodes.filter((n) => n.source_subscription === s.id), isCurrent, root)
-              }, `清理失效节点 ×${s.stale.length}`)
-            : null;
-          const failure = s.last_failure;
+          const failure = latestFailure(s) ? s.last_failure : null;
+          const url = String(s.url || '');
+          const menu = ui.rowMenu([
+            s.stale?.length ? {
+              label: `清理失效节点 ×${s.stale.length}`,
+              onclick: () => openCleanup(s, intent.nodes.filter((n) => n.source_subscription === s.id), isCurrent, root)
+            } : null,
+            s.stale?.length ? 'separator' : null,
+            { label: '删除', danger: true, onclick: () => requestDelete(s) }
+          ]);
           return h('tr', ui.collectionRowAttributes(
             'subscriptions', subscription, intent.subscriptions, () => view.render(root), s.enabled === false ? 'is-disabled' : ''
           ), [
             h('td', { class: 'collection-drag-column' }, ui.collectionDragHandle('subscriptions', subscription, intent.subscriptions, () => view.render(root))),
-            h('td', {}, h('div', { class: 'row-actions' }, [
-              ui.toggle(s.enabled, (v) => { const sub = S.store.intent.subscriptions.find((x) => x.id === s.id); sub.enabled = v; S.store.touch(); }),
-              h('span', { class: `badge ${state[1]}` }, state[0])
+            h('td', {}, ui.toggle(s.enabled, (v) => { const sub = S.store.intent.subscriptions.find((x) => x.id === s.id); sub.enabled = v; S.store.touch(); }, `启用 ${s.name || s.id}`)),
+            h('td', {}, h('div', { class: 'cell-title' }, [
+              h('strong', {}, s.name || s.id),
+              h('small', { class: 'mono', title: url }, url.length > 48 ? `${url.slice(0, 48)}…` : url),
+              h('small', {}, s.update_interval ? `每 ${s.update_interval} 自动更新` : '仅手动更新')
             ])),
-            h('td', {}, h('strong', {}, s.name || s.id)),
-            h('td', { class: 'mono' }, h('span', { title: s.url }, s.url.length > 34 ? s.url.slice(0, 34) + '…' : s.url)),
-            h('td', { class: 'mono' }, s.update_interval || '—'),
-            h('td', { class: 'mono' }, s.last_success ? fmtTime(s.last_success) : h('span', { class: 'muted' }, '—')),
-            h('td', {}, failure ? h('div', {}, [
-              h('div', { class: 'mono' }, failure.at ? fmtTime(failure.at) : '—'),
-              h('div', { class: 'muted', title: failure.summary }, failure.summary)
-            ]) : h('span', { class: 'muted' }, '—')),
-            h('td', { class: 'mono num' }, `${s.node_count}（当前 ${s.current}）`),
-            h('td', { class: 'mono num' }, `${s.skipped || 0} / ${(s.stale || []).length}`),
-            h('td', {}, h('div', { class: 'row-actions row-actions--wrap' }, [
+            h('td', {}, h('span', { class: `badge ${state[1]}` }, state[0])),
+            h('td', {}, h('div', { class: 'cell-title' }, [
+              h('span', {}, s.last_success ? fmtTime(s.last_success) : h('span', { class: 'faint' }, '从未成功')),
+              s.last_failure ? h('small', { class: failure ? 'text-err' : '', title: s.last_failure.summary },
+                `${failure ? '失败' : '曾失败'} ${s.last_failure.at ? fmtTime(s.last_failure.at) : ''} · ${s.last_failure.summary}`) : null
+            ])),
+            h('td', { class: 'num' }, `${s.node_count}（当前 ${s.current}）`),
+            h('td', { class: 'num' }, `${s.skipped || 0} / ${(s.stale || []).length}`),
+            h('td', { class: 'col-actions' }, h('div', { class: 'row-actions' }, [
               updateBtn,
-              cleanupBtn,
-              h('button', { class: 'btn btn--sm', onclick: () => openEditor(S.store.intent.subscriptions.find((x) => x.id === s.id)) }, '编辑'),
-              h('button', { class: 'btn btn--sm btn--danger', onclick: () => requestDelete(s) }, '删除')
+              h('button', { class: 'btn btn--sm btn--ghost', onclick: () => openEditor(S.store.intent.subscriptions.find((x) => x.id === s.id)) }, '编辑'),
+              menu
             ]))
           ]);
         }))
       ]);
 
       if (!isCurrent()) return;
+      const addButton = () => h('button', { class: 'btn btn--primary', onclick: () => openEditor(null) }, icon('plus', 15), '添加订阅');
       root.append(
-        ui.viewHead('订阅', '管理远程节点订阅与定时更新', [
-          ui.collectionOrderToolbar('subscriptions', intent.subscriptions, () => view.render(root)),
-          h('button', { class: 'btn btn--primary', onclick: () => openEditor(null) }, '添加订阅')
-        ]),
+        ui.viewHead('订阅', '从远程订阅获取节点。更新只改变节点列表，不会自动应用到运行配置。', [addButton()]),
         statuses.length
           ? h('section', { class: 'card table-card' }, h('div', { class: 'table-wrap' }, table))
-          : h('div', { class: 'empty' }, '还没有订阅')
+          : ui.emptyState('还没有订阅', [addButton()], 'refresh')
       );
       const focus = ui.takeObjectFocus('subscription');
       const focused = focus && intent.subscriptions.find((subscription) => subscription.id === focus.object_id);

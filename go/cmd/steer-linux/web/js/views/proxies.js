@@ -3,7 +3,7 @@
 'use strict';
 (function () {
   const S = window.S;
-  const { h, asList } = S;
+  const { h, icon, asList } = S;
   const ui = S.ui;
   const PROTOCOL_LABEL = Object.fromEntries(S.uiSpec.local_proxy_protocols.map((item) => [item.value, item.label]));
 
@@ -19,12 +19,12 @@
         const draft = JSON.parse(JSON.stringify(proxy));
         const hasSavedPassword = typeof draft.password === 'string' && draft.password !== '';
         let authAction = hasSavedPassword ? 'keep' : 'remove';
-        const name = ui.input({ value: draft.name || '', placeholder: '端点名称' });
+        const name = ui.input({ value: draft.name || '', placeholder: '名称' });
         const enabled = ui.toggle(draft.enabled, (v) => { draft.enabled = v; });
         const protocolOptions = S.uiSpec.local_proxy_protocols.map((item) => [item.value, item.label]);
         if (!draft.protocol) protocolOptions.unshift(['', '缺失（需修复）']);
         const protocol = ui.select(protocolOptions, draft.protocol || '', (v) => { draft.protocol = v; });
-        const listen = ui.input({ value: draft.listen || '', placeholder: '127.0.0.1', oninput: updateExposure });
+        const listen = ui.input({ value: draft.listen || '', placeholder: '127.0.0.1', mono: true, oninput: updateExposure });
         const port = ui.input({ type: 'number', value: draft.listen_port || '', placeholder: '1080' });
         const username = ui.input({ value: draft.username || '', placeholder: '（可选）' });
         const password = ui.input({ type: 'password', value: '', placeholder: '输入新密码' });
@@ -132,38 +132,42 @@
     render(root) {
       ui.beginRender(root);
       const intent = S.store.intent;
+      const remove = (p) => {
+        if (!ui.guardCollectionDeletion('local_proxies', p.id, p.name || p.id)) return;
+        S.store.intent.local_proxies = S.store.intent.local_proxies.filter((x) => x.id !== p.id);
+        S.store.touch();
+        ui.toast(`已删除 ${p.name || p.id} · 未保存`, 'warn');
+        view.render(root);
+      };
       const table = h('table', { class: 'table' }, [
-        h('thead', {}, h('tr', {}, ['顺序', '状态', '名称', '协议', '监听', '规则引用', '操作'].map((t) => h('th', {}, t)))),
+        h('thead', {}, h('tr', {}, [
+          h('th', { class: 'collection-drag-column', 'aria-label': '顺序' }),
+          h('th', {}, '启用'), h('th', {}, '名称'), h('th', {}, '协议'), h('th', {}, '监听'),
+          h('th', {}, '认证'), h('th', { class: 'num' }, '规则引用'), h('th', { class: 'col-actions', 'aria-label': '操作' })
+        ])),
         h('tbody', {}, intent.local_proxies.map((p) => h('tr', ui.collectionRowAttributes(
           'local_proxies', p, intent.local_proxies, () => view.render(root), p.enabled === false ? 'is-disabled' : ''
         ), [
           h('td', { class: 'collection-drag-column' }, ui.collectionDragHandle('local_proxies', p, intent.local_proxies, () => view.render(root))),
-          h('td', {}, ui.toggle(p.enabled, (v) => { p.enabled = v; S.store.touch(); })),
+          h('td', {}, ui.toggle(p.enabled, (v) => { p.enabled = v; S.store.touch(); }, `启用 ${p.name || p.id}`)),
           h('td', {}, h('strong', {}, p.name || p.id)),
-          h('td', {}, h('span', { class: 'badge badge--match' }, PROTOCOL_LABEL[p.protocol] || p.protocol)),
+          h('td', {}, h('span', { class: 'tag' }, PROTOCOL_LABEL[p.protocol] || p.protocol)),
           h('td', { class: 'mono' }, `${p.listen}:${p.listen_port}`),
-          h('td', { class: 'mono num' }, String(refCount(intent, p.id))),
-          h('td', {}, h('div', { class: 'row-actions' }, [
-            h('button', { class: 'btn btn--sm', onclick: () => openEditor(p) }, '编辑'),
-            h('button', { class: 'btn btn--sm btn--danger', onclick: () => {
-              if (!ui.guardCollectionDeletion('local_proxies', p.id, p.name || p.id)) return;
-              S.store.intent.local_proxies = S.store.intent.local_proxies.filter((x) => x.id !== p.id);
-              S.store.touch();
-              ui.toast(`已删除 ${p.name} · 未保存`, 'warn');
-              view.render(root);
-            } }, '删除')
+          h('td', {}, p.username ? '用户名和密码' : h('span', { class: 'faint' }, '无')),
+          h('td', { class: 'num' }, String(refCount(intent, p.id))),
+          h('td', { class: 'col-actions' }, h('div', { class: 'row-actions' }, [
+            h('button', { class: 'btn btn--sm btn--ghost', onclick: () => openEditor(p) }, '编辑'),
+            ui.rowMenu([{ label: '删除', danger: true, onclick: () => remove(p) }])
           ]))
         ])))
       ]);
+      const addButton = () => h('button', { class: 'btn btn--primary', onclick: () => openEditor(ui.creationDraft('local_proxies')) }, icon('plus', 15), '添加本地代理');
 
       root.append(
-        ui.viewHead('本地代理', '设置本机 SOCKS5、HTTP 与 Mixed 代理入口', [
-          ui.collectionOrderToolbar('local_proxies', intent.local_proxies, () => view.render(root)),
-          h('button', { class: 'btn btn--primary', onclick: () => openEditor(ui.creationDraft('local_proxies')) }, '添加端点')
-        ]),
+        ui.viewHead('本地代理', '在本机开放 SOCKS5、HTTP 或 Mixed 代理入口；规则可以按入口分流。', [addButton()]),
         intent.local_proxies.length
           ? h('section', { class: 'card table-card' }, h('div', { class: 'table-wrap' }, table))
-          : h('div', { class: 'empty' }, '还没有本地代理端点')
+          : ui.emptyState('还没有本地代理入口', [addButton()], 'plug')
       );
       const focus = ui.takeObjectFocus('local_proxy');
       const focused = focus && intent.local_proxies.find((proxy) => proxy.id === focus.object_id);

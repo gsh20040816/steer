@@ -3,7 +3,7 @@
 'use strict';
 (function () {
   const S = window.S;
-  const { h, fmtLatestProbe, asList } = S;
+  const { h, icon, fmtLatestProbe, asList } = S;
   const ui = S.ui;
 
   const MANUAL = '_manual';
@@ -195,7 +195,7 @@
     if (!nodes.length) return null;
     const bar = h('div', { class: 'batch-bar' });
     const make = (label, download) => {
-      const btn = h('button', { class: 'btn', onclick: () => runBatch(nodes, download, btn, label) }, label);
+      const btn = h('button', { class: 'btn btn--sm', onclick: () => runBatch(nodes, download, btn, label) }, label);
       bar.append(btn);
       return btn;
     };
@@ -246,7 +246,7 @@
 
   /* ---------- 分享链接导入 ---------- */
   function openImport() {
-    const textarea = h('textarea', { class: 'textarea', rows: 4, placeholder: 'ss://…  vmess://…  vless://…  trojan://…  hysteria2://…  tuic://…' });
+    const textarea = h('textarea', { class: 'textarea', rows: 5, spellcheck: 'false', placeholder: 'ss://…\nvmess://…\nvless://…\ntrojan://…\nhysteria2://…' });
     const preview = h('div', { class: 'import-preview' });
 
     async function review() {
@@ -265,7 +265,7 @@
           ...(parsed.skipped ? [h('div', { class: 'alert' }, `已跳过 ${parsed.skipped} 个无效条目`)] : []),
           ...(parsed.skipped_reasons?.length ? [h('div', { class: 'alert' }, h('strong', {}, '解析警告'), h('ul', { class: 'import-warnings' }, parsed.skipped_reasons.map((w) => h('li', {}, w.detail))))] : []),
           ...(nameInput ? [ui.field('名称', nameInput)] : []),
-          h('div', { class: 'facts' }, facts.map(([k, v]) => h('div', { class: 'fact' }, h('dt', {}, k), h('dd', {}, v)))),
+          ui.facts(facts, { single: true }),
           h('p', { class: 'muted' }, '上方只预览第一个节点；凭据始终隐藏。'),
           h('div', { class: 'dialog-inline-actions' }, h('button', {
             class: 'btn btn--primary', onclick: () => {
@@ -366,9 +366,9 @@
           }
           rebuildSpec();
         });
-        const server = ui.input({ value: draft.server || '', placeholder: 'example.com 或 IP' });
+        const server = ui.input({ value: draft.server || '', placeholder: 'example.com 或 IP', mono: true });
         const port = ui.input({ type: 'number', value: draft.server_port || '', placeholder: '443' });
-        const endpoint = h('div', { class: 'field--row' });
+        const endpoint = h('div', { class: 'field--row field--endpoint' });
         const specBox = h('div', {});
         let listControls = [];
 
@@ -495,76 +495,82 @@
       const orderingDisabledReason = displaySortMode === 'default' ? '' : '顺序';
       const editable = activeGroup === MANUAL;
 
-      const groupNav = h('div', { class: 'node-groups' }, groupList.map((g) => h('button', {
-        class: `chip ${g.id === activeGroup ? 'is-active' : ''}`,
+      const groupNav = h('div', { class: 'node-groups', role: 'tablist', 'aria-label': '节点分组' }, groupList.map((g) => h('button', {
+        class: `chip ${g.id === activeGroup ? 'is-active' : ''}`, role: 'tab', 'aria-selected': String(g.id === activeGroup),
         onclick: () => { activeGroup = g.id; view.render(root); }
       }, h('span', {}, g.label), h('span', { class: 'count' }, String(g.count)))));
 
+      const deleteNode = (node) => {
+        if (!ui.guardCollectionDeletion('nodes', node.id, node.name || node.id)) return;
+        S.store.intent.nodes = S.store.intent.nodes.filter((n) => n.id !== node.id);
+        S.store.touch();
+        ui.toast(`已删除 ${node.name || node.id} · 未保存`, 'warn');
+        view.render(root);
+      };
+
       const table = h('table', { class: 'table' }, [
         h('thead', {}, h('tr', {}, [
-          h('th', {}, '顺序'),
-          h('th', {}, '状态'), h('th', {}, '节点'), h('th', {}, '协议'), h('th', {}, '端点'),
+          h('th', { class: 'collection-drag-column', 'aria-label': '顺序' }),
+          h('th', {}, '启用'), h('th', {}, '节点'), h('th', {}, '协议'), h('th', {}, '服务器'),
           h('th', { class: 'is-sortable' }, sortHeader('连接测速', 'connect', root)),
           h('th', { class: 'is-sortable' }, sortHeader('下载测速', 'download', root)),
-          h('th', {}, '操作')
+          h('th', { class: 'col-actions', 'aria-label': '操作' })
         ])),
         h('tbody', {}, nodes.map((node) => {
           const eligible = node.enabled !== false;
           const conn = testButton('连接', false, node.id, eligible);
           const down = testButton('下载', true, node.id, eligible);
           rowButtons.set(node.id, { conn, down });
-          const edit = editable ? h('button', { class: 'btn btn--sm', onclick: () => openNodeEditor(node) }, '编辑') : h('span', { class: 'badge' }, '订阅');
           const exportReason = exportUnavailableReason(node);
-          const exportLink = h('button', {
-            class: 'btn btn--sm', disabled: !!exportReason, title: exportReason || '导出包含完整凭据的节点分享链接',
-            onclick: () => openExport(node)
-          }, '导出链接');
-          const del = editable ? h('button', { class: 'btn btn--sm btn--danger', onclick: () => {
-            if (!ui.guardCollectionDeletion('nodes', node.id, node.name || node.id)) return;
-            S.store.intent.nodes = S.store.intent.nodes.filter((n) => n.id !== node.id);
-            S.store.touch();
-            ui.toast(`已删除 ${node.name} · 未保存`, 'warn');
-            view.render(root);
-          } }, '删除') : null;
+          const menu = ui.rowMenu([
+            { label: '导出链接', disabled: !!exportReason, title: exportReason || '导出包含完整凭据的节点分享链接', onclick: () => openExport(node) },
+            editable ? 'separator' : null,
+            editable ? { label: '删除', danger: true, onclick: () => deleteNode(node) } : null
+          ]);
+          const enabled = ui.toggle(node.enabled, (v) => { node.enabled = v; S.store.touch(); view.render(root); }, `启用 ${node.name || node.id}`);
+          enabled.disabled = !editable;
+          enabled.title = editable ? '启用或停用节点' : '订阅节点状态由订阅管理';
           return h('tr', ui.collectionRowAttributes(
             'nodes', node, nodes, () => view.render(root), node.enabled === false ? 'is-disabled' : ''
           ), [
             h('td', { class: 'collection-drag-column' }, ui.collectionDragHandle(
               'nodes', node, sourceNodes, () => view.render(root), { disabledReason: orderingDisabledReason }
             )),
-            h('td', {}, (() => {
-              const enabled = ui.toggle(node.enabled, (v) => { node.enabled = v; S.store.touch(); view.render(root); });
-              enabled.disabled = !editable;
-              enabled.title = editable ? '启用或停用节点' : '订阅节点状态由订阅管理';
-              return enabled;
-            })()),
-            h('td', {}, h('div', {}, h('div', {}, h('strong', {}, node.name || node.id)), node.pinned_stale ? h('span', { class: 'badge badge--stale' }, '已失效') : null)),
-            h('td', {}, h('span', { class: `badge protocol-badge protocol--${node.type}` }, PROTOCOL_LABEL[node.type] || node.type)),
+            h('td', {}, enabled),
+            h('td', {}, h('div', { class: 'cell-inline' }, h('strong', {}, node.name || node.id), node.pinned_stale ? h('span', { class: 'badge badge--stale' }, '已失效') : null)),
+            h('td', {}, h('span', { class: `tag protocol-badge protocol--${node.type}` }, PROTOCOL_LABEL[node.type] || node.type)),
             h('td', { class: 'mono' }, nodeEndpoint(node)),
             h('td', { class: 'probe-sort-cell' }, probeAction(conn)),
             h('td', { class: 'probe-sort-cell' }, probeAction(down)),
-            h('td', {}, h('div', { class: 'row-actions row-actions--wrap' }, edit, exportLink, del))
+            h('td', { class: 'col-actions' }, h('div', { class: 'row-actions' }, [
+              editable
+                ? h('button', { class: 'btn btn--sm btn--ghost', onclick: () => openNodeEditor(node) }, '编辑')
+                : h('span', { class: 'badge', title: '订阅节点只读' }, '订阅'),
+              menu
+            ]))
           ]);
         }))
       ]);
 
       const batch = renderBatch(sourceNodes.filter((node) => node.enabled !== false).map((node) => node.id));
-	  syncTestButtons();
-	  if (typeof S.store.subscribe === 'function') {
-		const unsubscribe = S.store.subscribe(syncTestButtons);
-		isCurrent.onDispose(unsubscribe);
-	  }
+      syncTestButtons();
+      if (typeof S.store.subscribe === 'function') {
+        const unsubscribe = S.store.subscribe(syncTestButtons);
+        isCurrent.onDispose(unsubscribe);
+      }
+      const importButton = () => h('button', { class: 'btn', onclick: openImport }, icon('upload', 15), '导入节点');
+      const addButton = () => h('button', { class: 'btn btn--primary', onclick: () => openNodeEditor(ui.creationDraft('nodes')) }, icon('plus', 15), '添加节点');
       root.append(
-        ui.viewHead('节点', editable ? '手动添加与维护的节点列表' : '订阅节点列表（只读）', [
-          ui.collectionOrderToolbar('nodes', sourceNodes, () => view.render(root), { disabledReason: orderingDisabledReason }),
-          h('button', { class: 'btn', onclick: openImport }, '导入节点'),
-          editable ? h('button', { class: 'btn btn--primary', onclick: () => openNodeEditor(ui.creationDraft('nodes')) }, '添加节点') : null
+        ui.viewHead('节点', editable ? '手动添加的节点；拖动左侧手柄或按 ↑/↓ 调整顺序' : `来自订阅「${active?.label || ''}」的节点，只读`, [
+          importButton(),
+          editable ? addButton() : null
         ]),
-        groupNav
+        h('div', { class: 'toolbar-row' }, [groupNav, batch])
       );
-      if (batch) root.append(batch);
       root.append(
-        nodes.length ? h('div', { class: 'card table-card' }, h('div', { class: 'table-wrap' }, table)) : h('div', { class: 'empty' }, '该分组没有节点')
+        nodes.length
+          ? h('div', { class: 'card table-card' }, h('div', { class: 'table-wrap' }, table))
+          : ui.emptyState(editable ? '还没有手动节点。可以逐个添加，也可以粘贴分享链接批量导入。' : '该订阅没有节点', editable ? [importButton(), addButton()] : [], 'server')
       );
 
       const focus = ui.takeObjectFocus('node');

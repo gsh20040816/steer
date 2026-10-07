@@ -64,41 +64,51 @@
 
   const GROUP_LABEL = { status: '状态', configuration: '配置', services: '服务', advanced: '高级' };
   const VIEW_LABEL = {
-    overview: '总览', general: '基础设置', nodes: '节点', routes: '路由', dns: 'DNS Profile', proxies: '本地代理',
+    overview: '总览', general: '基础设置', nodes: '节点', routes: '路由', dns: 'DNS 配置', proxies: '本地代理',
     rules: '规则', subscriptions: '订阅', diagnostics: '诊断', system: '系统', advanced: '高级配置'
   };
   const VIEW_ICON = {
     overview: 'gauge', general: 'sliders', nodes: 'server', routes: 'route', dns: 'globe', proxies: 'plug', rules: 'list',
-    subscriptions: 'refresh', diagnostics: 'activity', system: 'sliders', advanced: 'braces'
+    subscriptions: 'refresh', diagnostics: 'activity', system: 'cpu', advanced: 'braces'
   };
   const NAV = S.uiSpec.navigation.map((group) => ({
     label: GROUP_LABEL[group.key] || group.label,
     items: group.items.map((item) => [item.key, VIEW_ICON[item.key], VIEW_LABEL[item.key] || item.label])
   }));
 
+  /* 行内菜单：<details> 保证菜单项始终在 DOM 中；点击外部或选择后收起。 */
+  const closeMenus = (event) => {
+    document.querySelectorAll?.('details.menu[open]').forEach((menu) => {
+      if (!event || !menu.contains?.(event.target)) menu.removeAttribute('open');
+    });
+  };
+  document.addEventListener('click', closeMenus);
+  window.addEventListener('resize', () => closeMenus());
+  window.addEventListener('scroll', () => closeMenus(), true);
+
   /* ---------- 侧栏 ---------- */
   function renderShell(router) {
     const side = document.querySelector('#side');
     const brand = h('div', { class: 'brand' }, [
-      h('strong', {}, 'steer'),
-      h('span', { class: 'brand__sub' }, 'Linux 管理控制台')
+      h('span', { class: 'brand__mark' }, icon('steer', 16)),
+      h('div', { class: 'brand__text' }, h('strong', {}, 'Steer'), h('span', { class: 'brand__sub' }, 'Linux 控制台'))
     ]);
-    const nav = h('nav', {});
+    const nav = h('nav', { 'aria-label': '页面' });
     for (const group of NAV) {
       nav.append(h('div', { class: 'nav-group__label' }, group.label));
       for (const [view, ic, label] of group.items) {
         nav.append(h('button', {
           class: 'nav-item', dataset: { view },
           onclick: () => router(view)
-        }, icon(ic), h('span', {}, label)));
+        }, icon(ic, 16), h('span', {}, label)));
       }
     }
     const foot = h('div', { class: 'side-foot' }, [
       h('button', {
-        class: 'btn btn--sm',
+        class: 'btn btn--sm btn--ghost',
         onclick: () => S.auth.logout()
-      }, '退出登录'),
-      h('div', { class: 'side-foot__note' }, '仅允许本机访问\n登录信息只在当前页面保留')
+      }, icon('logout', 15), '退出登录'),
+      h('div', { class: 'side-foot__note' }, '仅允许本机访问\n令牌只保存在当前标签页')
     ]);
     side.append(brand, nav, foot);
   }
@@ -365,16 +375,16 @@
     const failedBeforeActivation = !!result.candidate_generation && !result.activated;
     return h('div', { class: `apply-record ${result.ok ? 'is-ok' : 'is-err'}` }, [
       h('div', { class: 'apply-record__head' }, [
+        h('span', { class: `badge badge--dot ${result.ok ? 'badge--ok' : 'badge--err'}` }, result.ok ? '成功' : '失败'),
         h('strong', {}, result.ok ? '应用成功' : '应用失败'),
-        h('span', { class: `badge ${result.ok ? 'badge--ok' : 'badge--err'}` }, result.ok ? '成功' : '失败'),
         h('span', { class: 'muted' }, applyTime(record))
       ]),
       failedBeforeActivation
         ? h('p', { class: 'alert alert--err' }, '新配置未启用，当前运行配置保持不变。')
         : (!result.ok && result.activated
-            ? h('p', { class: 'alert alert--err' }, '运行配置已变化，但应用过程未完成；请检查诊断信息。')
+            ? h('p', { class: 'alert alert--err' }, '运行配置已变化，但应用过程未完整；请检查诊断信息。')
             : null),
-      !result.ok ? h('p', { class: 'apply-record__error' }, includeTechnicalDetail && result.error
+      !result.ok ? h('p', { class: `apply-record__error ${includeTechnicalDetail && result.error ? 'is-technical' : ''}` }, includeTechnicalDetail && result.error
         ? result.error
         : (failedBeforeActivation
             ? '运行配置未切换；已保存配置仍可重试应用。'
@@ -399,6 +409,19 @@
     }
   }
 
+  function runState(status, savedEnabled) {
+    const active = !!status.generation;
+    if (active && status.healthy) return { tone: 'ok', label: '正常运行', title: '分流服务运行正常' };
+    if (active) return { tone: 'err', label: '运行异常', title: '分流服务运行异常；请打开诊断' };
+    if (savedEnabled) return { tone: 'err', label: '已停止', title: '已保存为启用，但分流服务未运行' };
+    return { tone: 'off', label: '已停止', title: '分流服务已停止' };
+  }
+
+  function stripFact(label, value, title) {
+    return h('div', { class: 'strip__fact', title: title || null },
+      h('span', { class: 'strip__fact-label' }, label), h('span', { class: 'strip__fact-value' }, value));
+  }
+
   function renderStatusStrip() {
     const strip = document.querySelector('#strip');
     strip.replaceChildren();
@@ -406,39 +429,56 @@
     const status = ov.status || {};
     const lastApply = status.last_apply || null;
     const lastResult = lastApply?.result || lastApply;
-    const desiredEnabled = ov.saved_enabled === true;
     const savedEnabled = ov.saved_enabled === true;
-    const healthy = !!status.healthy;
-    const active = !!status.generation;
+    const state = runState(status, savedEnabled);
     const dirty = S.store.dirty;
     const draftValid = S.store.draftValid !== false;
     const pendingApply = S.store.pendingApply === true;
-    const busy = S.store.saving === true || S.store.reloading === true || S.store.applying === true;
+    const applying = S.store.applying === true;
+    const busy = S.store.saving === true || S.store.reloading === true || applying;
     const externalChange = S.store.hasExternalChange === true;
+    const invalidTitle = !draftValid ? '请先修复或放弃格式有误的配置' : '';
+
+    const flags = [
+      pendingApply ? h('span', { class: 'badge badge--warn', title: '已保存配置尚未应用到运行环境' }, '待应用') : null,
+      !draftValid ? h('span', { class: 'badge badge--err', title: S.store.draftError }, '配置格式有误') : null,
+      externalChange ? h('span', { class: 'badge badge--err', title: '服务器配置与当前工作副本不同；工作副本未被覆盖' }, '服务器配置已变化') : null
+    ].filter(Boolean);
+
+    const pending = dirty || !draftValid ? h('div', { class: 'strip__pending', role: 'group', 'aria-label': '未保存的修改' }, [
+      h('span', { class: 'strip__pending-label' }, '工作副本已修改'),
+      dirty ? h('button', { class: 'btn btn--sm btn--ghost btn--danger', onclick: onDiscard, disabled: busy }, '放弃修改') : null,
+      h('button', { class: 'btn btn--sm', onclick: () => onSave(false), disabled: !dirty || !draftValid || busy, title: invalidTitle }, '保存'),
+      h('button', { class: 'btn btn--sm btn--primary', onclick: () => onSave(true), disabled: !dirty || !draftValid || busy, title: invalidTitle }, '保存并应用')
+    ]) : null;
 
     strip.append(
       h('div', { class: 'strip__group' }, [
-        h('span', { class: `health-dot ${active ? (healthy ? 'is-ok' : 'is-err') : (savedEnabled ? 'is-err' : 'is-disabled')}`, title: active ? (healthy ? '分流服务运行正常' : '分流服务运行异常') : (savedEnabled ? '已保存为启用，但分流服务未运行' : '分流服务已停止') }),
-        h('div', { class: 'strip__toggle' }, [
-          toggle(desiredEnabled, (next) => onToggleEnabled(next), '启用或禁用 Steer'),
-          h('div', {}, h('span', { class: 'strip__fact-label' }, '配置开关'), h('span', { class: 'strip__fact-value' }, desiredEnabled ? '启用' : '禁用'))
+        h('div', { class: 'strip__state', title: state.title }, [
+          h('span', { class: `state-dot is-${state.tone}`, 'aria-hidden': 'true' }),
+          stripFact('运行状态', state.label)
         ]),
-        desiredEnabled !== savedEnabled ? h('div', { class: 'strip__fact' }, h('span', { class: 'strip__fact-label' }, '已保存开关'), h('span', { class: 'strip__fact-value' }, savedEnabled ? '启用' : '禁用')) : null,
-        h('div', { class: 'strip__fact' }, h('span', { class: 'strip__fact-label' }, '运行状态'), h('span', { class: 'strip__fact-value' }, active ? (healthy ? '正常运行' : '运行异常') : '已停止')),
-        h('div', { class: 'strip__fact' }, h('span', { class: 'strip__fact-label' }, '上次应用'), h('span', { class: 'strip__fact-value', title: lastResult?.ok === false ? '应用未完整成功；请打开诊断。' : '' }, lastApply ? `${applyTime(lastApply)} ${lastResult?.ok ? '✓' : '✗'}` : '—')),
-        dirty ? h('span', { class: 'badge badge--warn', title: '工作副本有未保存修改' }, '工作副本已修改') : null,
-        !draftValid ? h('span', { class: 'badge badge--err', title: S.store.draftError }, '配置格式有误') : null,
-        pendingApply ? h('span', { class: 'badge badge--warn', title: '已保存配置尚未应用到运行环境' }, '待应用') : null,
-        externalChange ? h('span', { class: 'badge badge--err', title: '服务器配置与当前工作副本不同；工作副本未被覆盖' }, '服务器配置已变化') : null
+        h('span', { class: 'strip__divider', 'aria-hidden': 'true' }),
+        h('div', { class: 'strip__toggle' }, [
+          toggle(savedEnabled, (next) => onToggleEnabled(next), '启用或禁用 Steer'),
+          h('div', {}, h('span', { class: 'strip__fact-label' }, '配置开关'), h('span', { class: 'strip__fact-value' }, savedEnabled ? '启用' : '禁用'))
+        ]),
+        stripFact('上次应用', lastApply ? `${applyTime(lastApply)} · ${lastResult?.ok ? '成功' : '失败'}` : '—',
+          lastResult?.ok === false ? '应用未完整成功；请打开诊断。' : ''),
+        flags.length ? h('div', { class: 'strip__flags' }, flags) : null
       ]),
       h('div', { class: 'strip__actions' }, [
-        h('button', { class: 'btn', onclick: onRefreshState, disabled: busy, title: S.store.lastRefreshedAt ? `上次刷新 ${S.fmtTime(S.store.lastRefreshedAt)}` : '刷新状态' }, '刷新'),
-        externalChange ? h('button', { class: `btn ${dirty ? 'btn--danger' : 'btn--primary'}`, onclick: onReloadExternal, disabled: busy }, dirty ? '处理配置冲突' : '重新载入') : null,
-        h('button', { class: 'btn', onclick: onValidate }, '校验'),
-        dirty ? h('button', { class: 'btn btn--danger', onclick: onDiscard, disabled: busy }, '放弃修改') : null,
-        h('button', { class: 'btn', onclick: () => onSave(false), disabled: !dirty || !draftValid || busy, title: !draftValid ? '请先修复或放弃格式有误的配置' : '' }, '保存'),
-        h('button', { class: `btn ${dirty && draftValid && !busy ? 'btn--primary' : ''}`, onclick: () => onSave(true), disabled: !dirty || !draftValid || busy, title: !draftValid ? '请先修复或放弃格式有误的配置' : '' }, '保存并应用'),
-        h('button', { class: `btn ${!dirty && pendingApply && !busy ? 'btn--primary' : ''}`, onclick: onApplySaved, disabled: !pendingApply || busy, title: pendingApply ? '应用当前已保存配置' : '已保存配置与运行配置一致' }, '应用已保存配置')
+        h('button', {
+          class: 'btn btn--sm btn--ghost', onclick: onRefreshState, disabled: busy,
+          title: S.store.lastRefreshedAt ? `上次刷新 ${S.fmtTime(S.store.lastRefreshedAt)}` : '刷新状态'
+        }, icon('refresh', 15), '刷新'),
+        h('button', { class: 'btn btn--sm btn--ghost', onclick: onValidate }, icon('check', 15), '校验'),
+        externalChange ? h('button', { class: `btn btn--sm ${dirty ? 'btn--danger' : 'btn--primary'}`, onclick: onReloadExternal, disabled: busy }, dirty ? '处理配置冲突' : '重新载入') : null,
+        pendingApply || applying ? h('button', {
+          class: `btn btn--sm ${!dirty && !busy ? 'btn--primary' : ''}`, onclick: onApplySaved, disabled: busy,
+          title: '应用当前已保存配置'
+        }, '应用已保存配置') : null,
+        pending
       ])
     );
     strip.querySelector('.strip__toggle .switch').disabled = enabledToggleBusy || S.store.saving || S.store.reloading || S.store.applying;
@@ -482,14 +522,14 @@
         h('p', { class: 'muted' }, '服务器上的配置已被其他会话修改。请选择保留哪一份配置。'),
         h('div', { class: 'conflict-grid' }, [
           h('div', { class: 'conflict-col' }, [
-            h('span', { class: 'eyebrow' }, '本地工作副本'),
-            h('p', { class: 'muted' }, '包含你的未保存修改'),
-            h('span', { class: 'badge badge--warn' }, '未保存')
+            h('span', { class: 'badge badge--warn' }, '未保存'),
+            h('strong', {}, '本地工作副本'),
+            h('p', { class: 'muted' }, '包含你的未保存修改')
           ]),
           h('div', { class: 'conflict-col' }, [
-            h('span', { class: 'eyebrow' }, '服务器'),
-            h('p', { class: 'muted' }, '包含其他会话保存的最新修改'),
-            h('span', { class: 'badge' }, '最新配置')
+            h('span', { class: 'badge' }, '最新配置'),
+            h('strong', {}, '服务器'),
+            h('p', { class: 'muted' }, '包含其他会话保存的最新修改')
           ])
         ])
       ]),
@@ -548,8 +588,8 @@
     return el;
   }
 
-  function input({ value = '', placeholder = '', type = 'text', disabled = false, oninput }) {
-    const control = h('input', { class: 'input', type, value, placeholder, disabled, oninput });
+  function input({ value = '', placeholder = '', type = 'text', disabled = false, mono = false, oninput }) {
+    const control = h('input', { class: `input ${mono ? 'input--mono' : ''}`, type, value, placeholder, disabled, oninput, spellcheck: mono ? 'false' : null });
     if (type !== 'password') return control;
 
     const button = h('button', {
@@ -838,12 +878,12 @@
       REQUIRED: '必填字段尚未填写',
       DANGLING_NODE: '所选节点不存在',
       DANGLING_DETOUR: '所选前置路由不存在',
-      DANGLING_DNS_PROFILE: '所选 DNS Profile 不存在',
+      DANGLING_DNS_PROFILE: '所选 DNS 配置不存在',
       DANGLING_ROUTE: '所选路由不存在',
       DANGLING_LOCAL_PROXY: '所选本地代理入口不存在',
       DISABLED_NODE: '所选节点已停用',
       DISABLED_DETOUR: '所选前置路由已停用',
-      DISABLED_DNS_PROFILE: '所选 DNS Profile 已停用',
+      DISABLED_DNS_PROFILE: '所选 DNS 配置已停用',
       DISABLED_ROUTE: '所选路由已停用',
       DISABLED_LOCAL_PROXY: '所选本地代理入口已停用',
       ROUTE_DETOUR_CYCLE: '前置代理链存在循环引用',
@@ -862,12 +902,76 @@
       ])));
   }
 
-  /* ---------- 视图页头 ---------- */
+  /* ---------- 视图页头与页面结构 ---------- */
   function viewHead(title, sub, actions = []) {
+    const visible = asList(actions).filter(Boolean);
     return h('div', { class: 'view-head' }, [
       h('div', {}, h('h1', { class: 'view-title' }, title), sub ? h('p', { class: 'view-sub' }, sub) : null),
-      actions.length ? h('div', { class: 'view-head__actions' }, actions) : null
+      visible.length ? h('div', { class: 'view-head__actions' }, visible) : null
     ]);
+  }
+
+  /* 区块：标题 + 可选说明 + 右侧附加内容；attrs 透传到 <section>。 */
+  function section(title, { sub, aside, class: cls = '', attrs = {} } = {}, ...children) {
+    return h('section', { ...attrs, class: `card ${cls}`.trim() }, [
+      title || aside ? h('div', { class: 'card__head' }, [
+        h('div', {}, title ? h('h2', { class: 'card__title' }, title) : null, sub ? h('p', { class: 'card__sub' }, sub) : null),
+        aside ? h('div', { class: 'card__aside' }, aside) : null
+      ]) : null,
+      ...children
+    ]);
+  }
+
+  function fact(label, value, { mono = false } = {}) {
+    return h('div', { class: 'fact' }, h('dt', {}, label), h('dd', { class: mono ? 'mono' : null }, value));
+  }
+
+  function facts(entries, { single = false } = {}) {
+    return h('dl', { class: `facts ${single ? 'facts--single' : ''}`.trim() },
+      entries.filter(Boolean).map((entry) => (Array.isArray(entry) ? fact(entry[0], entry[1], entry[2]) : entry)));
+  }
+
+  function emptyState(message, actions = [], iconName = 'inbox') {
+    const visible = asList(actions).filter(Boolean);
+    return h('div', { class: 'empty' }, [
+      icon(iconName, 22),
+      h('p', {}, message),
+      visible.length ? h('div', { class: 'empty__actions' }, visible) : null
+    ]);
+  }
+
+  /* 行尾“更多”菜单：items = [{ label, onclick, danger, disabled, title }] | 'separator' */
+  function rowMenu(items, label = '更多操作') {
+    const menu = h('details', { class: 'menu' });
+    const summary = h('summary', { class: 'btn btn--sm btn--ghost btn--icon', 'aria-label': label, title: label }, icon('more', 16));
+    const list = h('div', { class: 'menu__list', role: 'menu' });
+    for (const item of items.filter(Boolean)) {
+      if (item === 'separator') { list.append(h('div', { class: 'menu__sep', role: 'separator' })); continue; }
+      list.append(h('button', {
+        class: `menu__item ${item.danger ? 'menu__item--danger' : ''}`, type: 'button', role: 'menuitem',
+        disabled: !!item.disabled, title: item.title || null,
+        onclick: (event) => { menu.removeAttribute('open'); item.onclick?.(event); }
+      }, item.label));
+    }
+    /* 菜单列表用 fixed 定位，避免被表格的滚动容器裁剪；滚动或缩放时收起。 */
+    menu.addEventListener('toggle', () => {
+      if (!menu.open) return;
+      const anchor = summary.getBoundingClientRect?.();
+      if (!anchor || !list.style) return;
+      list.style.position = 'fixed';
+      list.style.right = `${Math.max(8, (window.innerWidth || 0) - anchor.right)}px`;
+      const below = (window.innerHeight || 0) - anchor.bottom;
+      const height = list.getBoundingClientRect?.().height || 0;
+      if (below < height + 12 && anchor.top > height + 12) {
+        list.style.top = 'auto';
+        list.style.bottom = `${(window.innerHeight || 0) - anchor.top + 4}px`;
+      } else {
+        list.style.bottom = 'auto';
+        list.style.top = `${anchor.bottom + 4}px`;
+      }
+    });
+    menu.append(summary, list);
+    return menu;
   }
 
   function collectionItemMovable(collection, item) {
@@ -1052,7 +1156,7 @@
 
   function orderingToast(collection) {
     const labels = {
-      nodes: '节点', routes: '路由', dns_profiles: 'DNS Profile', local_proxies: '本地代理',
+      nodes: '节点', routes: '路由', dns_profiles: 'DNS 配置', local_proxies: '本地代理',
       rules: '规则', subscriptions: '订阅'
     };
     toast(`${labels[collection] || '项目'}顺序已调整 · 未保存`, 'info');
@@ -1136,10 +1240,22 @@
     return h('button', {
       class: 'collection-drag-handle', type: 'button',
       disabled: !movable,
-      title: movable ? '拖动整行调整工作副本顺序' : (disabledReason || '此项目顺序固定'),
-      'aria-label': movable ? `拖动 ${label} 调整顺序` : `${label} ${disabledReason || '顺序固定'}`,
+      title: movable ? '拖动或按 ↑/↓ 调整顺序' : (disabledReason || '此项目顺序固定'),
+      'aria-label': movable ? `调整 ${label} 的顺序（拖动或按上下方向键）` : `${label} ${disabledReason || '顺序固定'}`,
       'aria-grabbed': 'false',
       onclick: (event) => { event.preventDefault(); event.stopPropagation(); },
+      onkeydown: (event) => {
+        if (!movable || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+        event.preventDefault();
+        const offset = event.key === 'ArrowUp' ? -1 : 1;
+        const values = asList(items);
+        selectCollectionItem(collection, item.id);
+        if (!moveCollectionWithAnimation(collection, () =>
+          S.store.moveCollectionItem(collection, item.id, offset, values.map((candidate) => candidate.id)), rerender)) return;
+        orderingToast(collection);
+        collectionRows(collection).find((row) => row.dataset.collectionId === item.id)
+          ?.querySelector?.('.collection-drag-handle')?.focus?.();
+      },
       onpointerdown: (event) => {
         if (!movable || event.button > 0) return;
         const row = event.currentTarget.closest?.('[data-collection-id]');
@@ -1157,39 +1273,11 @@
       dataset: { collection, collectionId: item.id },
       'aria-selected': String(selected),
       onclick: (event) => {
-        if (event.target?.closest?.('button, input, select, textarea, a') || collectionDragState) return;
+        if (event.target?.closest?.('button, input, select, textarea, a, summary, details') || collectionDragState) return;
         selectCollectionItem(collection, item.id);
         rerender();
       }
     };
-  }
-
-  function collectionOrderToolbar(collection, items, rerender, options = {}) {
-    const values = asList(items);
-    const disabledReason = options.disabledReason || '';
-    const selectedID = selectedCollectionID(collection, values);
-    const selected = values.find((item) => item.id === selectedID);
-    const peers = values.filter((item) => collectionItemMovable(collection, item));
-    const position = peers.findIndex((item) => item.id === selectedID);
-    const move = (offset) => {
-      if (disabledReason || !selected || !moveCollectionWithAnimation(collection, () =>
-        S.store.moveCollectionItem(collection, selected.id, offset, values.map((item) => item.id)), rerender)) return;
-      orderingToast(collection);
-    };
-    return h('div', { class: 'collection-order', role: 'group', 'aria-label': '调整当前工作副本顺序' }, [
-      h('span', { class: 'collection-order__selection', title: disabledReason || null },
-        disabledReason || (selected ? `已选：${selected.name || selected.id}` : '选择一项后调整顺序')),
-      h('button', {
-        class: 'btn btn--sm', disabled: !!disabledReason || !selected || position <= 0,
-        title: disabledReason || (selected && position <= 0 ? '已到当前列表顶部' : '上移一项'),
-        onclick: () => move(-1)
-      }, '上移'),
-      h('button', {
-        class: 'btn btn--sm', disabled: !!disabledReason || !selected || position < 0 || position >= peers.length - 1,
-        title: disabledReason || (selected && position >= peers.length - 1 ? '已到当前列表底部' : '下移一项'),
-        onclick: () => move(1)
-      }, '下移')
-    ]);
   }
 
   /* 下拉补全：把悬空引用保留为可修复选项（与 LuCI 版一致的修复语义） */
@@ -1212,7 +1300,8 @@
 
   function referenceOptions(collection, items) {
     const values = asList(items);
-    const baseLabels = values.map((item) => item.name || item.id);
+    const systemRouteLabel = (item) => (collection === 'routes' ? ({ direct: '直连', block: '拒绝' })[item.kind] : '');
+    const baseLabels = values.map((item) => item.name || systemRouteLabel(item) || item.id);
     const counts = new Map();
     const ordinals = new Map();
     baseLabels.forEach((label) => counts.set(label, (counts.get(label) || 0) + 1));
@@ -1241,5 +1330,5 @@
     });
   }
 
-  Object.assign(S, { ui: { beginRender, beginRoute, isCurrentRoute, renderShell, renderStatusStrip, toast, dialog, conflictDialog, drawer, field, input, textarea, select, multiChoice, toggle, toggleRow, chips, matchEditor, issueList, viewHead, collectionItemMovable, selectedCollectionID, selectCollectionItem, collectionDragHandle, collectionRowAttributes, collectionOrderToolbar, selectWithMissing, creationDraft, referenceOptions, classifyLocalProxyListen, applyRecord, applyTime, generationLabel, onValidate, onSave, onDiscard, onToggleEnabled, onRefreshState, jumpToObject, takeObjectFocus, focusDrawerOption, collectionReferences, guardCollectionDeletion } });
+  Object.assign(S, { ui: { beginRender, beginRoute, isCurrentRoute, renderShell, renderStatusStrip, runState, toast, dialog, conflictDialog, drawer, field, input, textarea, select, multiChoice, toggle, toggleRow, chips, matchEditor, issueList, viewHead, section, fact, facts, emptyState, rowMenu, collectionItemMovable, selectedCollectionID, selectCollectionItem, collectionDragHandle, collectionRowAttributes, selectWithMissing, creationDraft, referenceOptions, classifyLocalProxyListen, applyRecord, applyTime, generationLabel, onValidate, onSave, onDiscard, onToggleEnabled, onRefreshState, jumpToObject, takeObjectFocus, focusDrawerOption, collectionReferences, guardCollectionDeletion } });
 })();
