@@ -227,11 +227,48 @@ func TestNodeFieldsCoverCanonicalUserOptions(t *testing.T) {
 	}
 }
 
+func TestNodeDomainStrategyFieldFollowsBootstrapChoices(t *testing.T) {
+	contract := ContractValue()
+	index := -1
+	for position, field := range contract.NodeFields {
+		if field.Key == "domain_strategy" {
+			index = position
+		}
+	}
+	if index < 1 || contract.NodeFields[index-1].Key != "server_port" {
+		t.Fatalf("domain_strategy must follow server_port in the shared field order: %#v", contract.NodeFields)
+	}
+	field := contract.NodeFields[index]
+	if field.Label != "Domain resolution strategy" || field.ZhCN != "域名解析策略" || field.Control != "select" ||
+		field.Section != "general" || field.Default != nil || len(field.RequiredTypes) != 0 || field.When != nil {
+		t.Fatalf("unexpected domain_strategy field: %#v", field)
+	}
+	if !reflect.DeepEqual(field.Types, allExcept("tor")) {
+		t.Fatalf("domain_strategy must apply to every node type with a server: %#v", field.Types)
+	}
+	want := append([]Choice{{Value: "", Label: "Follow default", ZhCN: "跟随默认"}}, contract.BootstrapStrategies...)
+	if !reflect.DeepEqual(field.Options, want) {
+		t.Fatalf("domain_strategy options must reuse the bootstrap strategy choices: %#v", field.Options)
+	}
+	wording := map[string]string{"prefer_ipv4": "优先 IPv4", "prefer_ipv6": "优先 IPv6", "ipv4_only": "仅 IPv4", "ipv6_only": "仅 IPv6"}
+	for _, choice := range contract.BootstrapStrategies {
+		if choice.ZhCN != wording[choice.Value] {
+			t.Fatalf("strategy %q wording drifted: %#v", choice.Value, choice)
+		}
+	}
+	for _, choice := range field.Options {
+		node := model.Node{ID: "node", Enabled: true, Type: "socks", Server: "proxy.example", ServerPort: 1080, DomainStrategy: choice.Value}
+		if validation := model.ValidateNode(node); !validation.OK {
+			t.Fatalf("domain_strategy choice %q is rejected by the backend: %#v", choice.Value, validation.Errors)
+		}
+	}
+}
+
 func TestRepresentativeNodeFromEveryGeneratedFormValidates(t *testing.T) {
 	uuid1 := "00000000-0000-4000-8000-000000000001"
 	uuid2 := "00000000-0000-4000-8000-000000000002"
 	cases := []model.Node{
-		{Type: "socks", Server: "proxy.example", ServerPort: 1080},
+		{Type: "socks", Server: "proxy.example", ServerPort: 1080, DomainStrategy: "prefer_ipv4"},
 		{Type: "http", Server: "proxy.example", ServerPort: 8080},
 		{Type: "shadowsocks", Server: "proxy.example", ServerPort: 8388, NodeCredentials: model.NodeCredentials{Password: "secret"}, NodeProtocol: model.NodeProtocol{Method: "aes-256-gcm"}},
 		{Type: "vmess", Server: "proxy.example", ServerPort: 443, NodeCredentials: model.NodeCredentials{UUID: uuid1}, NodeProtocol: model.NodeProtocol{Security: "auto"}},

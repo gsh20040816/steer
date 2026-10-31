@@ -340,6 +340,55 @@ return baseclass.extend({
       "default": 443
     },
     {
+      "key": "domain_strategy",
+      "label": "Domain resolution strategy",
+      "zh_cn": "域名解析策略",
+      "control": "select",
+      "section": "general",
+      "types": [
+        "socks",
+        "http",
+        "shadowsocks",
+        "vmess",
+        "vless",
+        "trojan",
+        "hysteria",
+        "hysteria2",
+        "shadowtls",
+        "tuic",
+        "anytls",
+        "naive",
+        "ssh"
+      ],
+      "options": [
+        {
+          "value": "",
+          "label": "Follow default",
+          "zh_cn": "跟随默认"
+        },
+        {
+          "value": "prefer_ipv4",
+          "label": "Prefer IPv4",
+          "zh_cn": "优先 IPv4"
+        },
+        {
+          "value": "prefer_ipv6",
+          "label": "Prefer IPv6",
+          "zh_cn": "优先 IPv6"
+        },
+        {
+          "value": "ipv4_only",
+          "label": "IPv4 only",
+          "zh_cn": "仅 IPv4"
+        },
+        {
+          "value": "ipv6_only",
+          "label": "IPv6 only",
+          "zh_cn": "仅 IPv6"
+        }
+      ]
+    },
+    {
       "key": "uuid",
       "label": "UUID",
       "control": "text",
@@ -1106,19 +1155,23 @@ return baseclass.extend({
   "bootstrap_strategies": [
     {
       "value": "prefer_ipv4",
-      "label": "Prefer IPv4"
+      "label": "Prefer IPv4",
+      "zh_cn": "优先 IPv4"
     },
     {
       "value": "prefer_ipv6",
-      "label": "Prefer IPv6"
+      "label": "Prefer IPv6",
+      "zh_cn": "优先 IPv6"
     },
     {
       "value": "ipv4_only",
-      "label": "IPv4 only"
+      "label": "IPv4 only",
+      "zh_cn": "仅 IPv4"
     },
     {
       "value": "ipv6_only",
-      "label": "IPv6 only"
+      "label": "IPv6 only",
+      "zh_cn": "仅 IPv6"
     }
   ],
   "route_kinds": [

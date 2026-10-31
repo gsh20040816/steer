@@ -14,9 +14,12 @@ import (
 
 const SchemaVersion = 1
 
+// Choice is one enum value. ZhCN, when present, is the shared Simplified
+// Chinese wording of Label, with the same rule as UIText.
 type Choice struct {
 	Value string `json:"value"`
 	Label string `json:"label"`
+	ZhCN  string `json:"zh_cn,omitempty"`
 }
 
 // DNSProtocol describes the protocol-dependent DNS Profile fields shared by
@@ -48,9 +51,12 @@ type InputFormat struct {
 	Pattern           string   `json:"pattern,omitempty"`
 }
 
+// Field is one node field. ZhCN, when present, is the shared Simplified
+// Chinese wording of Label, with the same rule as UIText.
 type Field struct {
 	Key           string      `json:"key"`
 	Label         string      `json:"label"`
+	ZhCN          string      `json:"zh_cn,omitempty"`
 	Control       string      `json:"control"`
 	Section       string      `json:"section"`
 	Types         []string    `json:"types,omitempty"`
@@ -218,6 +224,15 @@ func choices(values ...string) []Choice {
 	return result
 }
 
+// localizedChoices takes value, label, zh_cn triples.
+func localizedChoices(values ...string) []Choice {
+	result := make([]Choice, 0, len(values)/3)
+	for index := 0; index+2 < len(values); index += 3 {
+		result = append(result, Choice{Value: values[index], Label: values[index+1], ZhCN: values[index+2]})
+	}
+	return result
+}
+
 func allExcept(excluded ...string) []string {
 	skip := map[string]bool{}
 	for _, value := range excluded {
@@ -244,6 +259,10 @@ func ContractValue() Contract {
 	allRemote := allExcept("tor")
 	tlsTypes := []string{"http", "vmess", "hysteria", "vless", "hysteria2", "trojan", "shadowtls", "tuic", "anytls", "naive"}
 	transportTypes := []string{"vmess", "vless", "trojan"}
+	strategies := localizedChoices(
+		"prefer_ipv4", "Prefer IPv4", "优先 IPv4", "prefer_ipv6", "Prefer IPv6", "优先 IPv6",
+		"ipv4_only", "IPv4 only", "仅 IPv4", "ipv6_only", "IPv6 only", "仅 IPv6",
+	)
 	contract := Contract{
 		SchemaVersion:                     SchemaVersion,
 		CanonicalSchema:                   model.SchemaVersion,
@@ -303,7 +322,7 @@ func ContractValue() Contract {
 		DirectBypassModes:   choices("off", "Normal direct", "static", "Prefer kernel direct", "dns", "Allow DNS-assisted bypass"),
 		LogLevels:           choices("error", "Error", "warn", "Warning", "info", "Info", "debug", "Debug"),
 		BootstrapProtocols:  choices("udp", "UDP", "tcp", "TCP"),
-		BootstrapStrategies: choices("prefer_ipv4", "Prefer IPv4", "prefer_ipv6", "Prefer IPv6", "ipv4_only", "IPv4 only", "ipv6_only", "IPv6 only"),
+		BootstrapStrategies: strategies,
 		RouteKinds:          choices("direct", "Direct", "block", "Reject", "single", "Single node", "wireguard", "WireGuard"),
 		DNSProtocols: []DNSProtocol{
 			{Value: "udp", Label: "UDP", Fields: []string{}, RequiredFields: []string{}, DefaultPort: 53},
@@ -447,6 +466,10 @@ func ContractValue() Contract {
 		{Key: "name", Label: "Name", Control: "text", Section: "general", Types: nodeTypeValues()},
 		{Key: "server", Label: "Server", Control: "text", Section: "general", Types: allRemote, RequiredTypes: allRemote, Placeholder: "example.com or IP"},
 		{Key: "server_port", Label: "Port", Control: "integer", Section: "general", Types: allRemote, RequiredTypes: allRemote, Default: 443},
+		{
+			Key: "domain_strategy", Label: "Domain resolution strategy", ZhCN: "域名解析策略", Control: "select", Section: "general", Types: allRemote,
+			Options: append(localizedChoices("", "Follow default", "跟随默认"), strategies...),
+		},
 		stringField("uuid", "UUID", "protocol", "vmess", "vless", "tuic"),
 		stringField("username", "Username", "protocol", "socks", "http", "naive", "ssh"),
 		{Key: "password", Label: "Password", Control: "password", Section: "protocol", Types: []string{"socks", "http", "shadowsocks", "trojan", "hysteria", "hysteria2", "shadowtls", "tuic", "anytls", "naive", "ssh"}, RequiredTypes: []string{"shadowsocks", "trojan", "hysteria", "hysteria2", "tuic", "anytls", "naive"}, Sensitive: true},

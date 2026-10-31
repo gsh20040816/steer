@@ -1639,3 +1639,9 @@ msgstr "订阅节点只读，复制到我的节点后可以编辑"
 
 msgid "Unavailable"
 msgstr "已失效"
+
+msgid "Domain resolution strategy"
+msgstr "域名解析策略"
+
+msgid "Follow default"
+msgstr "跟随默认"
