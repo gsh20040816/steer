@@ -1026,8 +1026,6 @@ struct HelperBackendClient: BackendClient {
     }
 
     func save(document: String, expectedRevision: String) async throws -> SaveOutcome {
-        let validation = try await validate(document: document)
-        guard validation.ok else { throw BackendClientError.validationFailed(validation) }
         let helper = URL(fileURLWithPath: Self.installedHelperPath)
         try requireExecutable(helper)
         return try await withTemporaryDocument(document) { url in
@@ -1048,16 +1046,14 @@ struct HelperBackendClient: BackendClient {
             guard response.ok, response.saved == true else {
                 throw BackendClientError.processFailed(response.error ?? "Steer control service 拒绝保存配置。")
             }
-            guard let revision = response.revision, !revision.isEmpty else {
+            guard let revision = response.revision, !revision.isEmpty, let validation = response.validation else {
                 throw BackendClientError.invalidResponse
             }
-            return SaveOutcome(revision: revision, validation: response.validation ?? validation)
+            return SaveOutcome(revision: revision, validation: validation)
         }
     }
 
     func apply(document: String, expectedRevision: String) async throws -> ApplyOutcome {
-        let validation = try await validate(document: document)
-        guard validation.ok else { throw BackendClientError.validationFailed(validation) }
         let helper = URL(fileURLWithPath: Self.installedHelperPath)
         try requireExecutable(helper)
         return try await withTemporaryDocument(document) { url in
@@ -1090,7 +1086,7 @@ struct HelperBackendClient: BackendClient {
             return ApplyOutcome(
                 status: status, applied: response.applied == true,
                 revision: revision, error: response.error ?? "",
-                validation: response.validation ?? validation,
+                validation: response.validation,
                 applyResult: response.applyResult
             )
         }
@@ -3104,10 +3100,6 @@ final class AppModel: ObservableObject {
     func removeDraftItem(from key: String, at index: Int) {
         if let reason = deletionBlockReason(for: key, at: index) {
             message = reason
-            return
-        }
-        if key == "rules", let object = draftItemObject(for: key, at: index), RuleDraftPolicy.isDefault(object) {
-            message = "Default 规则必须保留"
             return
         }
         // Deleting a subscription only removes it from the draft. Its stored

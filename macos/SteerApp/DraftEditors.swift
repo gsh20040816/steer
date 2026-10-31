@@ -37,16 +37,6 @@ func classifyLocalProxyListen(_ value: String) -> LocalProxyListenClassification
     return bytes.dropLast().allSatisfy { $0 == 0 } && bytes.last == 1 ? .loopback : .nonLoopback
 }
 
-func validateLocalProxyAuthentication(listen: String, username: String, password: String) -> String? {
-    let classification = classifyLocalProxyListen(listen)
-    if classification == .invalid { return "监听地址必须是 IP 地址，不能填写域名" }
-    if username.isEmpty != password.isEmpty { return "用户名和密码必须同时填写" }
-    if classification == .nonLoopback && username.isEmpty {
-        return "该监听地址可能允许其他设备连接，必须设置用户名和密码"
-    }
-    return nil
-}
-
 struct GeoCatalogPresentation: Equatable {
     let category: String
     let attribute: String?
@@ -178,10 +168,6 @@ struct DraftItemEditor: View {
 
     private func save() {
         let value = normalizedObject(object, key: target.key)
-        if let error = validate(value) {
-            errorMessage = error
-            return
-        }
         let saved: Bool
         if let index = target.index {
             saved = model.replaceDraftItem(in: target.key, at: index, object: value)
@@ -193,82 +179,6 @@ struct DraftItemEditor: View {
         } else {
             errorMessage = "无法更新工作副本"
         }
-    }
-
-    private func validate(_ value: [String: JSONValue]) -> String? {
-        let identifier = draftString(value, "id").trimmingCharacters(in: .whitespacesAndNewlines)
-        if identifier.isEmpty || identifier.contains(where: { $0.isWhitespace }) {
-            return "标识无效；请取消后重新创建"
-        }
-        let existingItems = target.key == "nodes" ? model.nodeItems : model.draftItems(for: target.key)
-        if existingItems.contains(where: {
-            $0.identifier == identifier && ($0.subscriptionOwned || $0.index != target.index)
-        }) {
-            return "标识冲突；请取消后重新创建"
-        }
-
-        switch target.key {
-        case "nodes":
-            let type = draftString(value, "type")
-            if type.isEmpty { return "请选择节点协议" }
-            for field in SteerUISpec.nodeFields(for: type) where field.isRequired(for: type) {
-                let missing: Bool
-                switch field.control {
-                case "integer", "select-integer": missing = draftInt(value, field.key) == 0
-                case "string-list": missing = draftStringList(value, field.key).isEmpty
-                default: missing = draftString(value, field.key).isEmpty
-                }
-                if missing { return "\(field.label)不能为空" }
-            }
-            if type != "tor" && !validPort(draftInt(value, "server_port")) { return "服务器端口必须是 1…65535" }
-            if type == "ssh", draftString(value, "password").isEmpty && draftString(value, "private_key").isEmpty {
-                return "SSH 需要密码或私钥"
-            }
-            if type == "shadowtls", draftInt(value, "version") >= 2, draftString(value, "password").isEmpty {
-                return "ShadowTLS v2/v3 密码不能为空"
-            }
-        case "routes":
-            let kind = draftString(value, "kind")
-            if !["direct", "block", "single", "wireguard"].contains(kind) { return "请选择路由类型" }
-            if kind == "wireguard", !model.draftItems(for:"wireguard_tunnels").contains(where: { $0.enabled && $0.identifier == draftString(value,"tunnel") }) { return "请选择已启用的 WireGuard 隧道" }
-            if kind == "single" {
-                let nodeID = draftString(value, "node")
-                if let problem = model.nodeReferenceProblem(nodeID) { return "节点选择无效：\(problem)" }
-                let detourID = draftString(value, "detour")
-                if let problem = model.routeDetourProblem(routeID: identifier, detourID: detourID) {
-                    return problem
-                }
-            }
-        case "dns_profiles":
-            let proto = draftString(value, "protocol")
-            if draftString(value, "server").isEmpty { return "DNS 服务器不能为空" }
-            if !validPort(draftInt(value, "server_port")) { return "DNS 端口必须是 1…65535" }
-            if let protocolSpec = SteerUISpec.dnsProtocol(proto) {
-                for field in protocolSpec.requiredFields where draftString(value, field).isEmpty {
-                    return "加密 DNS 需要 TLS 服务器名"
-                }
-            }
-        case "local_proxies":
-            if draftString(value, "listen").isEmpty { return "监听地址不能为空" }
-            if !validPort(draftInt(value, "listen_port")) { return "监听端口必须是 1…65535" }
-            if let error = validateLocalProxyAuthentication(
-                listen: draftString(value, "listen"),
-                username: draftString(value, "username"),
-                password: draftString(value, "password")
-            ) { return error }
-        case "rules":
-            if draftString(value, "route").isEmpty { return "请选择路由" }
-            if draftString(value, "dns_profile").isEmpty { return "请选择 DNS Profile" }
-            if !draftBool(value, "default") && !ruleHasMatch(value) { return "非 Default 规则至少需要一个匹配条件" }
-        case "subscriptions":
-            let rawURL = draftString(value, "url")
-            guard let url = URLComponents(string: rawURL),
-                  ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
-                  url.host?.isEmpty == false else { return "订阅 URL 必须是完整的 HTTP 或 HTTPS 地址" }
-        default:
-            break
-        }
-        return nil
     }
 }
 
@@ -1228,14 +1138,6 @@ private func splitIntegerList(_ raw: String) -> [String] {
     raw.split(whereSeparator: { $0 == "," || $0 == "\n" })
         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         .filter { !$0.isEmpty }
-}
-
-private func validPort(_ value: Int) -> Bool {
-    (1...65_535).contains(value)
-}
-
-private func ruleHasMatch(_ object: [String: JSONValue]) -> Bool {
-    object["allowed_ips"]?.boolValue == true || RuleDraftPolicy.matchKeys.contains { object[$0]?.arrayValue?.isEmpty == false }
 }
 
 private func normalizedObject(_ source: [String: JSONValue], key: String) -> [String: JSONValue] {
