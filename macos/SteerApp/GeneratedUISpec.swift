@@ -712,6 +712,7 @@ enum GeneratedUISpec {
     {
       "key": "hop_interval",
       "label": "Port hopping interval",
+      "zh_cn": "端口跳跃间隔",
       "control": "text",
       "section": "protocol",
       "types": [

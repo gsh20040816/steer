@@ -995,7 +995,8 @@
       DISABLED_LOCAL_PROXY: '所选本地代理入口已停用',
       ROUTE_DETOUR_CYCLE: '前置代理链存在循环引用',
       LOCAL_PROXY_AUTH_REQUIRED: '该监听地址允许其他设备连接，必须设置用户名和密码',
-      INVALID_DURATION: '更新间隔必须是大于零的时长',
+      INVALID_DURATION: `${S.uiSpec.node_fields.find((field) => field.key === 'hop_interval').zh_cn}必须是大于零的时长`,
+      INVALID_UPDATE_INTERVAL: '更新间隔必须是大于零的时长',
       DNS_PROJECTION_EMPTY: '该规则仅含连接阶段条件，不影响 DNS 上游选择'
     }[issue.code] || S.uiSpec.subscription_nodes?.validation_issues?.[issue.code]?.zh_cn || issue.message;
   }

@@ -165,6 +165,17 @@ final class UISafetyContractTests: XCTestCase {
         for secret in document.forbiddenMessageValues { XCTAssertFalse(rendered.contains(secret)) }
     }
 
+    func testDurationIssuesNameTheirOwnFields() throws {
+        let document = try decode(ValidationDocument.self, "ui/validation-issue-fixtures.json")
+        let message = { (code: String) in
+            try DiagnosticsView.validationIssueMessage(XCTUnwrap(document.validation.errors.first { $0.code == code }))
+        }
+        let hopInterval = try XCTUnwrap(SteerUISpec.contract.nodeFields.first { $0.key == "hop_interval" }?.zhCN)
+        XCTAssertEqual(try message("INVALID_DURATION"), "\(hopInterval)必须是大于零的时长",
+                       "INVALID_DURATION is the Hysteria2 hop interval and uses the shared field label")
+        XCTAssertEqual(try message("INVALID_UPDATE_INTERVAL"), "更新间隔必须是大于零的时长")
+    }
+
     func testValidationWarningGroupsDecodeBoundedOverviewContract() throws {
         let payload = Data(#"""
         {

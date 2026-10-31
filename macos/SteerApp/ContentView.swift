@@ -1757,7 +1757,7 @@ struct DiagnosticsView: View {
             model.focusValidationIssue(issue)
         } label: {
             HStack {
-                Label(validationIssueMessage(issue), systemImage: isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+                Label(Self.validationIssueMessage(issue), systemImage: isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
                     .foregroundStyle(isError ? .red : .orange)
                 Spacer()
                 if issue.destinationPage != nil {
@@ -1770,7 +1770,7 @@ struct DiagnosticsView: View {
         .disabled(issue.destinationPage == nil)
     }
 
-    private func validationIssueMessage(_ issue: ValidationIssue) -> String {
+    static func validationIssueMessage(_ issue: ValidationIssue) -> String {
         switch issue.code {
         case "REQUIRED": return "必填字段尚未填写"
         case "DANGLING_NODE": return "所选节点不存在"
@@ -1785,7 +1785,8 @@ struct DiagnosticsView: View {
         case "DISABLED_LOCAL_PROXY": return "所选本地代理入口已停用"
         case "ROUTE_DETOUR_CYCLE": return "前置代理链存在循环引用"
         case "LOCAL_PROXY_AUTH_REQUIRED": return "该监听地址允许其他设备连接，必须设置用户名和密码"
-        case "INVALID_DURATION": return "更新间隔必须是大于零的时长"
+        case "INVALID_DURATION": return "\(SteerUISpec.nodeFieldLabel("hop_interval"))必须是大于零的时长"
+        case "INVALID_UPDATE_INTERVAL": return "更新间隔必须是大于零的时长"
         case "DNS_PROJECTION_EMPTY": return "该规则仅含连接阶段条件，不影响 DNS 上游选择"
         default: return SteerUISpec.subscriptionNodeValidationIssueText(code: issue.code) ?? issue.message
         }

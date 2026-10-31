@@ -498,7 +498,7 @@ private struct SharedNodeDraftForm: View {
             "username": "用户名", "password": "密码", "method": "加密方法", "plugin": "插件", "plugin_options": "插件参数",
             "security": "Security", "alter_id": "Alter ID", "network": "Network", "packet_encoding": "Packet encoding",
             "flow": "Flow", "transport": "传输类型", "transport_path": "路径", "transport_host": "Host",
-            "service_name": "Service name", "server_ports": "端口范围", "hop_interval": "跳跃间隔", "obfs_type": "混淆",
+            "service_name": "Service name", "server_ports": "端口范围", "obfs_type": "混淆",
             "obfs_password": "混淆密码", "up_mbps": "上传 Mbps", "down_mbps": "下载 Mbps", "version": "版本",
             "congestion_control": "拥塞控制", "udp_relay_mode": "UDP relay", "udp_over_stream": "UDP over stream",
             "zero_rtt_handshake": "Zero-RTT handshake", "heartbeat": "Heartbeat", "quic_congestion_control": "QUIC congestion control",

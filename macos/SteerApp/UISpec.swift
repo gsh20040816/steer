@@ -447,6 +447,11 @@ enum SteerUISpec {
         return true
     }
 
+    /// The shared Chinese label of a node field that carries one.
+    static func nodeFieldLabel(_ key: String) -> String {
+        contract.nodeFields.first { $0.key == key }!.zhCN!
+    }
+
     static func nodeFields(for nodeType: String, section: String? = nil) -> [UIFieldSpec] {
         contract.nodeFields.filter { field in
             field.types.contains(nodeType) && (section == nil || field.section == section)

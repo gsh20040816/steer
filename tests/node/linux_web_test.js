@@ -1602,9 +1602,14 @@ async function testSharedUISafetyContracts() {
     assert.ok(!issueText.includes(issue.code) && !issueText.includes(issue.object_id),
       'validation UI must hide internal codes and object IDs');
   }
-  for (const expected of ['必填字段尚未填写', '所选节点不存在', '所选路由不存在', '更新间隔必须是大于零的时长']) {
+  for (const expected of ['必填字段尚未填写', '所选节点不存在', '所选路由不存在']) {
     assert.ok(issueText.includes(expected));
   }
+  const issueMessage = (code) => text(environment.S.ui.issueList(validation.errors.filter((issue) => issue.code === code)));
+  const hopInterval = uiSpec.node_fields.find((field) => field.key === 'hop_interval').zh_cn;
+  assert.strictEqual(issueMessage('INVALID_DURATION'), `${hopInterval}必须是大于零的时长`,
+    'INVALID_DURATION is the Hysteria2 hop interval and uses the shared field label');
+  assert.strictEqual(issueMessage('INVALID_UPDATE_INTERVAL'), '更新间隔必须是大于零的时长');
   for (const secret of validationIssueFixtures.forbidden_message_values) assert.ok(!issueText.includes(secret));
 
   const failedWrite = createEnvironment(async () => {

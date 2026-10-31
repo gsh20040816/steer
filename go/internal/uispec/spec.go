@@ -486,7 +486,7 @@ func ContractValue() Contract {
 		{Key: "transport_host", Label: "Transport host", Control: "text", Section: "transport", Types: transportTypes, When: &Condition{Field: "transport", Values: []string{"ws", "http"}}, Placeholder: "example.com"},
 		{Key: "service_name", Label: "gRPC service name", Control: "text", Section: "transport", Types: transportTypes, When: &Condition{Field: "transport", Values: []string{"grpc"}}},
 		{Key: "server_ports", Label: "Port hopping ranges", Control: "string-list", Section: "protocol", Types: []string{"hysteria", "hysteria2"}, Placeholder: "20000:21000"},
-		{Key: "hop_interval", Label: "Port hopping interval", Control: "text", Section: "protocol", Types: []string{"hysteria", "hysteria2"}, Placeholder: "30s"},
+		{Key: "hop_interval", Label: "Port hopping interval", ZhCN: "端口跳跃间隔", Control: "text", Section: "protocol", Types: []string{"hysteria", "hysteria2"}, Placeholder: "30s"},
 		{Key: "obfs_type", Label: "Obfuscation", Control: "select", Section: "protocol", Types: []string{"hysteria2"}, Options: choices("", "None", "salamander", "Salamander")},
 		{Key: "obfs_password", Label: "Obfuscation password", Control: "password", Section: "protocol", Types: []string{"hysteria", "hysteria2"}, Sensitive: true},
 		{Key: "up_mbps", Label: "Upload Mbps", Control: "integer", Section: "protocol", Types: []string{"hysteria", "hysteria2"}, RequiredTypes: []string{"hysteria"}},

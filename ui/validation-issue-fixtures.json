@@ -8,7 +8,8 @@
       { "code": "DANGLING_ROUTE", "object_type": "rule", "object_id": "rule_a", "option": "route", "message": "referenced Route does not exist" },
       { "code": "REQUIRED", "object_type": "dns_profile", "object_id": "dns_a", "option": "tls_server_name", "message": "encrypted DNS requires a TLS server name" },
       { "code": "LOCAL_PROXY_AUTH_REQUIRED", "object_type": "local_proxy", "object_id": "proxy_a", "option": "username", "message": "non-loopback local proxy requires authentication" },
-      { "code": "INVALID_DURATION", "object_type": "subscription", "object_id": "feed_a", "option": "update_interval", "message": "subscription interval must be a positive duration" }
+      { "code": "INVALID_DURATION", "object_type": "node", "object_id": "node_hy2", "option": "hop_interval", "message": "invalid Hysteria2 hop interval" },
+      { "code": "INVALID_UPDATE_INTERVAL", "object_type": "subscription", "object_id": "feed_a", "option": "update_interval", "message": "update interval must be a positive duration such as 6h" }
     ],
     "warnings": [
       { "code": "DNS_PROJECTION_EMPTY", "object_type": "rule", "object_id": "rule_connection", "option": "dns_profile", "message": "rule has only connection-stage conditions and produces no DNS projection" }

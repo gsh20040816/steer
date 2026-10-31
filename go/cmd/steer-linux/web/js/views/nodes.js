@@ -104,7 +104,7 @@
     uuid: 'UUID', username: '用户名', password: '密码', method: '加密方法', plugin: '插件', plugin_options: '插件参数',
     security: '加密', alter_id: 'Alter ID', network: 'Network', packet_encoding: 'UDP 包编码', flow: 'Flow',
     transport: '传输', transport_path: '传输路径', transport_host: '传输主机', service_name: 'gRPC 服务名',
-    server_ports: '端口跳跃区间', hop_interval: '跳跃间隔', obfs_type: '混淆', obfs_password: '混淆密码',
+    server_ports: '端口跳跃区间', obfs_type: '混淆', obfs_password: '混淆密码',
     up_mbps: '上行 Mbps', down_mbps: '下行 Mbps', version: '版本', congestion_control: '拥塞控制',
     udp_relay_mode: 'UDP 中继', udp_over_stream: 'UDP over stream', zero_rtt_handshake: '0-RTT 握手', heartbeat: '心跳',
     quic: 'QUIC', quic_congestion_control: 'QUIC 拥塞控制', insecure_concurrency: '不安全并发', private_key: '私钥',
