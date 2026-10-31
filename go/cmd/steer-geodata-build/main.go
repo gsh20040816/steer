@@ -97,9 +97,6 @@ func runGenerate(args []string) error {
 	if err != nil {
 		return err
 	}
-	if singBoxVersion != geodata.SingBoxCompiler {
-		return fmt.Errorf("sing-box compiler is %s, want %s", singBoxVersion, geodata.SingBoxCompiler)
-	}
 	tasks, err := enumerateTasks(*geoSitePath, *geoIPPath)
 	if err != nil {
 		return err

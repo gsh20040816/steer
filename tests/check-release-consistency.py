@@ -35,16 +35,10 @@ for workflow in sorted((ROOT / ".github/workflows").glob("*.yml")):
         if reference and not reference.group(1).startswith("./") and not re.fullmatch(r"[0-9a-f]{40}", reference.group(2)):
             errors.append(f"{workflow.name}: action not pinned to a commit: {line.strip()}")
 
-# The Geo manifest records which compiler built it; the Geo workflow must build
-# with the same one. The runtime sing-box is pinned separately and may differ.
 same(
-    "sing-box Geo compiler version",
-    ("go/internal/geodata/geodata.go", r'SingBoxCompiler\s*=\s*"([^"]+)"'),
-    (".github/workflows/geodata.yml", r"^\s*SING_BOX_VERSION: (\S+)"),
-)
-same(
-    "sing-box runtime version",
+    "sing-box version",
     (".github/workflows/ci.yml", r"^\s*SING_BOX_VERSION: (\S+)"),
+    (".github/workflows/geodata.yml", r"^\s*SING_BOX_VERSION: (\S+)"),
     (".github/workflows/release.yml", r"^\s*SING_BOX_OPENWRT_VERSION: (\S+)"),
     (".github/workflows/release.yml", r"^\s*SING_BOX_MACOS_VERSION: (\S+)"),
 )

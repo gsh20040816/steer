@@ -14,7 +14,7 @@
 2. Geo 流程每 6 小时检查一次 Loyalsoldier 的最新版本，用固定版本的 geoview 和 sing-box 把完整的 GeoSite/GeoIP 转成 SRS。Pages 上只保留最新的 `geodata/latest`。
 3. 每份 Geo 数据都带一个清单（manifest），记录上游版本、DAT 文件的 SHA-256、转换工具的版本，以及每个分类对应 SRS 文件的路径、大小和 SHA-256。
 4. 应用配置时只检查实际用到的 Geo 文件是否存在、大小是否一致，不计算 SHA-256；manifest 里的 SHA-256 只做记录。sing-box 通过 `initial_path` 直接用本地文件启动，之后每 24 小时用直连去检查同名的远程 SRS 是否更新。
-5. 安装包只依赖 `sing-box` 这个包名，不限版本。应用配置时，Steer 让实际安装的 sing-box 检查生成的配置并读取它的编译选项，不兼容就报错，让用户换合适的版本。CI、OpenWrt 软件源里的 sing-box 和 macOS DMG 目前固定用官方 `1.14.4`；Geo 转换仍固定用 `1.14.1`，因为 manifest 记录了转换工具的版本，换版本就要重新生成 Geo 数据。这些都不是 Linux/Arch 上的最低版本要求，能不能用以实际检查为准。
+5. 安装包只依赖 `sing-box` 这个包名，不限版本。应用配置时，Steer 让实际安装的 sing-box 检查生成的配置并读取它的编译选项，不兼容就报错，让用户换合适的版本。CI、Geo 转换、OpenWrt 软件源里的 sing-box 和 macOS DMG 目前都用官方 `1.14.4`（`tests/check-release-consistency.py` 保证几处版本一致）。Geo 数据的 manifest 只记录生成它的 geoview 和 sing-box 版本，读取时不要求和当前代码一致，所以升级转换工具不需要和 Pages 上的数据同步切换。这些都不是 Linux/Arch 上的最低版本要求，能不能用以实际检查为准。
 6. master 分支不构建、也不保存正式发布包。tag 必须指向 `origin/master` 上已有的提交；稳定版 tag 还要求同一个提交在 master 上的 CI 已经通过。GitHub Actions 出故障时，预发布版可以用完整的本地检查代替 master CI；tag 推送事件丢了的话，可以手动触发同一个 tag 的发布。两种方式都必须是 tag（`GITHUB_REF_TYPE=tag`），走完全相同的构建、检查、证明和发布流程。预发布不会覆盖稳定版的 OpenWrt 软件源。
 
 当前稳定版是 `v0.12.1`。OpenWrt APK、Arch 的 `pkgver`、Git tag、Linux 和 macOS 产物都用 `0.12.1`。

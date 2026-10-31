@@ -220,7 +220,7 @@ func writeManifest(t *testing.T) string {
 		Upstream: geodata.UpstreamIdentity{
 			Repository: geodata.UpstreamRepository, Version: "test", GeoSiteSHA256: digest, GeoIPSHA256: digest,
 		},
-		Tools: geodata.ToolIdentity{GeoViewRef: geodata.GeoViewCommit, SingBoxVersion: geodata.SingBoxCompiler},
+		Tools: geodata.ToolIdentity{GeoViewRef: geodata.GeoViewCommit, SingBoxVersion: "1.14.4"},
 		Rules: []geodata.Rule{
 			{Kind: "geoip", Category: "cn", Tag: "steer-geoip-cn", Path: "rules/steer-geoip-cn.srs", SHA256: digest, Size: 1},
 			{Kind: "geosite", Category: "cn@ads", Tag: "steer-geosite-cn@ads", Path: "rules/steer-geosite-cn@ads.srs", SHA256: digest, Size: 1},

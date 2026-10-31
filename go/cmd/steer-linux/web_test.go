@@ -612,7 +612,7 @@ func writeWebSeed(t *testing.T, root string) string {
 			Repository: geodata.UpstreamRepository, Version: "test",
 			GeoSiteSHA256: hex.EncodeToString(inputSum[:]), GeoIPSHA256: hex.EncodeToString(inputSum[:]),
 		},
-		Tools: geodata.ToolIdentity{GeoViewRef: geodata.GeoViewCommit, SingBoxVersion: geodata.SingBoxCompiler},
+		Tools: geodata.ToolIdentity{GeoViewRef: geodata.GeoViewCommit, SingBoxVersion: "1.14.4"},
 		Rules: []geodata.Rule{{
 			Kind: "geosite", Category: "cn@ads", Tag: tag, Path: "rules/" + tag + ".srs",
 			SHA256: hex.EncodeToString(ruleSum[:]), Size: int64(len(content)),

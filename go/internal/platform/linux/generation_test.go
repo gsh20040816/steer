@@ -93,7 +93,7 @@ func writeTestSeed(t *testing.T, root, kind, category string) string {
 			Repository: geodata.UpstreamRepository, Version: "test",
 			GeoSiteSHA256: hex.EncodeToString(inputSum[:]), GeoIPSHA256: hex.EncodeToString(inputSum[:]),
 		},
-		Tools: geodata.ToolIdentity{GeoViewRef: geodata.GeoViewCommit, SingBoxVersion: geodata.SingBoxCompiler},
+		Tools: geodata.ToolIdentity{GeoViewRef: geodata.GeoViewCommit, SingBoxVersion: "1.14.4"},
 		Rules: []geodata.Rule{{
 			Kind: kind, Category: category, Tag: tag, Path: "rules/" + tag + ".srs",
 			SHA256: hex.EncodeToString(sum[:]), Size: int64(len(content)),

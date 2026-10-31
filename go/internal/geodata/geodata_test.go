@@ -31,7 +31,7 @@ func writeSeed(t *testing.T) string {
 			Repository: UpstreamRepository, Version: "test",
 			GeoSiteSHA256: digest([]byte("geosite")), GeoIPSHA256: digest([]byte("geoip")),
 		},
-		Tools: ToolIdentity{GeoViewRef: GeoViewCommit, SingBoxVersion: SingBoxCompiler},
+		Tools: ToolIdentity{GeoViewRef: GeoViewCommit, SingBoxVersion: "1.14.4"},
 		Rules: rules,
 	}
 	content, err := json.MarshalIndent(manifest, "", "  ")

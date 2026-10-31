@@ -16,7 +16,7 @@ permissions:
   id-token: write
 
 env:
-  SING_BOX_VERSION: 1.14.1
+  SING_BOX_VERSION: 1.14.4
   GEOVIEW_REF: 3c91926d360b8f49d47520639e574608318baf12
 
 jobs:

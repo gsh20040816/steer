@@ -24,7 +24,6 @@ const (
 	DefaultSeedDirectory  = "/usr/share/steer/geodata-seed"
 	UpstreamRepository    = "Loyalsoldier/v2ray-rules-dat"
 	GeoViewCommit         = "3c91926d360b8f49d47520639e574608318baf12"
-	SingBoxCompiler       = "1.14.1"
 
 	ErrorManifestInvalid  = "GEO_MANIFEST_INVALID"
 	ErrorCategoryNotFound = "GEO_CATEGORY_NOT_FOUND"
@@ -124,8 +123,8 @@ func ValidateManifest(manifest Manifest) error {
 	if !validDigest.MatchString(manifest.Upstream.GeoSiteSHA256) || !validDigest.MatchString(manifest.Upstream.GeoIPSHA256) {
 		return fmt.Errorf("upstream GeoSite and GeoIP SHA-256 values are required")
 	}
-	if manifest.Tools.GeoViewRef != GeoViewCommit || manifest.Tools.SingBoxVersion != SingBoxCompiler {
-		return fmt.Errorf("conversion tools must be geoview %s and sing-box %s", GeoViewCommit, SingBoxCompiler)
+	if manifest.Tools.GeoViewRef == "" || manifest.Tools.SingBoxVersion == "" {
+		return fmt.Errorf("conversion tools geoview and sing-box must be recorded")
 	}
 	if len(manifest.Rules) == 0 {
 		return fmt.Errorf("rules must not be empty")
