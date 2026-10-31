@@ -69,58 +69,22 @@ function canonicalFixtureSections(intent) {
 	return result;
 }
 
-function subscriptionNodeJSON(section) {
-	const node = { id: section['.name'] };
-	for (const [key, value] of Object.entries(section)) {
-		if (key == '.name') continue;
-		if ([ 'enabled', 'pinned_stale', 'insecure', 'quic', 'udp_over_stream', 'zero_rtt_handshake' ].includes(key))
-			node[key] = typeof(value) == 'boolean' ? value : value == '1';
-		else if ([ 'server_port', 'up_mbps', 'down_mbps', 'alter_id', 'version', 'insecure_concurrency' ].includes(key))
-			node[key] = Number(value);
-		else
-			node[key] = value;
-	}
-	if (!('enabled' in node)) node.enabled = true;
-	if (!node.pinned_stale) delete node.pinned_stale;
-	const copy = { ...node, enabled: true };
-	delete copy.id;
-	delete copy.source_subscription;
-	delete copy.source_fingerprint;
-	delete copy.pinned_stale;
-	node.manual_copy = copy;
-	return node;
-}
-
-/* Schema 10 keeps subscription nodes in the platform node store. Fixtures that
- * still list them as nodes are split into UCI manual nodes and the
- * subscription_nodes RPC payload. */
-function subscriptionNodesPayload(sections) {
-	const subscriptions = [];
-	const known = {};
-	const entry = (id) => {
-		if (!known[id]) {
-			known[id] = { id, nodes: [] };
-			subscriptions.push(known[id]);
-		}
-		return known[id];
+/* One stored subscription node exactly as the subscription_nodes RPC returns
+ * it: the node fields, its source fields and the shared manual_copy (the
+ * same node without ID and source fields, enabled). */
+function listedSubscriptionNode(subscriptionId, fields) {
+	const { pinned_stale: stale, ...node } = { enabled: true, source_fingerprint: `fp-${fields.id}`, ...fields };
+	const { id: _id, source_fingerprint: _fingerprint, ...copy } = node;
+	return {
+		...node, source_subscription: subscriptionId, ...(stale ? { pinned_stale: true } : {}),
+		manual_copy: { ...copy, enabled: true }
 	};
-	(sections.subscription || []).forEach((subscription) => entry(subscription['.name']));
-	(sections.node || []).filter((node) => node.source_subscription)
-		.forEach((node) => entry(node.source_subscription).nodes.push(subscriptionNodeJSON(node)));
-	return { subscriptions };
 }
 
-function withoutSubscriptionNodes(sections) {
-	if (!(sections.node || []).some((node) => node.source_subscription))
-		return sections;
-	return { ...sections, node: sections.node.filter((node) => !node.source_subscription) };
-}
-
-function splitSubscriptionNodes(sections) {
-	const payload = subscriptionNodesPayload(sections);
-	if (sections.node)
-		sections.node = sections.node.filter((node) => !node.source_subscription);
-	return payload;
+function subscriptionNodeList(groups) {
+	return { subscriptions: Object.entries(groups).map(([ id, nodes ]) => ({
+		id, nodes: nodes.map((node) => listedSubscriptionNode(id, node))
+	})) };
 }
 
 function environmentForCreationDefaults(collection, overrides) {
@@ -408,6 +372,7 @@ function createEnvironment(sections) {
 	const subscriptionNodesCalls = [];
 	const subscriptionNodeSetCalls = [];
 	let uciSaveCalls = 0;
+	let subscriptionStatusCalls = 0;
 	const notifications = [];
 	let statusRenderCalls = 0;
 	const steer = {
@@ -415,6 +380,25 @@ function createEnvironment(sections) {
 		uiSpecLabel: (label) => String(label),
 		issueText: (issue) => `[${issue.code}] ${issue.object_type}/${issue.object_id}/${issue.option}`,
 		rpcErrorText: (result) => result?.error_code || result?.error || 'Operation failed.',
+		/* Mirrors steer.js: shared spec texts, route names from the UCI view. */
+		subscriptionNodeText: (key) => uiSpec.subscription_nodes.messages[key].label,
+		subscriptionStillReferencedText: (routes) => uiSpec.subscription_nodes.errors.NODE_STILL_REFERENCED.label
+			.replace(uiSpec.subscription_nodes.routes_placeholder, [ ...new Set(routes.map((route) => route.id)) ].map((id) =>
+				(sections.route || []).find((candidate) => candidate['.name'] == id)?.name ||
+				routes.find((route) => route.id == id).name || id).join(uiSpec.subscription_nodes.messages.list_separator.label)),
+		subscriptionErrorText: (result) => {
+			const shared = uiSpec.subscription_nodes.errors[result?.error_code];
+			const routes = (result?.validation?.errors || []).filter((issue) => issue.object_type == 'route').map((issue) => ({ id: issue.object_id }));
+			if (shared && result.error_code == 'NODE_STILL_REFERENCED')
+				return routes.length ? steer.subscriptionStillReferencedText(routes) : (result.error || 'Operation failed.');
+			return shared ? shared.label : (result?.error || 'Operation failed.');
+		},
+		subscriptionNodeCleanBlockers: (nodeId, savedReferences) => {
+			const routes = steer.collectionReferences('nodes', nodeId).map((reference) => ({ id: reference.id, name: reference.label }));
+			for (const reference of savedReferences || [])
+				if (!routes.some((route) => route.id == reference.id)) routes.push({ id: reference.id, name: reference.name });
+			return routes;
+		},
 		validateInput: (_format, _value) => true,
 		creationDefaults: (collection, overrides) => Object.fromEntries(Object.entries({
 			...(uiSpec.creation_defaults[collection] || {}), ...(overrides || {})
@@ -461,9 +445,7 @@ function createEnvironment(sections) {
 					(!policy.movable_kinds?.length || policy.movable_kinds.includes(item.kind)) &&
 					(!policy.pinned_last_boolean_field || item[policy.pinned_last_boolean_field] != '1');
 				if (disabledReason || !movable(source) || !movable(target) || source == target) return false;
-				const group = policy.group_field ? (source[policy.group_field] || '') : '';
-				const peers = values.filter((item) => (!section.filter || section.filter(item['.name'])) && movable(item) &&
-					(!policy.group_field || (item[policy.group_field] || '') == group));
+				const peers = values.filter((item) => (!section.filter || section.filter(item['.name'])) && movable(item));
 				if (!peers.includes(source) || !peers.includes(target)) return false;
 				const sourceIndex = values.indexOf(source);
 				let targetIndex = values.indexOf(target);
@@ -480,11 +462,9 @@ function createEnvironment(sections) {
 			section.moveItem = (sectionId, offset) => {
 				const values = sections[sectionType] || [];
 				const source = values.find((item) => item['.name'] == sectionId);
-				const group = policy.group_field ? (source?.[policy.group_field] || '') : '';
 				const peers = values.filter((item) => (!section.filter || section.filter(item['.name'])) &&
 					(!policy.movable_kinds?.length || policy.movable_kinds.includes(item.kind)) &&
-					(!policy.pinned_last_boolean_field || item[policy.pinned_last_boolean_field] != '1') &&
-					(!policy.group_field || (item[policy.group_field] || '') == group));
+					(!policy.pinned_last_boolean_field || item[policy.pinned_last_boolean_field] != '1'));
 				const position = peers.indexOf(source);
 				const target = peers[position + offset];
 				return !!target && section.dropItem(sectionId, target['.name'], offset > 0);
@@ -527,7 +507,10 @@ function createEnvironment(sections) {
 		geodataCatalog: () => Promise.resolve({}),
 		diagnostics: () => Promise.resolve(environment.diagnosticsResult),
 		probeResults: () => Promise.resolve(environment.probeResultsResult),
-		subscriptions: () => Promise.resolve({ subscriptions: [] }),
+		subscriptions: () => {
+			subscriptionStatusCalls++;
+			return Promise.resolve(environment.subscriptionsResult);
+		},
 		subscriptionNodes: (id) => {
 			subscriptionNodesCalls.push(id || '');
 			return Promise.resolve(environment.subscriptionNodesResult);
@@ -597,6 +580,8 @@ function createEnvironment(sections) {
 		setPendingChanges: (changes) => { pendingChanges = changes; },
 		get statusRenderCalls() { return statusRenderCalls; },
 		get uciSaveCalls() { return uciSaveCalls; },
+		get subscriptionStatusCalls() { return subscriptionStatusCalls; },
+		subscriptionsResult: { subscriptions: [] },
 		subscriptionNodesResult: { subscriptions: [] },
 		subscriptionNodeSetResult: { subscriptions: [] },
 		cleanSubscriptionResult: { ok: true },
@@ -855,7 +840,7 @@ function testOverviewStateSeparatesPendingSavedAndActiveFacts() {
 	assert.ok(runtime.commands.some((command) => command == '/usr/sbin/steer _state'));
 }
 
-function testSubscriptionRPCRejectsPendingSession() {
+function testSubscriptionRPCIgnoresPendingSession() {
 	const runtime = {
 		values: {},
 		changes: [ [ 'set', 'feed', 'url', 'https://pending.example/sub' ] ],
@@ -865,8 +850,6 @@ function testSubscriptionRPCRejectsPendingSession() {
 	const methods = loadUcodeRPC(runtime);
 	for (const [ method, args ] of [
 		[ methods.apply_saved, {} ],
-		[ methods.subscription_update, { id: 'feed' } ],
-		[ methods.subscription_clean, { id: 'feed', node: 'feed_stale' } ],
 		[ methods.node_speedtest, { node: 'node_a', download: false } ],
 		[ methods.route_speedtest, { route: 'route_a', download: true } ]
 	]) {
@@ -875,7 +858,17 @@ function testSubscriptionRPCRejectsPendingSession() {
 		assert.equal(response.error_code, 'PENDING_CHANGES');
 	}
 	assert.equal(runtime.commands.length, 0,
-		'server-side pending guard rejects inventory and committed probe operations before starting Steer');
+		'server-side pending guard rejects committed apply and probe operations before starting Steer');
+	runtime.ubusCalls = [];
+	callUcodeMethod(methods.subscription_update, { id: 'feed' });
+	callUcodeMethod(methods.subscription_clean, { id: 'feed', node: 'feed_stale' });
+	assert.deepEqual(runtime.commands, [
+		"/usr/sbin/steer subscription update --id 'feed'",
+		"/usr/sbin/steer subscription clean --id 'feed' --node 'feed_stale'"
+	], 'subscription update and clean-up write only the node store and ignore pending UCI changes');
+	assert.ok(!runtime.ubusCalls.some((call) => call.object == 'uci' && call.method == 'changes'),
+		'subscription operations never inspect the pending UCI session');
+	runtime.commands = [];
 	for (const [ method, args, errorCode ] of [
 		[ methods.subscription_update, {}, 'MISSING_SUBSCRIPTION_ID' ],
 		[ methods.subscription_clean, { id: 'feed' }, 'MISSING_SUBSCRIPTION_NODE_ID' ],
@@ -888,16 +881,13 @@ function testSubscriptionRPCRejectsPendingSession() {
 		assert.equal(response.error_code, errorCode, `${errorCode} must be stable and locale-neutral`);
 	}
 	runtime.changes = [];
-	callUcodeMethod(methods.subscription_update, { id: 'feed' });
-	assert.equal(runtime.commands.length, 1);
-	assert.ok(runtime.commands[0].includes('subscription update --id'));
 	const applied = callUcodeMethod(methods.apply_saved, {});
 	assert.equal(applied.ok, true);
-	assert.equal(runtime.commands[1], '/usr/sbin/steer apply');
+	assert.equal(runtime.commands[0], '/usr/sbin/steer apply');
 }
 
 function testSubscriptionNodeUcodeRPC() {
-	const list = { subscriptions: [ { id: 'feed', nodes: [ { id: 'feed_a', enabled: false, source_subscription: 'feed', manual_copy: { enabled: true } } ] } ] };
+	const list = subscriptionNodeList({ feed: [ { id: 'feed_a', enabled: false, type: 'socks', server: 'feed.example', server_port: 1080 } ] });
 	const runtime = {
 		values: {}, changes: [], validation: { ok: true, errors: [], warnings: [] }, intent: {},
 		ubusCalls: [], commands: [], documents: [], commitCalls: 0,
@@ -938,12 +928,12 @@ function testSubscriptionNodeUcodeRPC() {
 	assert.equal(rejected.validation.errors[0].object_id, 'proxy', 'the CLI validation passes through for field navigation');
 
 	runtime.changes = [ [ 'set', 'proxy', 'node', 'feed_a' ] ];
-	const commandsBeforePending = runtime.commands.length;
-	assert.equal(callUcodeMethod(methods.subscription_node_set, { id: 'feed', node: 'feed_a', enabled: false }).error_code, 'PENDING_CHANGES',
-		'subscription node state changes validate against the committed configuration only');
-	assert.equal(runtime.commands.length, commandsBeforePending);
 	runtime.nodeOutput = list;
 	runtime.nodeStatus = 0;
+	const commandsBeforePending = runtime.commands.length;
+	assert.deepEqual(callUcodeMethod(methods.subscription_node_set, { id: 'feed', node: 'feed_a', enabled: false }), list,
+		'pending UCI changes never block a subscription node state change; the backend validates the Saved configuration');
+	assert.equal(runtime.commands.length, commandsBeforePending + 1);
 	assert.deepEqual(callUcodeMethod(methods.subscription_nodes, {}), list,
 		'reading the subscription node list does not require a clean UCI session');
 }
@@ -1026,13 +1016,12 @@ async function renderRules(sections, catalog = {}) {
 	return environment;
 }
 
-async function renderNodes(sections, search = '', subscriptionStatus, page = 'nodes', pendingChanges = [], permissions = {}, probeResultsResult, subscriptionNodes) {
-	if (subscriptionNodes === undefined) {
-		subscriptionNodes = subscriptionNodesPayload(sections);
-		sections = withoutSubscriptionNodes(sections);
-	}
+async function renderNodes(sections, search = '', subscriptionStatus, page = 'nodes', pendingChanges = [], permissions = {}, probeResultsResult, subscriptionNodes = { subscriptions: [] }) {
+	assert.ok(!(sections.node || []).some((node) => Object.keys(node).some((key) => key.startsWith('source_') || key == 'pinned_stale')),
+		'UCI fixtures hold manual nodes only; subscription nodes come from the subscription_nodes payload');
 	const environment = createEnvironment(sections);
 	environment.subscriptionNodesResult = subscriptionNodes;
+	if (subscriptionStatus) environment.subscriptionsResult = subscriptionStatus;
 	if (probeResultsResult) environment.probeResultsResult = probeResultsResult;
 	environment.permissions = { ...permissions };
 	environment.setPendingChanges(pendingChanges);
@@ -1225,14 +1214,9 @@ async function main() {
 		'LuCI loads the shared form input fixtures and generated format metadata');
 	for (const fixture of collectionOrderingFixtures.cases) {
 		const sections = canonicalFixtureSections({ [fixture.collection]: fixture.objects });
-		if (fixture.collection == 'nodes')
-			sections.subscription = [ { '.name': 'feed', name: 'Feed' } ];
-		const storedNodes = splitSubscriptionNodes(sections);
-		const uciIDs = (ids) => ids.filter((id) => !storedNodes.subscriptions.some((subscription) =>
-			subscription.nodes.some((node) => node.id == id)));
 		let orderingEnvironment;
 		switch (fixture.collection) {
-		case 'nodes': orderingEnvironment = await renderNodes(sections, '?node_group=_manual', undefined, 'nodes', [], {}, undefined, storedNodes); break;
+		case 'nodes': orderingEnvironment = await renderNodes(sections, '?node_group=_manual'); break;
 		case 'routes': orderingEnvironment = await renderNodes(sections, '', undefined, 'routes'); break;
 		case 'dns_profiles': orderingEnvironment = await renderDns(sections); break;
 		case 'local_proxies': orderingEnvironment = await renderLocalProxies(sections); break;
@@ -1252,18 +1236,13 @@ async function main() {
 			!elementText(ordered.renderRowActions(fixture.move_id)).includes('Move up'),
 			`${fixture.collection} exposes one direct whole-row drag handle without arrow buttons`);
 		assert.equal(ordered.moveItem(fixture.move_id, fixture.offset), true, fixture.name);
-		assert.deepEqual((sections[sectionType] || []).map((item) => item['.name']), uciIDs(fixture.expected_ids), fixture.name);
+		assert.deepEqual((sections[sectionType] || []).map((item) => item['.name']), fixture.expected_ids, fixture.name);
 	}
 	for (const fixture of collectionDragFixtures.cases) {
 		const sections = canonicalFixtureSections({ [fixture.collection]: fixture.objects });
-		if (fixture.collection == 'nodes')
-			sections.subscription = [ { '.name': 'feed', name: 'Feed' } ];
-		const storedNodes = splitSubscriptionNodes(sections);
-		const uciIDs = (ids) => ids.filter((id) => !storedNodes.subscriptions.some((subscription) =>
-			subscription.nodes.some((node) => node.id == id)));
 		let dragEnvironment;
 		switch (fixture.collection) {
-		case 'nodes': dragEnvironment = await renderNodes(sections, '?node_group=_manual', undefined, 'nodes', [], {}, undefined, storedNodes); break;
+		case 'nodes': dragEnvironment = await renderNodes(sections, '?node_group=_manual'); break;
 		case 'routes': dragEnvironment = await renderNodes(sections, '', undefined, 'routes'); break;
 		case 'dns_profiles': dragEnvironment = await renderDns(sections); break;
 		case 'local_proxies': dragEnvironment = await renderLocalProxies(sections); break;
@@ -1281,14 +1260,14 @@ async function main() {
 		assert.equal(ordered.dropItem(
 			fixture.source_id, fixture.target_id, fixture.after, fixture.cancel
 		), fixture.expected_mutations == 1, fixture.name);
-		assert.deepEqual((sections[sectionType] || []).map((item) => item['.name']), uciIDs(fixture.expected_ids), fixture.name);
+		assert.deepEqual((sections[sectionType] || []).map((item) => item['.name']), fixture.expected_ids, fixture.name);
 	}
 	assert.deepEqual(uiSpec.node_display_sorting.modes, nodeDisplaySortingFixtures.modes);
 	assert.deepEqual(uiSpec.node_display_sorting.direction_modes, nodeDisplaySortingFixtures.direction_modes);
 	for (const fixture of nodeDisplaySortingFixtures.cases) {
 		const sections = canonicalFixtureSections({ nodes: nodeDisplaySortingFixtures.nodes });
-		sections.subscription = [ { '.name': 'feed', name: 'Feed' } ];
-		const storedNodes = splitSubscriptionNodes(sections);
+		sections.subscription = nodeDisplaySortingFixtures.subscription_nodes.subscriptions.map((subscription) => ({ '.name': subscription.id }));
+		const storedNodes = nodeDisplaySortingFixtures.subscription_nodes;
 		const originalIDs = sections.node.map((item) => item['.name']);
 		const query = new URLSearchParams({
 			node_group: fixture.group || '_manual', node_sort: fixture.mode,
@@ -1352,14 +1331,13 @@ async function main() {
 	assert.ok(!thirdClickEnvironment.window.location.href.includes('node_sort='),
 		'the third click restores configured order instead of requiring a separate Order sorter');
 	assert.deepEqual(headerSections.node.map((item) => item['.name']), [ 'slow', 'stale' ]);
-	const largeSubscriptionSections = {
-		subscription: [ { '.name': 'large_feed', name: 'Large feed' } ],
-		node: Array.from({ length: 750 }, (_, index) => ({
-			'.name': `feed_node_${index}`, source_subscription: 'large_feed', enabled: '1',
-			name: `Feed node ${index}`, type: 'vless', server: `node-${index}.example`, server_port: '443'
-		}))
-	};
-	const largeEnvironment = await renderNodes(largeSubscriptionSections, '?node_group=large_feed');
+	const largeSubscriptionSections = { subscription: [ { '.name': 'large_feed', name: 'Large feed' } ], node: [] };
+	const largeSubscriptionNodes = subscriptionNodeList({ large_feed: Array.from({ length: 750 }, (_, index) => ({
+		id: `feed_node_${index}`, name: `Feed node ${index}`, type: 'vless', server: `node-${index}.example`, server_port: 443,
+		uuid: '00000000-0000-4000-8000-000000000001'
+	})) });
+	const largeEnvironment = await renderNodes(largeSubscriptionSections, '?node_group=large_feed', undefined, 'nodes', [], {}, undefined,
+		largeSubscriptionNodes);
 	assert.equal(largeEnvironment.maps[0].sections.some((section) => section.sectionType == 'node'), false,
 		'large subscription groups do not instantiate a LuCI Form section per generated Node');
 	assert.equal(findElements(largeEnvironment.rendered, (node) => node.tag == 'tr' && node.attributes?.['data-sid']).length, 750,
@@ -1368,7 +1346,7 @@ async function main() {
 		'the read-only subscription inventory creates no hidden generated edit widgets');
 	testCommittedUcodePreviewAndObservedCandidateGuard();
 	testOverviewStateSeparatesPendingSavedAndActiveFacts();
-	testSubscriptionRPCRejectsPendingSession();
+	testSubscriptionRPCIgnoresPendingSession();
 	testSubscriptionNodeUcodeRPC();
 	testNodeImportUcodeUsesTargetCompatibleStringPopen();
 	testNodeExportUcodeUsesCurrentCandidateSnapshot();
@@ -1392,7 +1370,7 @@ async function main() {
 	}
 
 	const referenceSections = canonicalFixtureSections(collectionReferenceFixtures.intent);
-	const referenceStore = splitSubscriptionNodes(referenceSections);
+	const referenceStore = collectionReferenceFixtures.subscription_nodes;
 	const referenceEnvironments = {
 		nodes: await renderNodes(referenceSections, '', { subscriptions: [] }, 'nodes', [], {}, undefined, referenceStore),
 		routes: await renderNodes(referenceSections, '', { subscriptions: [] }, 'routes', [], {}, undefined, referenceStore),
@@ -1616,13 +1594,9 @@ async function main() {
 
 	const disabledNodeSections = parseUCIConfig(fs.readFileSync(path.join(root, 'steer/files/etc/config/steer'), 'utf8'));
 	disabledNodeSections.subscription = [ { '.name': 'feed', name: 'Feed' } ];
-	disabledNodeSections.node = [
-		{ '.name': 'manual_node', enabled: '0', name: 'Manual' },
-		{ '.name': 'subscription_node', enabled: '0', name: 'Subscribed', source_subscription: 'feed' }
-	];
-	environment = await renderNodes(disabledNodeSections, '', undefined, 'routes');
-	assert.equal(environment.sections.node.some((node) => node.source_subscription), false,
-		'Subscription nodes are read from the node store, never from UCI');
+	disabledNodeSections.node = [ { '.name': 'manual_node', enabled: '0', name: 'Manual' } ];
+	environment = await renderNodes(disabledNodeSections, '', undefined, 'routes', [], {}, undefined,
+		subscriptionNodeList({ feed: [ { id: 'subscription_node', enabled: false, name: 'Subscribed', type: 'socks', server: 'feed.example', server_port: 1080 } ] }));
 	const guardedRoutes = environment.maps[0].sections.find((section) => section.type == 'GridSection' && section.sectionType == 'route');
 	const guardedAddRow = guardedRoutes.renderSectionAdd();
 	const guardedInput = guardedAddRow.querySelector('.cbi-section-create-name');
@@ -1638,8 +1612,9 @@ async function main() {
 		'Dynamic Add Single recovery does not reload the page');
 	const subscriptionOnlySections = parseUCIConfig(fs.readFileSync(path.join(root, 'steer/files/etc/config/steer'), 'utf8'));
 	subscriptionOnlySections.subscription = [ { '.name': 'feed', name: 'Feed' } ];
-	subscriptionOnlySections.node = [ { '.name': 'feed_node', enabled: '1', name: 'Subscribed', source_subscription: 'feed' } ];
-	environment = await renderNodes(subscriptionOnlySections, '', undefined, 'routes');
+	subscriptionOnlySections.node = [];
+	environment = await renderNodes(subscriptionOnlySections, '', undefined, 'routes', [], {}, undefined,
+		subscriptionNodeList({ feed: [ { id: 'feed_node', name: 'Subscribed', type: 'socks', server: 'feed.example', server_port: 1080 } ] }));
 	const subscriptionOnlyRoutes = environment.maps[0].sections.find((section) => section.type == 'GridSection' && section.sectionType == 'route');
 	const subscriptionOnlyAddRow = subscriptionOnlyRoutes.renderSectionAdd();
 	const subscriptionOnlyInput = subscriptionOnlyAddRow.querySelector('.cbi-section-create-name');
@@ -1826,10 +1801,7 @@ async function main() {
 	assert.ok(String(localListen.validate('entry', '0.0.0.0')).includes('reachable from other devices'),
 		'LuCI must explain the risk when blocking an exposed unauthenticated listener');
 	const groupedFixture = {
-		node: [
-			{ '.name': 'cfg_manual', name: 'Manual', type: 'hysteria2' },
-			{ '.name': 'jdub_0123456789ab', name: 'Subscribed', source_subscription: 'jdub' }
-		],
+		node: [ { '.name': 'cfg_manual', name: 'Manual', type: 'hysteria2' } ],
 		route: [
 			{ '.name': 'route_proxy', kind: 'single', node: 'jdub_0123456789ab', detour: 'route_jp' },
 			{ '.name': 'route_jp', kind: 'single', node: 'cfg_manual' },
@@ -1837,7 +1809,10 @@ async function main() {
 		],
 		subscription: [ { '.name': 'jdub', name: 'Jdub' } ]
 	};
-	environment = await renderNodes(groupedFixture);
+	const groupedStore = subscriptionNodeList({ jdub: [
+		{ id: 'jdub_0123456789ab', name: 'Subscribed', type: 'socks', server: 'jdub.example', server_port: 1080 }
+	] });
+	environment = await renderNodes(groupedFixture, '', undefined, 'nodes', [], {}, undefined, groupedStore);
 	assertAutomaticIdsAndOptionalNames(environment, 'Nodes');
 	const groupedNodes = environment.maps[0].sections.find((section) => section.sectionType == 'node');
 	assert.ok(groupedNodes && groupedNodes.addremove === true && groupedNodes.filter === undefined,
@@ -1947,7 +1922,7 @@ async function main() {
 	parsePrivateKey('');
 	assert.equal(sshFixture.node[0].private_key, undefined,
 		'only the current editor\'s explicit Clear action authorizes secret deletion');
-	environment = await renderNodes(groupedFixture, '', undefined, 'routes');
+	environment = await renderNodes(groupedFixture, '', undefined, 'routes', [], {}, undefined, groupedStore);
 	const groupedPicker = environment.maps[0].sections.flatMap((section) => section.options)
 		.find((option) => option.name == 'node');
 	assert.ok(groupedPicker && groupedPicker.type == 'RichListValue' && groupedPicker.values.some((value) => value[2]?.includes('Jdub')),
@@ -2061,13 +2036,10 @@ async function main() {
 	await pendingRouteProbe.onclick({ currentTarget: pendingProbeButton }, 'route_enabled');
 	assert.deepEqual(environment.routeSpeedtestCalls, [], 'new or edited pending Routes never probe the committed old Route');
 	environment = await renderNodes({
-		node: [
-			{ '.name': 'cfg_manual', name: 'Manual' },
-			{ '.name': 'jdub_0123456789ab', name: 'Subscribed', source_subscription: 'jdub' }
-		],
+		node: [ { '.name': 'cfg_manual', name: 'Manual' } ],
 		route: [],
 		subscription: [ { '.name': 'jdub', name: 'Jdub' } ]
-	}, '?node_group=jdub');
+	}, '?node_group=jdub', undefined, 'nodes', [], {}, undefined, groupedStore);
 	const subscriptionNodes = environment.maps[0].sections.find((section) => section.sectionType == 'node');
 	assert.equal(subscriptionNodes, undefined,
 		'a subscription group bypasses the heavyweight editable LuCI Node section');
@@ -2107,45 +2079,63 @@ async function main() {
 		'Failed connection tests do not expose backend process or outbound identifiers in the node list');
 
 	const actionLabel = (action) => uiSpec.subscription_nodes.actions[action].label;
+	const sharedText = (key) => uiSpec.subscription_nodes.messages[key].label;
+	const errorText = (code) => uiSpec.subscription_nodes.errors[code].label;
+	const stillReferenced = (...names) => errorText('NODE_STILL_REFERENCED')
+		.replace(uiSpec.subscription_nodes.routes_placeholder, names.join(sharedText('list_separator')));
 	const rowButton = (row, label) => findElements(row, (node) => node.tag == 'button' && elementText(node) == label)[0];
 	const inventoryRows = (target) => findElements(target.rendered, (node) => node.tag == 'tr' && node.attributes?.['data-sid']);
+	const settle = () => new Promise((resolve) => setImmediate(resolve));
 	const inventorySections = () => ({
 		node: [ { '.name': 'cfg_manual', name: 'Manual', type: 'socks', server: 'manual.example', server_port: '1080' } ],
 		route: [
 			{ '.name': 'route_used', name: 'Used route', kind: 'single', node: 'jdub_used' },
 			{ '.name': 'route_stale', name: 'Stale route', kind: 'single', node: 'jdub_stale_used' }
 		],
-		subscription: [ { '.name': 'jdub', name: 'Jdub' } ]
+		subscription: [ { '.name': 'jdub', name: 'Jdub' }, { '.name': 'empty', name: 'Empty' } ]
 	});
-	const storedInventory = (usedEnabled = true, includeFreeStale = true) => ({ subscriptions: [ { id: 'jdub', nodes: [
-		subscriptionNodeJSON({
-			'.name': 'jdub_used', enabled: usedEnabled ? '1' : '0', name: 'Used', type: 'vless', server: 'used.example',
-			server_port: '443', uuid: 'stored-secret-uuid', insecure: '1', alpn: [ 'h2', 'http/1.1' ],
-			source_subscription: 'jdub', source_fingerprint: 'fingerprint-used'
-		}),
-		...(includeFreeStale ? [ subscriptionNodeJSON({
-			'.name': 'jdub_stale_free', name: 'Stale free', type: 'socks', server: 'stale.example', server_port: '1080',
-			source_subscription: 'jdub', pinned_stale: '1'
-		}) ] : []),
-		subscriptionNodeJSON({
-			'.name': 'jdub_stale_used', name: 'Stale used', type: 'socks', server: 'stale-used.example', server_port: '1080',
-			source_subscription: 'jdub', pinned_stale: '1'
-		})
-	] } ] });
+	const storedInventory = (usedEnabled = true, includeFreeStale = true) => subscriptionNodeList({
+		jdub: [
+			{
+				id: 'jdub_used', enabled: usedEnabled, name: 'Used', type: 'vless', server: 'used.example', server_port: 443,
+				uuid: 'stored-secret-uuid', insecure: true, alpn: [ 'h2', 'http/1.1' ], source_fingerprint: 'fingerprint-used'
+			},
+			...(includeFreeStale ? [ { id: 'jdub_stale_free', name: 'Stale free', type: 'socks', server: 'stale.example', server_port: 1080, pinned_stale: true } ] : []),
+			{ id: 'jdub_stale_used', name: 'Stale used', type: 'socks', server: 'stale-used.example', server_port: 1080, pinned_stale: true }
+		],
+		empty: [],
+		removed_in_uci: [ { id: 'removed_node', name: 'Removed', type: 'socks', server: 'removed.example', server_port: 1080 } ]
+	});
 	environment = await renderNodes(inventorySections(), '?node_group=jdub', undefined, 'nodes', [], {}, undefined, storedInventory());
 	let storedRows = inventoryRows(environment);
 	assert.deepEqual(storedRows.map((row) => row.attributes['data-sid']), [ 'jdub_used', 'jdub_stale_free', 'jdub_stale_used' ],
 		'subscription groups list the stored nodes returned by subscription_nodes');
+	const groupLinks = findElements(environment.rendered, (node) => node.tag == 'a' && String(node.attributes?.class || '').includes('steer-node-groups__item'));
+	assert.deepEqual(groupLinks.map((link) => elementText(link.children[0])), [ 'Manual nodes', 'Jdub', 'Empty' ],
+		'groups are the manual nodes and every UCI subscription in UCI order, including one without stored nodes');
+	assert.ok(!elementText(environment.rendered).includes('removed_in_uci') && !elementText(environment.rendered).includes('Missing subscription'),
+		'stored nodes of a subscription removed from UCI are hidden instead of forming a separate group');
 	assert.equal(findElements(environment.rendered, (node) => [ 'input', 'select', 'textarea' ].includes(node.tag)).length, 0,
 		'stored subscription nodes are read-only and never get edit widgets');
-	assert.ok(elementText(environment.rendered).includes('Subscription nodes are read-only. To edit one, copy it to my nodes first.'));
+	assert.ok(elementText(environment.rendered).includes(sharedText('read_only_note')),
+		'subscription groups show the shared read-only note');
 	assert.ok(!elementText(environment.rendered).includes('stored-secret-uuid') && !elementText(environment.rendered).includes('fingerprint-used'),
 		'stored node credentials and fingerprints never enter the node list DOM');
 	assert.ok(rowButton(storedRows[1], actionLabel('clean')) && rowButton(storedRows[2], actionLabel('clean')) &&
-		elementText(storedRows[1]).includes('Subscription node is no longer advertised'),
-		'only stale subscription nodes offer Clean up and a stale marker');
+		elementText(storedRows[1]).includes(sharedText('stale_marker')) && !elementText(storedRows[0]).includes(sharedText('stale_marker')),
+		'only stale subscription nodes offer Clean up and the shared stale marker');
 	assert.ok(rowButton(storedRows[1], actionLabel('disable')) && rowButton(storedRows[1], actionLabel('copy_to_manual')),
 		'stale subscription nodes keep Enable/Disable and Copy to my nodes');
+	const emptyGroup = await renderNodes(inventorySections(), '?node_group=empty', undefined, 'nodes', [], {}, undefined, storedInventory());
+	assert.equal(inventoryRows(emptyGroup).length, 0);
+	assert.ok(elementText(emptyGroup.rendered).includes(sharedText('empty_group')),
+		'a subscription without stored nodes shows the shared empty-group text');
+	const failedLoad = await renderNodes(inventorySections(), '?node_group=jdub', undefined, 'nodes', [], {}, undefined,
+		{ ok: false, error_code: 'SUBSCRIPTION_NODE_STORE_FAILED', error: 'SUBSCRIPTION_NODE_STORE_FAILED: read /etc/steer/subscription-nodes/jdub.json' });
+	assert.ok(elementText(failedLoad.rendered).includes(sharedText('load_failed')) &&
+		elementText(failedLoad.rendered).includes(errorText('SUBSCRIPTION_NODE_STORE_FAILED')) &&
+		!elementText(failedLoad.rendered).includes('/etc/steer'),
+		'a failed node list read shows the shared load failure and the shared reason');
 
 	environment.subscriptionNodeSetResult = {
 		ok: false, error_code: 'NODE_STILL_REFERENCED',
@@ -2157,16 +2147,24 @@ async function main() {
 		'Disable passes the subscription ID, node ID and requested state to subscription_node_set');
 	const referencedFailure = environment.notifications.at(-1);
 	assert.equal(referencedFailure.level, 'danger');
-	assert.ok(elementText(referencedFailure.body).includes('NODE_STILL_REFERENCED') &&
-		elementText(referencedFailure.body).includes('route/route_used/node'),
-		'a rejected Disable shows the stable error and the located route reference');
+	assert.equal(elementText(referencedFailure.body), stillReferenced('Used route'),
+		'a rejected Disable shows the shared text naming the route that still uses the node');
 	assert.ok(!elementText(referencedFailure.body).includes('still references'),
 		'a rejected Disable does not show the raw backend error chain');
 	storedRows = inventoryRows(environment);
 	assert.ok(rowButton(storedRows[0], actionLabel('disable')) && elementText(storedRows[0]).includes('Enabled'),
 		'a rejected Disable leaves the stored node enabled after refreshing the list');
+	environment.subscriptionNodeSetResult = { ok: false, error_code: 'SOMETHING_NEW', error: 'backend explanation' };
+	await rowButton(storedRows[0], actionLabel('disable')).attributes.click();
+	assert.equal(elementText(environment.notifications.at(-1).body), 'backend explanation',
+		'an error code without a shared text falls back to the backend message');
+	environment.subscriptionNodeSetResult = { ok: false, error_code: 'VALIDATION_FAILED', error: 'VALIDATION_FAILED: route x' };
+	await rowButton(inventoryRows(environment)[0], actionLabel('disable')).attributes.click();
+	assert.equal(elementText(environment.notifications.at(-1).body), errorText('VALIDATION_FAILED'),
+		'shared error codes use the shared spec text');
 
 	environment.subscriptionNodeSetResult = (_id, _node, enabled) => storedInventory(enabled);
+	storedRows = inventoryRows(environment);
 	await rowButton(storedRows[0], actionLabel('disable')).attributes.click();
 	storedRows = inventoryRows(environment);
 	assert.ok(rowButton(storedRows[0], actionLabel('enable')) && !rowButton(storedRows[0], actionLabel('disable')) &&
@@ -2178,14 +2176,18 @@ async function main() {
 	await rowButton(storedRows[0], actionLabel('enable')).attributes.click();
 	assert.deepEqual(environment.subscriptionNodeSetCalls.at(-1), { id: 'jdub', node: 'jdub_used', enabled: true });
 	assert.ok(rowButton(inventoryRows(environment)[0], actionLabel('disable')), 'Enable restores the Disable action');
+	assert.equal(environment.window.location.reloadCount, 0, 'subscription node state changes never reload the page');
 
 	const pendingInventory = await renderNodes(inventorySections(), '?node_group=jdub', undefined, 'nodes',
 		[ [ 'set', 'cfg_manual', 'name', 'Pending' ] ], {}, undefined, storedInventory());
+	pendingInventory.subscriptionNodeSetResult = (_id, _node, enabled) => storedInventory(enabled);
 	const pendingDisable = rowButton(inventoryRows(pendingInventory)[0], actionLabel('disable'));
-	assert.ok(pendingDisable.disabled && pendingDisable.title.includes('Pending Steer changes'),
-		'pending UCI changes visibly block subscription node state changes');
+	assert.ok(!pendingDisable.disabled && !pendingDisable.title,
+		'pending UCI changes do not block subscription node state changes');
 	await pendingDisable.attributes.click();
-	assert.deepEqual(pendingInventory.subscriptionNodeSetCalls, [], 'pending UCI changes never reach subscription_node_set');
+	assert.deepEqual(pendingInventory.subscriptionNodeSetCalls, [ { id: 'jdub', node: 'jdub_used', enabled: false } ],
+		'Enable/Disable reaches subscription_node_set while UCI changes are pending');
+	assert.equal(pendingInventory.uciSaveCalls, 0, 'Enable/Disable never touches the pending UCI session');
 	const deniedInventory = await renderNodes(inventorySections(), '?node_group=jdub', undefined, 'nodes', [],
 		{ subscription_node_set: false, subscription_clean: false, uci_write: false }, undefined, storedInventory());
 	const deniedRow = inventoryRows(deniedInventory)[1];
@@ -2207,20 +2209,32 @@ async function main() {
 		'Copy to my nodes never retargets routes');
 	assert.deepEqual(environment.subscriptionNodeSetCalls, [], 'Copy to my nodes leaves the subscription node unchanged');
 
-	environment = await renderNodes(inventorySections(), '?node_group=jdub', undefined, 'nodes', [], {}, undefined, storedInventory());
+	environment = await renderNodes(inventorySections(), '?node_group=jdub', undefined, 'nodes',
+		[ [ 'set', 'cfg_manual', 'name', 'Pending' ] ], {}, undefined, storedInventory());
 	await rowButton(inventoryRows(environment)[2], actionLabel('clean')).attributes.click();
-	assert.deepEqual(environment.cleanSubscriptionCalls, [], 'a referenced stale node is not sent to cleanup');
+	assert.deepEqual(environment.cleanSubscriptionCalls, [], 'a stale node used by a route in the UCI view is not sent to cleanup');
 	assert.equal(environment.notifications.at(-1).level, 'danger');
-	assert.ok(elementText(environment.notifications.at(-1).body).includes('Stale route'),
-		'referenced stale cleanup lists the Route that still uses it');
+	assert.ok(elementText(environment.notifications.at(-1).body).includes(stillReferenced('Stale route')),
+		'referenced stale cleanup lists the Route that still uses it with the shared text');
+	environment.sections.route.push({ '.name': 'route_draft', name: 'Draft-only route', kind: 'single', node: 'jdub_stale_free' });
+	await rowButton(inventoryRows(environment)[1], actionLabel('clean')).attributes.click();
+	assert.deepEqual(environment.cleanSubscriptionCalls, [], 'a route that exists only in the UCI view blocks cleanup');
+	assert.ok(elementText(environment.notifications.at(-1).body).includes(stillReferenced('Draft-only route')),
+		'cleanup blocked by a pending route names that route');
+	environment.sections.route.pop();
 	environment.cleanSubscriptionResult = { ok: true, subscriptions: [] };
 	environment.subscriptionNodesResult = storedInventory(true, false);
 	const nodesCallsBeforeClean = environment.subscriptionNodesCalls.length;
+	const statusCallsBeforeClean = environment.subscriptionStatusCalls;
 	await rowButton(inventoryRows(environment)[1], actionLabel('clean')).attributes.click();
 	assert.deepEqual(environment.cleanSubscriptionCalls, [ { id: 'jdub', node: 'jdub_stale_free' } ],
-		'Clean up uses the existing subscription_clean RPC');
+		'Clean up uses subscription_clean while unrelated UCI changes are pending');
 	assert.equal(environment.subscriptionNodesCalls.length, nodesCallsBeforeClean + 1,
 		'cleanup refreshes the subscription node list');
+	assert.equal(environment.subscriptionStatusCalls, statusCallsBeforeClean + 1,
+		'cleanup refreshes the subscription statuses');
+	assert.equal(elementText(environment.notifications.at(-1).body), sharedText('cleaned'),
+		'successful cleanup shows the shared clean-up notice');
 	assert.deepEqual(inventoryRows(environment).map((row) => row.attributes['data-sid']), [ 'jdub_used', 'jdub_stale_used' ],
 		'the cleaned node disappears without reloading the page');
 	assert.equal(environment.window.location.reloadCount, 0);
@@ -2236,46 +2250,60 @@ async function main() {
 		'subscription removal is blocked by routes that use nodes from the subscription node store');
 	assert.equal(guardedSubscription.handleRemove, undefined,
 		'subscription removal no longer cascades into node sections');
-	environment = await renderNodes({
-		node: [ { '.name': 'jdub_stale', name: 'Stale', source_subscription: 'jdub' } ],
-		route: [],
-		subscription: [ { '.name': 'jdub', name: 'Jdub' } ]
-	}, '', { subscriptions: [ {
+	const staleStatus = {
 		id: 'jdub', name: 'Jdub', enabled: true, never_fetched: false,
 		last_success: '2026-08-26T01:00:00Z', last_failure: null,
 		node_count: 1, current: 0, added: 0, skipped: 0,
 		stale: [ { id: 'jdub_stale', name: 'Stale', referenced_by: [] } ]
-	} ] }, 'subscriptions');
-	const removeStale = findElements(environment.rendered,
-		(node) => node.tag == 'button' && node.children?.[0] == 'Remove Stale')[0];
-	assert.ok(removeStale, 'Subscription status exposes cleanup only for stale nodes');
-	environment.cleanSubscriptionResult = { ok: false, error: 'NODE_STILL_REFERENCED' };
-	await removeStale.attributes.click();
+	};
+	environment = await renderNodes({
+		node: [], route: [], subscription: [ { '.name': 'jdub', name: 'Jdub' } ]
+	}, '', { subscriptions: [ staleStatus ] }, 'subscriptions', [ [ 'set', 'jdub', 'name', 'Pending' ] ], {}, undefined,
+	subscriptionNodeList({ jdub: [ { id: 'jdub_stale', name: 'Stale', type: 'socks', server: 'stale.example', server_port: 1080, pinned_stale: true } ] }));
+	const staleCleanButtons = () => findElements(environment.rendered,
+		(node) => node.tag == 'button' && elementText(node) == actionLabel('clean'));
+	assert.equal(staleCleanButtons().length, 1, 'Subscription status exposes the shared Clean up action only for stale nodes');
+	assert.ok(elementText(environment.rendered).includes('Stale') &&
+		!findElements(environment.rendered, (node) => node.tag == 'button' && /Remove|In use/.test(elementText(node))).length,
+		'the stale node name is shown beside the shared Clean up label instead of inside it');
+	assert.ok(!staleCleanButtons()[0].disabled, 'pending UCI changes do not disable stale cleanup');
+	environment.cleanSubscriptionResult = { ok: false, error: 'backend refused cleanup' };
+	await staleCleanButtons()[0].attributes.click();
 	assert.deepEqual(environment.cleanSubscriptionCalls, [ { id: 'jdub', node: 'jdub_stale' } ],
 		'Stale cleanup passes subscription and node IDs to RPC');
 	assert.equal(environment.window.location.reloadCount, 0,
 		'Failed stale cleanup does not reload and hide the backend error');
-	assert.equal(environment.notifications[0]?.level, 'danger');
-	assert.equal(environment.notifications[0]?.body.children[0], 'NODE_STILL_REFERENCED',
-		'Failed stale cleanup shows the backend diagnostic');
+	assert.equal(environment.notifications.at(-1)?.level, 'danger');
+	assert.equal(elementText(environment.notifications.at(-1)?.body), 'backend refused cleanup',
+		'Failed stale cleanup without a shared code shows the backend message');
 	environment.cleanSubscriptionResult = { ok: true };
-	await removeStale.attributes.click();
-	assert.equal(environment.window.location.reloadCount, 1,
-		'Successful stale cleanup reloads the current subscription view');
+	environment.subscriptionsResult = { subscriptions: [ { ...staleStatus, node_count: 0, stale: [] } ] };
+	const statusCallsBeforeStaleClean = environment.subscriptionStatusCalls;
+	await staleCleanButtons()[0].attributes.click();
+	assert.equal(environment.window.location.reloadCount, 0,
+		'Successful stale cleanup redraws in place instead of reloading the page');
+	assert.equal(environment.subscriptionStatusCalls, statusCallsBeforeStaleClean + 1);
+	assert.equal(staleCleanButtons().length, 0, 'the redrawn status no longer lists the cleaned node');
+	assert.equal(elementText(environment.notifications.at(-1).body), sharedText('cleaned'));
 
 	const sharedStatuses = subscriptionStatusFixtures.cases.map((fixture) => fixture.status);
 	environment = await renderNodes({
-		node: [
-			{ '.name': 'failed_blocked', name: 'Blocked stale', source_subscription: 'failed', pinned_stale: '1' }
-		],
-		route: [ { '.name': 'proxy', name: 'Proxy route', node: 'failed_blocked' } ],
+		node: [], route: [],
 		subscription: sharedStatuses.map((status) => ({
 			'.name': status.id, enabled: status.enabled ? '1' : '0', name: status.name, url: status.url
 		}))
-	}, '', { subscriptions: sharedStatuses }, 'subscriptions');
-	const sharedText = elementText(environment.rendered);
+	}, '', { subscriptions: sharedStatuses }, 'subscriptions', [], {}, undefined, subscriptionStatusFixtures.subscription_nodes);
+	const sharedStatusText = elementText(environment.rendered);
 	for (const expected of [ 'Not fetched', 'subscription server returned HTTP 503', '1 current / 1 unavailable / 1 skipped' ])
-		assert.ok(sharedText.includes(expected), `LuCI must render shared subscription status ${expected}`);
+		assert.ok(sharedStatusText.includes(expected), `LuCI must render shared subscription status ${expected}`);
+	const savedBlockedClean = findElements(environment.rendered,
+		(node) => node.tag == 'button' && elementText(node) == actionLabel('clean'));
+	assert.equal(savedBlockedClean.length, 1);
+	await savedBlockedClean[0].attributes.click();
+	assert.deepEqual(environment.cleanSubscriptionCalls, [],
+		'a stale node used by a Saved route (status referenced_by) is not sent to cleanup');
+	assert.ok(elementText(environment.notifications.at(-1).body).includes(stillReferenced('Proxy route')),
+		'cleanup blocked by a Saved route names it from the subscription status');
 	const sharedUpdateButtons = findElements(environment.rendered,
 		(node) => node.tag == 'button' && node.children?.[0] == 'Update now');
 	assert.equal(sharedUpdateButtons.length, sharedStatuses.length);
@@ -2293,26 +2321,15 @@ async function main() {
 	}, '', { subscriptions: [ successStatus ] }, 'subscriptions', [ [ 'set', 'success', 'url', 'https://pending.example/sub' ] ]);
 	const pendingUpdate = findElements(environment.rendered,
 		(node) => node.tag == 'button' && node.children?.[0] == 'Update now')[0];
-	assert.equal(pendingUpdate.disabled, true);
-	assert.ok(pendingUpdate.title.includes('Pending Steer changes'));
+	assert.ok(!pendingUpdate.disabled && !pendingUpdate.title, 'pending UCI changes do not disable subscription Update');
+	environment.updateSubscriptionResult = { ok: false, error_code: 'SUBSCRIPTION_NOT_FOUND', error: 'SUBSCRIPTION_NOT_FOUND: "success"' };
 	await pendingUpdate.attributes.click();
-	assert.deepEqual(environment.updateSubscriptionCalls, [],
-		'pending unrelated Steer changes block subscription Update');
-	assert.equal(environment.notifications.at(-1)?.level, 'warning');
-
-	environment = await renderNodes({
-		node: [], route: [],
-		subscription: [ { '.name': 'success', enabled: '1', name: 'Successful', url: successStatus.url } ]
-	}, '', { subscriptions: [ successStatus ] }, 'subscriptions');
-	const visibleUpdate = findElements(environment.rendered,
-		(node) => node.tag == 'button' && node.children?.[0] == 'Update now')[0];
-	const formNode = findElements(environment.rendered, (node) => node.tag == 'form')[0];
-	formNode.listeners.input[0]({});
-	assert.equal(visibleUpdate.disabled, true, 'visible unsubmitted input immediately disables Update');
-	await visibleUpdate.attributes.click();
-	assert.deepEqual(environment.updateSubscriptionCalls, [],
-		'visible unsubmitted input blocks Update without reloading the page');
-	assert.equal(environment.window.location.reloadCount, 0);
+	assert.deepEqual(environment.updateSubscriptionCalls, [ 'success' ],
+		'Update reaches subscription_update while UCI changes are pending');
+	assert.equal(environment.notifications.at(-1)?.level, 'danger');
+	assert.equal(elementText(environment.notifications.at(-1).body), errorText('SUBSCRIPTION_NOT_FOUND'),
+		'a failed Update shows the shared error text');
+	assert.equal(environment.window.location.reloadCount, 0, 'a failed Update does not reload the page');
 
 	environment = await renderNodes({
 		node: [], route: [],
@@ -2323,18 +2340,20 @@ async function main() {
 	environment.updateSubscriptionResult = updateGate.promise;
 	const inFlightUpdate = findElements(environment.rendered,
 		(node) => node.tag == 'button' && node.children?.[0] == 'Update now')[0];
-	const inFlightForm = findElements(environment.rendered, (node) => node.tag == 'form')[0];
 	const updating = inFlightUpdate.attributes.click();
-	await Promise.resolve();
-	inFlightForm.listeners.change[0]({});
+	await settle();
+	assert.equal(inFlightUpdate.disabled, true, 'only the running Update button is disabled');
 	const inventoryReadsBeforeUpdate = environment.subscriptionNodesCalls.length;
+	const statusReadsBeforeUpdate = environment.subscriptionStatusCalls;
 	updateGate.resolve({ ok: true, subscriptions: [ successStatus ] });
 	await updating;
 	assert.equal(environment.window.location.reloadCount, 0,
-		'visible edits made during Update are preserved instead of being lost to reload');
+		'a successful Update never reloads the page, so visible unsaved input is kept');
+	assert.equal(environment.uciSaveCalls, 0, 'a successful Update never touches the UCI session');
 	assert.equal(environment.subscriptionNodesCalls.length, inventoryReadsBeforeUpdate + 1,
-		'an Update that cannot reload still refreshes the subscription node list used by the removal guard');
-	assert.ok(environment.notifications.some((notification) => elementText(notification.body).includes('were preserved')));
+		'Update refreshes the subscription node list');
+	assert.equal(environment.subscriptionStatusCalls, statusReadsBeforeUpdate + 1,
+		'Update refreshes the subscription statuses');
 	assert.ok(environment.notifications.some((notification) => {
 		const message = elementText(notification.body);
 		return message.includes('running configuration was not changed') && message.includes('nodes still used by Routes were kept') && message.includes('Added 2');
@@ -2489,6 +2508,18 @@ async function main() {
 	for (const forbidden of [ 'probe.example', 'Attempts', 'Connect 7', 'TLS 9', 'Recent connectivity reports' ])
 		assert.ok(!diagnosticText.includes(forbidden), `LuCI Diagnostics must not render raw report detail ${forbidden}`);
 	assert.ok(!diagnosticText.includes('proves the Direct path') && !diagnosticText.includes('proves the proxy path'));
+	const unchangedLabel = uiSpec.apply_result.unchanged_notice.label;
+	assert.ok(!diagnosticText.includes(unchangedLabel), 'no unchanged-runtime notice without a matching Apply result');
+	for (const [ result, shown ] of [
+		[ { ok: true, activated: true, restarted: false }, true ],
+		[ { ok: true, activated: true, restarted: true }, false ]
+	]) {
+		const baseLifecycle = createEnvironment({}).lifecycleState;
+		const applyLifecycle = { ...baseLifecycle, active: { ...baseLifecycle.active, last_apply: { sequence: '3', result } } };
+		const applyDiagnostics = await renderOverview({}, 'diagnostics', applyLifecycle);
+		assert.equal(elementText(applyDiagnostics.rendered).includes(unchangedLabel), shown,
+			`LuCI Diagnostics shows the shared unchanged-runtime notice exactly when ${JSON.stringify(result)} matches`);
+	}
 
 	const systemEnvironment = await renderSystem({
 		steer: 'v1', canonical_schema: 9,
@@ -2536,14 +2567,15 @@ async function main() {
 	assert.deepEqual(deniedRoutes.routeSpeedtestCalls, [], 'read-only sessions never invoke Route speed-test RPC');
 
 	const deniedSubscriptions = await renderNodes({
-		node: [ { '.name': 'stale', source_subscription: 'feed' } ], route: [],
+		node: [], route: [],
 		subscription: [ { '.name': 'feed', enabled: '1', name: 'Feed' } ]
 	}, '', { subscriptions: [ {
 		id: 'feed', enabled: true, name: 'Feed', never_fetched: false, node_count: 1, current: 0, added: 0, skipped: 0,
 		stale: [ { id: 'stale', referenced_by: [] } ]
-	} ] }, 'subscriptions', [], { subscription_update: false, subscription_clean: false });
+	} ] }, 'subscriptions', [], { subscription_update: false, subscription_clean: false }, undefined,
+	subscriptionNodeList({ feed: [ { id: 'stale', type: 'socks', server: 'stale.example', server_port: 1080, pinned_stale: true } ] }));
 	const deniedInventoryButtons = findElements(deniedSubscriptions.rendered,
-		(node) => node.tag == 'button' && [ 'Update now', 'Remove Unavailable node' ].includes(node.children?.[0]));
+		(node) => node.tag == 'button' && [ 'Update now', uiSpec.subscription_nodes.actions.clean.label ].includes(node.children?.[0]));
 	assert.equal(deniedInventoryButtons.length, 2);
 	assert.ok(deniedInventoryButtons.every((button) => button.disabled === true));
 	for (const button of deniedInventoryButtons) await button.attributes.click();

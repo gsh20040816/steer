@@ -256,12 +256,56 @@ async function main() {
 		'RPC failures are localized by stable code before raw detail');
 	assert.equal(helper.rpcErrorText({ error_code: 'IMPORT_PROGRAM_MISSING' }), 'The Steer node parser is not installed.');
 	assert.equal(helper.rpcErrorText({ error_code: 'IMPORT_PROGRAM_NOT_EXECUTABLE' }), 'The Steer node parser is not executable.');
-	for (const code of uiSpec.subscription_nodes.error_codes) {
-		assert.notEqual(helper.rpcErrorText({ error_code: code, error: `${code}: raw backend detail` }), 'Operation failed.',
-			`${code} from the shared subscription node contract has a localized LuCI message`);
+	const sharedNodes = uiSpec.subscription_nodes;
+	runtime.uciSections = {
+		proxy: { '.type': 'route', '.name': 'proxy', name: 'Proxy route', kind: 'single', node: 'feed_a' },
+		direct: { '.type': 'route', '.name': 'direct', kind: 'direct' }
+	};
+	for (const code of sharedNodes.error_codes.filter((code) => code != 'NODE_STILL_REFERENCED')) {
+		assert.equal(helper.subscriptionErrorText({ error_code: code, error: `${code}: raw backend detail` }), sharedNodes.errors[code].label,
+			`${code} uses the shared subscription node text, not a LuCI-only copy`);
 	}
-	assert.equal(helper.rpcErrorText({ error_code: 'NODE_STILL_REFERENCED', error: 'NODE_STILL_REFERENCED: route "proxy"' }),
-		'A Route still uses this subscription node. Change the Route first.');
+	const stillReferencedLabel = sharedNodes.errors.NODE_STILL_REFERENCED.label;
+	const routesText = (names) => stillReferencedLabel.replace(sharedNodes.routes_placeholder, names.join(sharedNodes.messages.list_separator.label));
+	assert.equal(helper.subscriptionErrorText({
+		ok: false, error_code: 'NODE_STILL_REFERENCED', error: 'NODE_STILL_REFERENCED: route "proxy"',
+		validation: { ok: false, warnings: [], errors: [
+			{ code: 'DISABLED_NODE', object_type: 'route', object_id: 'proxy', option: 'node' },
+			{ code: 'DISABLED_NODE', object_type: 'route', object_id: 'proxy', option: 'node' },
+			{ code: 'DISABLED_NODE', object_type: 'route', object_id: 'direct', option: 'node' },
+			{ code: 'DISABLED_NODE', object_type: 'route', object_id: 'saved_only', option: 'node' },
+			{ code: 'OTHER', object_type: 'rule', object_id: 'rule_a', option: 'route' }
+		] }
+	}), routesText([ 'Proxy route', 'Direct', 'saved_only' ]),
+	'NODE_STILL_REFERENCED names each route once: UCI name, system route label, else the route ID');
+	assert.equal(helper.subscriptionErrorText({ error_code: 'NODE_STILL_REFERENCED', error: 'NODE_STILL_REFERENCED: raw' }),
+		'NODE_STILL_REFERENCED: raw', 'without route issues the backend message is shown');
+	assert.equal(helper.subscriptionErrorText({ error_code: 'NEW_BACKEND_CODE', error: 'new backend detail' }), 'new backend detail',
+		'unknown codes fall back to the backend message');
+	assert.equal(helper.subscriptionErrorText({ error_code: 'MISSING_SUBSCRIPTION_ID', error: 'raw' }), 'A Subscription ID is required.',
+		'LuCI transport codes keep their LuCI message');
+	assert.equal(helper.subscriptionErrorText(new Error('rpc failure')), 'Operation failed.');
+	for (const code of sharedNodes.error_codes)
+		assert.equal(helper.rpcErrorText({ error_code: code }), 'Operation failed.',
+			`${code} has no LuCI-only copy in the generic RPC message table`);
+	assert.equal(helper.subscriptionNodeText('read_only_note'), sharedNodes.messages.read_only_note.label);
+	assert.equal(helper.subscriptionStillReferencedText([ { id: 'proxy', name: 'Saved name' }, { id: 'gone', name: 'Saved only' } ]),
+		routesText([ 'Proxy route', 'Saved only' ]), 'the UCI view names a route before the Saved name');
+	runtime.uciSectionsByType = { route: [
+		{ '.name': 'proxy', name: 'Proxy route', kind: 'single', node: 'feed_stale' },
+		{ '.name': 'other', name: 'Other', kind: 'single', node: 'feed_other' }
+	] };
+	assert.deepEqual(helper.subscriptionNodeCleanBlockers('feed_stale', [
+		{ object_type: 'route', id: 'proxy', name: 'Proxy route (saved)' },
+		{ object_type: 'route', id: 'saved_route', name: 'Saved route' }
+	]), [ { id: 'proxy', name: 'Proxy route' }, { id: 'saved_route', name: 'Saved route' } ],
+	'clean-up is blocked by routes in the UCI view and in the Saved configuration, each listed once');
+	assert.deepEqual(helper.subscriptionNodeCleanBlockers('feed_free', []), [], 'an unreferenced stale node can be cleaned');
+	delete runtime.uciSectionsByType;
+	delete runtime.uciSections;
+	assert.ok(helper.issueText({ code: 'SUBSCRIPTION_NODE_IN_CONFIG', object_type: 'node', object_id: 'feed_a', option: 'source_subscription' })
+		.endsWith(sharedNodes.validation_issues.SUBSCRIPTION_NODE_IN_CONFIG.label),
+		'the SUBSCRIPTION_NODE_IN_CONFIG validation issue uses the shared text');
 	runtime.inventoryResult = { subscriptions: [ { id: 'feed', nodes: [ { id: 'feed_a', enabled: true } ] } ] };
 	assert.deepEqual(await helper.subscriptionNodes(), runtime.inventoryResult);
 	await helper.subscriptionNodes('feed');
@@ -456,11 +500,10 @@ async function main() {
 	], 'Named rule creation explicitly moves each new UCI section before Default');
 
 	runtime.uciSections = {
-		node_a: { '.name': 'node_a', source_subscription: '' },
-		feed_a: { '.name': 'feed_a', source_subscription: 'feed' },
-		node_b: { '.name': 'node_b', source_subscription: '' }
+		node_a: { '.name': 'node_a' },
+		node_b: { '.name': 'node_b' }
 	};
-	const nodeOrder = [ 'node_a', 'feed_a', 'node_b' ];
+	const nodeOrder = [ 'node_a', 'node_b' ];
 	const orderingMoves = [];
 	const orderedNodeSection = {
 		sectiontype: 'node',
@@ -476,7 +519,7 @@ async function main() {
 			}
 			}
 		},
-		cfgsections: () => nodeOrder.filter((sectionId) => runtime.uciSections[sectionId].source_subscription == ''),
+		cfgsections: () => nodeOrder.slice(),
 		renderRowActions: () => element('td', {}, element('div'))
 	};
 	helper.configureOrdering(orderedNodeSection, 'nodes');
@@ -555,7 +598,7 @@ async function main() {
 	orderedNodeSection.handleTouchEnd(pointerEvent({ clientY: 5 }));
 	assert.deepEqual(orderingMoves, [ [ 'steer', 'node_b', 'node_a', false ] ],
 		'pointer Drop writes exactly one stable-ID UCI move');
-	assert.deepEqual(nodeOrder, [ 'node_b', 'node_a', 'feed_a' ]);
+	assert.deepEqual(nodeOrder, [ 'node_b', 'node_a' ]);
 	const movesBeforeCancel = orderingMoves.length;
 	orderedNodeSection.handleTouchStart(pointerEvent({ clientY: 10 }), rowB, {});
 	runtime.elementFromPoint = rowA;

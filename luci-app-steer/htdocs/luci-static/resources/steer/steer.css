@@ -496,6 +496,14 @@
 	padding: var(--steer-space-compact) var(--steer-space-cell);
 }
 
+.steer-subscription-status .steer-stale-node {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--steer-space-compact);
+	margin-top: var(--steer-space-compact);
+}
+
 .steer-speedtest-batch {
 	display: flex;
 	flex-wrap: wrap;

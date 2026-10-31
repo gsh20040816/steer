@@ -122,7 +122,8 @@ function renderDiagnostics(status, validation, diagnostics, probeResults, change
 			E('dl', { 'class': 'steer-status__facts' }, [
 				diagnosticFact(_('Result'), result?.ok ? _('Succeeded') : (lastApply ? _('Failed') : '—')),
 				diagnosticFact(_('Error'), result?.error)
-			])
+			]),
+			steer.applyUnchangedNotice(result) ? E('p', {}, steer.applyUnchangedNotice(result)) : ''
 		]),
 		E('section', { 'class': 'cbi-section' }, [
 			E('h3', {}, _('Recent logs')),

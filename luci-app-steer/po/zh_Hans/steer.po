@@ -399,9 +399,6 @@ msgstr "缺失引用"
 msgid "Missing node"
 msgstr "节点缺失"
 
-msgid "Missing subscription: %s"
-msgstr "订阅已缺失：%s"
-
 msgid "Node groups"
 msgstr "节点分组"
 
@@ -428,9 +425,6 @@ msgstr "立即更新"
 
 msgid "Updating subscription"
 msgstr "正在更新订阅"
-
-msgid "Remove %s"
-msgstr "移除 %s"
 
 msgid "Subscription status"
 msgstr "订阅状态"
@@ -669,26 +663,8 @@ msgstr "校验"
 msgid "Last failure: %s · %s"
 msgstr "最近失败：%s · %s"
 
-msgid "Pending Steer changes must be applied or discarded before changing subscription inventory."
-msgstr "更改订阅节点库前，必须先应用或放弃 Steer 待处理修改。"
-
-msgid "Pending Steer changes must be applied or discarded first."
-msgstr "必须先应用或放弃 Steer 待处理修改。"
-
 msgid "Subscription inventory is locked"
 msgstr "订阅节点库已锁定"
-
-msgid "The visible subscription form has unsaved input."
-msgstr "当前订阅表单有未保存输入。"
-
-msgid "The visible subscription form has unsaved input. Save and apply or discard it first."
-msgstr "当前订阅表单有未保存输入。请先保存并应用，或放弃修改。"
-
-msgid "Visible edits appeared while cleanup was running; they were preserved and the page was not reloaded."
-msgstr "清理期间出现了可见编辑；已保留这些修改，页面未重新加载。"
-
-msgid "Visible edits appeared while the update was running; they were preserved and the page was not reloaded."
-msgstr "更新期间出现了可见编辑；已保留这些修改，页面未重新加载。"
 
 msgid "Discard pending changes"
 msgstr "丢弃待处理修改"
@@ -1302,9 +1278,6 @@ msgstr "请修复所列问题后重试；已保存配置和运行配置均未改
 msgid "Exposure warning: this address may be reachable from LAN or public networks and requires authentication."
 msgstr "暴露风险：该地址可能允许局域网或公网设备连接，必须设置认证。"
 
-msgid "In use: %s"
-msgstr "正在使用：%s"
-
 msgid "Listen address must be an IP address, not a hostname."
 msgstr "监听地址必须是 IP 地址，不能填写域名。"
 
@@ -1364,9 +1337,6 @@ msgstr "测试使用设备当前网络环境；Steer 未启用时仍可运行。
 
 msgid "Unavailable node"
 msgstr "已失效节点"
-
-msgid "Unavailable node removed. The running configuration was not changed."
-msgstr "已移除失效节点；当前运行配置未改变。"
 
 msgid "Unsaved changes"
 msgstr "有未保存修改"
@@ -1622,9 +1592,6 @@ msgstr "复制到我的节点"
 msgid "Runtime configuration unchanged; not restarted"
 msgstr "运行配置没有变化，未重启"
 
-msgid "Subscription nodes are read-only. To edit one, copy it to my nodes first."
-msgstr "订阅节点只读。需要修改时，先复制到我的节点。"
-
 msgid "Subscription nodes could not be loaded."
 msgstr "订阅节点读取失败"
 
@@ -1636,27 +1603,6 @@ msgstr "已停用的节点不能测速。请先启用该节点。"
 
 msgid "Choose whether the subscription node is enabled."
 msgstr "请选择是否启用该订阅节点。"
-
-msgid "The subscription is not in the saved configuration."
-msgstr "已保存配置中没有这个订阅。"
-
-msgid "The subscription no longer has this node."
-msgstr "该订阅中已没有这个节点。"
-
-msgid "A Route still uses this subscription node. Change the Route first."
-msgstr "仍有路由在使用这个订阅节点，请先修改路由。"
-
-msgid "Only nodes the subscription no longer advertises can be cleaned up."
-msgstr "只能清理订阅已不再提供的节点。"
-
-msgid "The change would make the saved configuration invalid."
-msgstr "这项修改会使已保存配置无效。"
-
-msgid "The subscription node list could not be saved."
-msgstr "无法保存订阅节点列表。"
-
-msgid "Subscription nodes are managed by their subscription and cannot be saved in the configuration."
-msgstr "配置里不能包含订阅节点；订阅节点由订阅管理。"
 
 msgid "Routes still use this node ({routes}). Change those routes first."
 msgstr "仍有路由在使用这个节点（{routes}），请先修改这些路由"

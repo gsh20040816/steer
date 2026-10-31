@@ -467,15 +467,16 @@ const methods = {
 			return command_json('/usr/sbin/steer subscription status');
 		}
 	},
+	/* Subscription update, clean-up and node enable/disable write only the
+	 * subscription node store and validate against the committed (Saved)
+	 * configuration, so pending UCI changes in the session never block them. */
 	subscription_update: {
 		args: { id: '' },
 		call: function(request) {
 			const id = request?.args?.id;
 			if (!id)
 				return failure('MISSING_SUBSCRIPTION_ID', 'A Subscription ID is required.');
-			return with_committed_configuration(request, function() {
-				return command_json('/usr/sbin/steer subscription update --id ' + shellquote(id));
-			});
+			return command_json('/usr/sbin/steer subscription update --id ' + shellquote(id));
 		}
 	},
 	subscription_clean: {
@@ -485,9 +486,7 @@ const methods = {
 			const node = request?.args?.node;
 			if (!id || !node)
 				return failure('MISSING_SUBSCRIPTION_NODE_ID', 'A Subscription ID and Node ID are required.');
-			return with_committed_configuration(request, function() {
-				return command_json('/usr/sbin/steer subscription clean --id ' + shellquote(id) + ' --node ' + shellquote(node));
-			});
+			return command_json('/usr/sbin/steer subscription clean --id ' + shellquote(id) + ' --node ' + shellquote(node));
 		}
 	},
 	subscription_nodes: {
@@ -510,10 +509,8 @@ const methods = {
 				return failure('MISSING_SUBSCRIPTION_NODE_ID', 'A Subscription ID and Node ID are required.');
 			if (enabled !== true && enabled !== false)
 				return failure('INVALID_SUBSCRIPTION_NODE_ENABLED', 'The subscription node enabled state must be true or false.');
-			return with_committed_configuration(request, function() {
-				return command_json('/usr/sbin/steer subscription node --id ' + shellquote(id) + ' --node ' + shellquote(node) +
-					' --enabled ' + (enabled ? '1' : '0'));
-			});
+			return command_json('/usr/sbin/steer subscription node --id ' + shellquote(id) + ' --node ' + shellquote(node) +
+				' --enabled ' + (enabled ? '1' : '0'));
 		}
 	},
 	node_speedtest: {

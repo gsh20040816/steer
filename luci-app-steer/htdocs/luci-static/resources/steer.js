@@ -89,7 +89,6 @@ const validationMessages = {
 	DNS_REJECT_PROJECTION_SKIPPED: _('DNS cannot evaluate this Rule’s connection-stage conditions, so DNS continues to later Rules.'),
 	INSECURE_TLS: _('TLS certificate verification is disabled.'),
 	SUBSCRIPTION_NODE_STALE: _('The subscription no longer advertises this Node; remove Route references as soon as possible.'),
-	SUBSCRIPTION_NODE_IN_CONFIG: _('Subscription nodes are managed by their subscription and cannot be saved in the configuration.'),
 	PLATFORM_UNSUPPORTED_SOURCE_MAC: _('The current platform cannot match the original source MAC address.'),
 	CANDIDATE_READ_FAILED: _('The pending Steer configuration could not be read.'),
 	CANDIDATE_VALIDATE_FAILED: _('The pending Steer configuration could not be validated.'),
@@ -140,12 +139,6 @@ const rpcErrorMessages = {
 	MISSING_SUBSCRIPTION_ID: _('A Subscription ID is required.'),
 	MISSING_SUBSCRIPTION_NODE_ID: _('A Subscription ID and Node ID are required.'),
 	INVALID_SUBSCRIPTION_NODE_ENABLED: _('Choose whether the subscription node is enabled.'),
-	SUBSCRIPTION_NOT_FOUND: _('The subscription is not in the saved configuration.'),
-	SUBSCRIPTION_NODE_NOT_FOUND: _('The subscription no longer has this node.'),
-	NODE_STILL_REFERENCED: _('A Route still uses this subscription node. Change the Route first.'),
-	SUBSCRIPTION_NODE_CURRENT: _('Only nodes the subscription no longer advertises can be cleaned up.'),
-	VALIDATION_FAILED: _('The change would make the saved configuration invalid.'),
-	SUBSCRIPTION_NODE_STORE_FAILED: _('The subscription node list could not be saved.'),
 	MISSING_NODE_ID: _('A Node ID is required.'),
 	MISSING_ROUTE_ID: _('A Route ID is required.'),
 	INVALID_PROBE_KIND: _('Choose the direct, proxy, or speed-test probe.'),
@@ -158,6 +151,8 @@ const rpcErrorMessages = {
 function validationMessage(issue) {
 	const code = String(issue?.code || 'VALIDATION');
 	if (validationMessages[code]) return validationMessages[code];
+	const shared = uiSpec.subscription_nodes?.validation_issues?.[code];
+	if (shared) return uiSpecLabel(shared.label);
 	if (code == 'REQUIRED' || code.startsWith('REQUIRED_') || code.startsWith('INCOMPLETE_'))
 		return _('A required value is missing or incomplete.');
 	if (code.startsWith('INVALID_')) return _('The field value is invalid.');
@@ -174,6 +169,76 @@ function rpcErrorText(result) {
 
 function uiSpecLabel(label) {
 	return label == null ? '' : _(String(label));
+}
+
+/* Subscription node texts are shared with the Linux web console and the macOS
+ * app through the UI spec; LuCI only translates the English msgids. */
+function subscriptionNodeText(key) {
+	return uiSpecLabel(uiSpec.subscription_nodes?.messages?.[key]?.label);
+}
+
+function routeDisplayLabel(routeId, savedName) {
+	const route = uci.get('steer', routeId);
+	if (route && (route['.type'] == null || route['.type'] == 'route')) {
+		if (route.name) return route.name;
+		if (route.kind == 'direct') return _('Direct');
+		if (route.kind == 'block') return _('Reject');
+	}
+	return savedName || routeId;
+}
+
+/* routes: [{ id, name }] where name is the Saved display name if known. The
+ * current UCI view names a route first; duplicates by ID are listed once. */
+function subscriptionStillReferencedText(routes) {
+	const seen = {};
+	const names = [];
+	(routes || []).forEach((route) => {
+		if (!route?.id || seen[route.id]) return;
+		seen[route.id] = true;
+		names.push(routeDisplayLabel(route.id, route.name));
+	});
+	const contract = uiSpec.subscription_nodes || {};
+	return uiSpecLabel(contract.errors?.NODE_STILL_REFERENCED?.label)
+		.replace(contract.routes_placeholder || '{routes}', names.join(subscriptionNodeText('list_separator')));
+}
+
+/* Text for a failed subscription_update, subscription_clean,
+ * subscription_node_set or subscription_nodes call. Codes without a shared
+ * text fall back to the backend message. */
+function subscriptionErrorText(result) {
+	const code = result?.error_code;
+	const shared = code ? uiSpec.subscription_nodes?.errors?.[code] : null;
+	if (shared && code == 'NODE_STILL_REFERENCED') {
+		const routes = (result?.validation?.errors || [])
+			.filter((issue) => issue?.object_type == 'route' && issue.object_id)
+			.map((issue) => ({ id: issue.object_id }));
+		if (routes.length)
+			return subscriptionStillReferencedText(routes);
+	}
+	else if (shared)
+		return uiSpecLabel(shared.label);
+	else if (code && rpcErrorMessages[code])
+		return rpcErrorMessages[code];
+	return typeof(result?.error) == 'string' && result.error != '' ? result.error : _('Operation failed.');
+}
+
+/* Routes that block cleaning a stale subscription node: routes using it in
+ * the current UCI view (the draft) and, when known, in the Saved
+ * configuration (subscription status referenced_by). */
+function subscriptionNodeCleanBlockers(nodeId, savedReferences) {
+	const routes = [];
+	const seen = {};
+	collectionReferences('nodes', nodeId).filter((reference) => reference.objectType == 'route').forEach((reference) => {
+		seen[reference.id] = true;
+		routes.push({ id: reference.id, name: reference.label });
+	});
+	(savedReferences || []).filter((reference) => (reference?.object_type || 'route') == 'route' && reference.id)
+		.forEach((reference) => {
+			if (seen[reference.id]) return;
+			seen[reference.id] = true;
+			routes.push({ id: reference.id, name: reference.name });
+		});
+	return routes;
 }
 
 function validateInput(formatName, value) {
@@ -460,6 +525,12 @@ return baseclass.extend({
 	focusIssue: function(issue) { return navigateIssue(issue); },
 	issueText: function(issue) { return issueText(issue); },
 	rpcErrorText: function(result) { return rpcErrorText(result); },
+	subscriptionErrorText: function(result) { return subscriptionErrorText(result); },
+	subscriptionNodeText: function(key) { return subscriptionNodeText(key); },
+	subscriptionStillReferencedText: function(routes) { return subscriptionStillReferencedText(routes); },
+	subscriptionNodeCleanBlockers: function(nodeId, savedReferences) {
+		return subscriptionNodeCleanBlockers(nodeId, savedReferences);
+	},
 	resultMessage: function(result) { return resultMessage(result); },
 	applyUnchangedNotice: function(result) { return applyUnchangedNotice(result); },
 	uiSpecLabel: function(label) { return uiSpecLabel(label); },
@@ -579,19 +650,10 @@ return baseclass.extend({
 			return !policy.pinned_last_boolean_field || object[policy.pinned_last_boolean_field] != '1';
 		};
 		const compatible = function(sourceId, targetId) {
-			if (!movable(sourceId) || !movable(targetId) || sourceId == targetId) return false;
-			if (!policy.group_field) return true;
-			const source = uci.get('steer', sourceId) || {};
-			const target = uci.get('steer', targetId) || {};
-			return (source[policy.group_field] || '') == (target[policy.group_field] || '');
+			return movable(sourceId) && movable(targetId) && sourceId != targetId;
 		};
-		const peers = function(sectionId) {
-			const source = uci.get('steer', sectionId) || {};
-			const group = policy.group_field ? (source[policy.group_field] || '') : '';
-			return section.cfgsections().filter((candidateId) => {
-				const candidate = uci.get('steer', candidateId) || {};
-				return movable(candidateId) && (!policy.group_field || (candidate[policy.group_field] || '') == group);
-			});
+		const peers = function() {
+			return section.cfgsections().filter(movable);
 		};
 		const captureRows = function(table) {
 			return new Map(Array.from(table?.querySelectorAll?.('tr[data-sid]') || []).map((row) => [
@@ -623,7 +685,7 @@ return baseclass.extend({
 		};
 		const moveSection = function(sectionId, targetId, after) {
 			if (!compatible(sectionId, targetId)) return false;
-			const ordered = peers(sectionId);
+			const ordered = peers();
 			const sourcePosition = ordered.indexOf(sectionId);
 			const targetPosition = ordered.indexOf(targetId);
 			if (sourcePosition < 0 || targetPosition < 0 ||
