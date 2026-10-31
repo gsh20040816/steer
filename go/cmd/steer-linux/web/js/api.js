@@ -18,7 +18,8 @@
     error.details = data;
     if (response.status === 401) error.code = 'AUTH_REQUIRED';
     else if (response.status === 409) error.code = 'CONFLICT';
-    else error.code = data?.error?.code || `HTTP_${response.status}`;
+    /* 订阅接口的失败载荷是 {ok:false, error_code, error, validation}。 */
+    else error.code = data?.error_code || data?.error?.code || `HTTP_${response.status}`;
     return error;
   }
 
@@ -112,6 +113,16 @@
     },
     async cleanNode(subscriptionId, nodeId) {
       return (await request(`/api/v1/subscriptions/${encodeURIComponent(subscriptionId)}/nodes/${encodeURIComponent(nodeId)}`, { method: 'DELETE' })).data;
+    },
+    /* 订阅节点不在配置里；列表按已保存配置里的订阅分组，每个节点带共享的 manual_copy。 */
+    async subscriptionNodes(id) {
+      const query = id ? `?id=${encodeURIComponent(id)}` : '';
+      return (await request(`/api/v1/subscription-nodes${query}`)).data;
+    },
+    async setSubscriptionNodeEnabled(subscriptionId, nodeId, enabled) {
+      return (await request(`/api/v1/subscriptions/${encodeURIComponent(subscriptionId)}/nodes/${encodeURIComponent(nodeId)}`, {
+        method: 'PUT', body: JSON.stringify({ enabled: !!enabled })
+      })).data;
     },
     async geodata(kind) { return (await request(`/api/v1/geodata/${encodeURIComponent(kind)}`)).data; },
     async importNodes(document) {

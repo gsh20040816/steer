@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* 节点：订阅分组 + 行内/批量测速 + 协议抽屉编辑 + 分享链接导入/导出。 */
+/* 节点：手动节点（草稿）+ 只读的订阅节点分组 + 行内/批量测速 + 协议抽屉编辑 + 分享链接导入/导出。 */
 'use strict';
 (function () {
   const S = window.S;
@@ -7,6 +7,8 @@
   const ui = S.ui;
 
   const MANUAL = '_manual';
+  const SUBSCRIPTION_NODE_ACTIONS = S.uiSpec.subscription_nodes?.actions || {};
+  const actionLabel = (key) => SUBSCRIPTION_NODE_ACTIONS[key]?.zh_cn || SUBSCRIPTION_NODE_ACTIONS[key]?.label || key;
   let activeGroup = MANUAL;
   let displaySortMode = 'default';
   let displaySortDirection = S.uiSpec.node_display_sorting?.default_direction || 'best_first';
@@ -133,21 +135,76 @@
     return formatEndpoint(node.server, node.server_port);
   }
 
-  function groupOf(node) { return node.source_subscription || MANUAL; }
+  /* 草稿里只有手动节点；订阅节点来自订阅节点读取接口，按订阅分组、只读。 */
+  function groupOf(node) {
+    return S.store.intent.nodes.includes(node) ? MANUAL : (node.source_subscription || MANUAL);
+  }
   function groups(intent) {
     const subs = new Map(intent.subscriptions.map((s) => [s.id, s]));
-    const list = [{ id: MANUAL, label: '手动节点', count: 0 }];
-    const index = { [MANUAL]: list[0] };
-    intent.nodes.forEach((node) => {
-      const id = groupOf(node);
-      if (!index[id]) {
-        const sub = subs.get(id);
-        index[id] = { id, label: sub ? (sub.name || id) : `缺失订阅：${id}`, count: 0 };
-        list.push(index[id]);
+    return [
+      { id: MANUAL, label: '手动节点', nodes: intent.nodes },
+      ...asList(S.store.subscriptionNodes).map((entry) => ({
+        id: entry.id, label: subs.get(entry.id)?.name || entry.id, nodes: entry.nodes
+      }))
+    ];
+  }
+
+  /* ---------- 订阅节点操作：启用/停用、复制到我的节点、清理已失效节点 ---------- */
+  function subscriptionEnableButton(node, isCurrent, root) {
+    const enabled = node.enabled !== false;
+    const label = actionLabel(enabled ? 'disable' : 'enable');
+    const button = h('button', { class: 'btn btn--sm btn--ghost', onclick: async () => {
+      button.disabled = true;
+      button.classList.add('spinning');
+      try {
+        await S.store.setSubscriptionNodeEnabled(node.source_subscription, node.id, !enabled);
+        ui.toast(`订阅节点 ${node.name || node.id} 已${label}`, 'ok');
+      } catch (error) {
+        ui.toast(`${label}失败：${ui.subscriptionErrorMessage(error)}`, 'err');
       }
-      index[id].count++;
+      button.classList.remove('spinning');
+      button.disabled = false;
+      if (isCurrent()) view.render(root);
+    } }, label);
+    return button;
+  }
+
+  function copyToManual(node, root) {
+    const copy = S.store.manualCopy(node);
+    if (!copy) {
+      ui.toast('这个订阅节点已经不存在；请刷新节点列表后重试', 'warn');
+      return;
+    }
+    /* manual_copy 由后台按共享规则生成（不含 ID）；这里只按手动节点的规则分配新 ID。 */
+    const manual = { id: ui.newCollectionID('nodes'), ...copy };
+    S.store.intent.nodes.push(manual);
+    S.store.touch();
+    activeGroup = MANUAL;
+    ui.toast(`${manual.name || '订阅节点'} 已复制到我的节点 · 未保存`, 'info');
+    view.render(root);
+    openNodeEditor(manual);
+  }
+
+  function confirmClean(node, isCurrent, root) {
+    if (!ui.guardCollectionDeletion('nodes', node.id, node.name || node.id)) return;
+    const label = actionLabel('clean');
+    ui.dialog({
+      title: `${label}已失效节点 · ${node.name || node.id}`,
+      body: h('p', {}, '这个节点已经不在订阅里。清理后会从订阅节点中删除，不会修改任何路由。'),
+      actions: [
+        ['取消', null],
+        [label, async (close) => {
+          close();
+          try {
+            await S.store.cleanSubscriptionNode(node.source_subscription, node.id);
+            ui.toast(`已清理 ${node.name || '已失效节点'}`, 'ok');
+          } catch (error) {
+            ui.toast(`${label}失败：${ui.subscriptionErrorMessage(error)}`, 'err');
+          }
+          if (isCurrent()) view.render(root);
+        }, 'btn--danger']
+      ]
     });
-    return list;
   }
 
   function testButton(label, download, nodeId, eligible) {
@@ -483,14 +540,15 @@
     render(root) {
       const isCurrent = ui.beginRender(root);
       const intent = S.store.intent;
+      const allNodes = asList(S.store.allNodes);
       const pendingFocus = S.pendingObjectFocus?.object_type === 'node' ? S.pendingObjectFocus : null;
-      const pendingNode = pendingFocus && intent.nodes.find((node) => node.id === pendingFocus.object_id);
+      const pendingNode = pendingFocus && allNodes.find((node) => node.id === pendingFocus.object_id);
       if (pendingNode) activeGroup = groupOf(pendingNode);
       rowButtons.clear();
       const groupList = groups(intent);
       if (!groupList.some((g) => g.id === activeGroup)) activeGroup = MANUAL;
       const active = groupList.find((g) => g.id === activeGroup);
-      const sourceNodes = intent.nodes.filter((n) => groupOf(n) === activeGroup);
+      const sourceNodes = active.nodes;
       const nodes = sortNodesForDisplay(sourceNodes, displaySortMode, displaySortDirection, S.store.probeResults);
       const orderingDisabledReason = displaySortMode === 'default' ? '' : '顺序';
       const editable = activeGroup === MANUAL;
@@ -498,7 +556,7 @@
       const groupNav = h('div', { class: 'node-groups', role: 'tablist', 'aria-label': '节点分组' }, groupList.map((g) => h('button', {
         class: `chip ${g.id === activeGroup ? 'is-active' : ''}`, role: 'tab', 'aria-selected': String(g.id === activeGroup),
         onclick: () => { activeGroup = g.id; view.render(root); }
-      }, h('span', {}, g.label), h('span', { class: 'count' }, String(g.count)))));
+      }, h('span', {}, g.label), h('span', { class: 'count' }, String(g.nodes.length)))));
 
       const deleteNode = (node) => {
         if (!ui.guardCollectionDeletion('nodes', node.id, node.name || node.id)) return;
@@ -510,7 +568,7 @@
 
       const table = h('table', { class: 'table' }, [
         h('thead', {}, h('tr', {}, [
-          h('th', { class: 'collection-drag-column', 'aria-label': '顺序' }),
+          editable ? h('th', { class: 'collection-drag-column', 'aria-label': '顺序' }) : null,
           h('th', {}, '启用'), h('th', {}, '节点'), h('th', {}, '协议'), h('th', {}, '服务器'),
           h('th', { class: 'is-sortable' }, sortHeader('连接测速', 'connect', root)),
           h('th', { class: 'is-sortable' }, sortHeader('下载测速', 'download', root)),
@@ -522,20 +580,27 @@
           const down = testButton('下载', true, node.id, eligible);
           rowButtons.set(node.id, { conn, down });
           const exportReason = exportUnavailableReason(node);
-          const menu = ui.rowMenu([
-            { label: '导出链接', disabled: !!exportReason, title: exportReason || '导出包含完整凭据的节点分享链接', onclick: () => openExport(node) },
-            editable ? 'separator' : null,
-            editable ? { label: '删除', danger: true, onclick: () => deleteNode(node) } : null
+          const exportItem = { label: '导出链接', disabled: !!exportReason, title: exportReason || '导出包含完整凭据的节点分享链接', onclick: () => openExport(node) };
+          /* 订阅节点只读：只有启用/停用、复制到我的节点，已失效的另有清理。 */
+          const menu = ui.rowMenu(editable ? [
+            exportItem,
+            'separator',
+            { label: '删除', danger: true, onclick: () => deleteNode(node) }
+          ] : [
+            { label: actionLabel('copy_to_manual'), title: '复制成可以编辑的手动节点；原订阅节点和路由保持不变', onclick: () => copyToManual(node, root) },
+            exportItem,
+            node.pinned_stale ? 'separator' : null,
+            node.pinned_stale ? { label: actionLabel('clean'), danger: true, onclick: () => confirmClean(node, isCurrent, root) } : null
           ]);
-          const enabled = ui.toggle(node.enabled, (v) => { node.enabled = v; S.store.touch(); view.render(root); }, `启用 ${node.name || node.id}`);
-          enabled.disabled = !editable;
-          enabled.title = editable ? '启用或停用节点' : '订阅节点状态由订阅管理';
+          const enabled = editable
+            ? ui.toggle(node.enabled, (v) => { node.enabled = v; S.store.touch(); view.render(root); }, `启用 ${node.name || node.id}`)
+            : h('span', { class: `badge ${eligible ? 'badge--ok' : ''}`.trim() }, eligible ? '已启用' : '已停用');
           return h('tr', ui.collectionRowAttributes(
             'nodes', node, nodes, () => view.render(root), node.enabled === false ? 'is-disabled' : ''
           ), [
-            h('td', { class: 'collection-drag-column' }, ui.collectionDragHandle(
+            editable ? h('td', { class: 'collection-drag-column' }, ui.collectionDragHandle(
               'nodes', node, sourceNodes, () => view.render(root), { disabledReason: orderingDisabledReason }
-            )),
+            )) : null,
             h('td', {}, enabled),
             h('td', {}, h('div', { class: 'cell-inline' }, h('strong', {}, node.name || node.id), node.pinned_stale ? h('span', { class: 'badge badge--stale' }, '已失效') : null)),
             h('td', {}, h('span', { class: `tag protocol-badge protocol--${node.type}` }, PROTOCOL_LABEL[node.type] || node.type)),
@@ -545,7 +610,7 @@
             h('td', { class: 'col-actions' }, h('div', { class: 'row-actions' }, [
               editable
                 ? h('button', { class: 'btn btn--sm btn--ghost', onclick: () => openNodeEditor(node) }, '编辑')
-                : h('span', { class: 'badge', title: '订阅节点只读' }, '订阅'),
+                : subscriptionEnableButton(node, isCurrent, root),
               menu
             ]))
           ]);
@@ -561,12 +626,16 @@
       const importButton = () => h('button', { class: 'btn', onclick: openImport }, icon('upload', 15), '导入节点');
       const addButton = () => h('button', { class: 'btn btn--primary', onclick: () => openNodeEditor(ui.creationDraft('nodes')) }, icon('plus', 15), '添加节点');
       root.append(
-        ui.viewHead('节点', editable ? '手动添加的节点；拖动左侧手柄或按 ↑/↓ 调整顺序' : `来自订阅「${active?.label || ''}」的节点，只读`, [
+        ui.viewHead('节点', editable
+          ? '手动添加的节点；拖动左侧手柄或按 ↑/↓ 调整顺序'
+          : `来自订阅「${active?.label || ''}」的节点，只读；需要修改时请先「${actionLabel('copy_to_manual')}」`, [
           importButton(),
           editable ? addButton() : null
         ]),
         h('div', { class: 'toolbar-row' }, [groupNav, batch])
       );
+      if (S.store.subscriptionNodesError)
+        root.append(h('div', { class: 'alert alert--err' }, '订阅节点暂时无法读取；可以点击顶部「刷新」重试。'));
       root.append(
         nodes.length
           ? h('div', { class: 'card table-card' }, h('div', { class: 'table-wrap' }, table))
@@ -574,9 +643,9 @@
       );
 
       const focus = ui.takeObjectFocus('node');
-      const focusedNode = focus && intent.nodes.find((node) => node.id === focus.object_id);
-      if (focusedNode && !focusedNode.source_subscription) openNodeEditor(focusedNode, focus.option);
-      else if (focusedNode) ui.toast(`已定位订阅节点 ${focusedNode.name || focusedNode.id}；该对象只读，请修改订阅源或高级配置`, 'warn');
+      const focusedNode = focus && allNodes.find((node) => node.id === focus.object_id);
+      if (focusedNode && groupOf(focusedNode) === MANUAL) openNodeEditor(focusedNode, focus.option);
+      else if (focusedNode) ui.toast(`已定位订阅节点 ${focusedNode.name || focusedNode.id}；订阅节点只读，需要修改时请先「${actionLabel('copy_to_manual')}」`, 'warn');
     }
   };
 

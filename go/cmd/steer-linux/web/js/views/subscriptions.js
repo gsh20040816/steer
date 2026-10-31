@@ -1,12 +1,18 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* 订阅：状态表 + 立即更新 + stale 节点清理（引用安全由后端拒绝）+ 编辑抽屉。 */
+/* 订阅：状态表 + 立即更新 + stale 节点清理（引用安全由后端拒绝）+ 编辑抽屉。
+   订阅节点在订阅节点存储里：更新、清理只刷新节点列表，不重新载入配置草稿。 */
 'use strict';
 (function () {
   const S = window.S;
-  const { h, icon, fmtTime } = S;
+  const { h, icon, fmtTime, asList } = S;
   const ui = S.ui;
+  const CLEAN_LABEL = S.uiSpec.subscription_nodes?.actions?.clean?.zh_cn || '清理';
 
   let statuses = null;
+
+  function storedNodes(subscriptionId) {
+    return asList(S.store.subscriptionNodes).find((entry) => entry.id === subscriptionId)?.nodes || [];
+  }
 
   function latestFailure(status) {
     const failure = status.last_failure;
@@ -32,18 +38,20 @@
     return `订阅节点已更新，当前运行配置未改变；无引用的消失节点已自动删除，仍被路由使用的节点已自动保留并应尽快解除引用。${counts}`;
   }
 
+  /* 只从草稿删除订阅；保存成功后由后台删除它的订阅节点存储。路由引用由删除保护拦住。 */
   function requestDelete(subscription) {
     const intent = S.store.intent;
-    const owned = intent.nodes.filter((node) => node.source_subscription === subscription.id);
+    const owned = storedNodes(subscription.id);
     if (!ui.guardCollectionDeletion('subscriptions', subscription.id, subscription.name || subscription.id)) return;
     ui.dialog({
       title: `删除订阅 · ${subscription.name || subscription.id}`,
-      body: h('p', {}, `将从工作副本删除订阅和 ${owned.length} 个订阅节点。保存前可重新加载恢复。`),
+      body: h('p', {}, owned.length
+        ? `将从工作副本删除订阅；保存后，它的 ${owned.length} 个订阅节点也会一并删除。保存前可重新加载恢复。`
+        : '将从工作副本删除订阅。保存前可重新加载恢复。'),
       actions: [
         ['取消', null],
         ['删除', (close) => {
           intent.subscriptions = intent.subscriptions.filter((item) => item.id !== subscription.id);
-          intent.nodes = intent.nodes.filter((node) => node.source_subscription !== subscription.id);
           S.store.touch();
           ui.toast(`已删除 ${subscription.name || subscription.id} · 未保存`, 'warn');
           close();
@@ -95,47 +103,34 @@
     return opened;
   }
 
-  function openCleanup(subscription, nodes, isCurrent, root) {
+  /* 清理只写订阅节点存储，不碰配置草稿；草稿里的路由引用先由删除保护拦住，已保存配置的引用由后台拒绝。 */
+  function openCleanup(subscription, isCurrent, root) {
     const box = h('div', { class: 'u-mt-10' });
     const renderList = () => {
       box.replaceChildren();
-      const remaining = nodes.filter((n) => n.pinned_stale);
+      const remaining = storedNodes(subscription.id).filter((n) => n.pinned_stale);
       if (!remaining.length) {
         box.replaceChildren(h('p', { class: 'muted' }, '没有已失效节点。'));
         return;
       }
-      box.append(h('ul', { class: 'issue-list' }, remaining.map((node) => h('li', { class: 'issue issue--warning' }, [
-        h('span', { class: 'issue__msg' }, node.name || node.id),
-        h('button', { class: 'btn btn--sm btn--danger', onclick: async () => {
+      box.append(h('ul', { class: 'issue-list' }, remaining.map((node) => {
+        const button = h('button', { class: 'btn btn--sm btn--danger', onclick: async () => {
           if (!ui.guardCollectionDeletion('nodes', node.id, node.name || node.id)) return;
-          if (S.store.dirty) {
-            ui.toast('请先保存或放弃工作副本修改，再清理已失效节点', 'warn');
-            return;
-          }
+          button.disabled = true;
           try {
-            const startedEpoch = S.store.draftEpoch;
-            await S.api.cleanNode(subscription.id, node.id);
-            let reloaded = false;
-            if (S.store.draftEpoch !== startedEpoch && S.store.dirty) {
-              await S.store.refreshOverview();
-              ui.toast(`已清理 ${node.name || '节点'}；期间工作副本已变化，已保留本地修改`, 'warn');
-            } else {
-              const reload = await S.store.reload();
-              reloaded = reload?.ok === true;
-              if (!reloaded) ui.toast(`已清理 ${node.name || '节点'}；工作副本未能自动重新载入`, 'warn');
-            }
-            if (reloaded) {
-              const index = nodes.indexOf(node);
-              if (index >= 0) nodes.splice(index, 1);
-              ui.toast(`已清理 ${node.name || '失效节点'}`, 'ok');
-            }
-            renderList();
-            if (isCurrent()) view.render(root);
+            const { refreshError } = await S.store.cleanSubscriptionNode(subscription.id, node.id);
+            ui.toast(refreshError
+              ? `已清理 ${node.name || '已失效节点'}；节点列表刷新失败，请稍后刷新`
+              : `已清理 ${node.name || '已失效节点'}`, refreshError ? 'warn' : 'ok');
           } catch (e) {
-            ui.toast(e.message, 'err');
+            ui.toast(`${CLEAN_LABEL}失败：${ui.subscriptionErrorMessage(e)}`, 'err');
           }
-        } }, '移除')
-      ]))));
+          button.disabled = false;
+          renderList();
+          if (isCurrent()) view.render(root);
+        } }, CLEAN_LABEL);
+        return h('li', { class: 'issue issue--warning' }, [h('span', { class: 'issue__msg' }, node.name || node.id), button]);
+      })));
     };
     renderList();
     ui.dialog({
@@ -181,23 +176,16 @@
             updateBtn.classList.add('spinning');
             updateBtn.textContent = '更新中…';
             try {
-              const startedEpoch = S.store.draftEpoch;
+              /* 订阅更新只写订阅节点存储和状态，配置和它的 revision 不变，草稿保持原样。 */
               const res = await S.api.updateSubscription(s.id);
               const updated = (res.subscriptions || []).find((item) => item.id === s.id);
-              let reloaded = false;
-              if (S.store.draftEpoch !== startedEpoch && S.store.dirty) {
-                await S.store.refreshOverview();
-                ui.toast('节点列表已更新；期间工作副本已变化，已保留本地修改且未自动重新载入', 'warn');
-              } else {
-                const reload = await S.store.reload();
-                reloaded = reload?.ok === true;
-                if (!reloaded) ui.toast('节点列表已更新；工作副本未自动重新载入，请稍后重试', 'warn');
-              }
-              if (reloaded) ui.toast(updateNotice(updated), 'ok');
+              const [refreshed] = await Promise.allSettled([S.store.refreshSubscriptionNodes(), S.store.refreshOverview()]);
+              if (refreshed.status === 'rejected') ui.toast('订阅已更新，但节点列表刷新失败；请稍后点击顶部「刷新」', 'warn');
+              else ui.toast(updateNotice(updated), 'ok');
               updateBtn.textContent = '立即更新';
               if (isCurrent()) await view.render(root);
             } catch (e) {
-              ui.toast(e.message, 'err');
+              ui.toast(ui.subscriptionErrorMessage(e), 'err');
               updateBtn.textContent = '立即更新';
               if (isCurrent()) view.render(root);
             }
@@ -209,7 +197,7 @@
           const menu = ui.rowMenu([
             s.stale?.length ? {
               label: `清理失效节点 ×${s.stale.length}`,
-              onclick: () => openCleanup(s, intent.nodes.filter((n) => n.source_subscription === s.id), isCurrent, root)
+              onclick: () => openCleanup(s, isCurrent, root)
             } : null,
             s.stale?.length ? 'separator' : null,
             { label: '删除', danger: true, onclick: () => requestDelete(s) }

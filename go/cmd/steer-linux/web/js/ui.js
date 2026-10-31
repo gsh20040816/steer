@@ -167,6 +167,7 @@
     }, 0);
   }
 
+  /* intent 的 nodes 要包含订阅节点（见 guardCollectionDeletion），订阅的节点按 source_subscription 归属。 */
   function collectionReferences(intent, targetCollection, targetId) {
     if (!intent || !targetId) return [];
     if (targetCollection === 'subscriptions') {
@@ -196,7 +197,8 @@
   }
 
   function guardCollectionDeletion(targetCollection, targetId, label) {
-    const references = collectionReferences(S.store.intent, targetCollection, targetId);
+    const intent = S.store.intent && { ...S.store.intent, nodes: S.store.allNodes };
+    const references = collectionReferences(intent, targetCollection, targetId);
     if (!references.length) return true;
     dialog({
       title: `不能删除 · ${label || targetId}`,
@@ -223,14 +225,15 @@
           showValidation(writeValidation, apply && res.res.applied === false ? '保存和应用校验结果' : '保存校验结果');
         }
         const overviewWarning = res.overviewError ? `；状态刷新失败：${res.overviewError.message}` : '';
+        const unchanged = apply ? unchangedSuffix(res.res.apply_result) : '';
         if (apply && res.res.applied === false) {
           toast(`配置已保存但应用失败：${applyFailureSummary(res.res.apply_result || res.res)}${res.staleDraft ? '；期间新修改仍未保存' : ''}${overviewWarning}`, 'err');
         } else if (res.staleDraft) {
-          toast(`${apply ? '请求时的工作副本已保存并应用；期间新增修改仍未保存' : '请求时的工作副本已保存；期间新增修改仍未保存'}${overviewWarning}。`, 'warn');
+          toast(`${apply ? `请求时的工作副本已保存并应用${unchanged}；期间新增修改仍未保存` : '请求时的工作副本已保存；期间新增修改仍未保存'}${overviewWarning}。`, 'warn');
         } else if (res.overviewError) {
-          toast(`${apply ? '已保存并应用' : '已保存'}${overviewWarning}`, 'warn');
+          toast(`${apply ? `已保存并应用${unchanged}` : '已保存'}${overviewWarning}`, 'warn');
         } else {
-          toast(apply ? '已保存并应用。' : '已保存。', 'ok');
+          toast(apply ? `已保存并应用${unchanged}。` : '已保存。', 'ok');
         }
       } else if (res.conflict) {
         conflictDialog(res.conflict, null, apply);
@@ -283,8 +286,9 @@
         toast('已有保存、应用或重新载入操作正在进行，请等待完成。', 'warn');
       } else if (result.ok) {
         if (result.validation?.warnings?.length) showValidation(result.validation, '应用已保存配置校验结果');
-        if (result.overviewError) toast(`已应用已保存配置；状态刷新失败：${result.overviewError.message}`, 'warn');
-        else toast('已应用已保存配置。', 'ok');
+        const unchanged = unchangedSuffix(result);
+        if (result.overviewError) toast(`已应用已保存配置${unchanged}；状态刷新失败：${result.overviewError.message}`, 'warn');
+        else toast(`已应用已保存配置${unchanged}。`, 'ok');
       } else {
         if (result.validation) showValidation(result.validation, '应用已保存配置校验失败');
         else toast(`应用已保存配置失败：${applyFailureSummary(result)}${result.overviewError ? `；状态刷新失败：${result.overviewError.message}` : ''}`, 'err');
@@ -331,14 +335,15 @@
       const res = await S.store.setEnabled(next);
       if (res.ok) {
         const overviewWarning = res.overviewError ? `；状态刷新失败：${res.overviewError.message}` : '';
+        const unchanged = unchangedSuffix(res.res.apply_result);
         if (res.res.applied === false) {
           toast(`已保存为${next ? '启用' : '禁用'}，但应用失败：${applyFailureSummary(res.res.apply_result || res.res)}${res.staleDraft ? '；期间新修改仍未保存' : ''}${overviewWarning}`, 'err');
         } else if (res.staleDraft) {
-          toast(`已保存并应用${next ? '启用' : '禁用'}状态；期间新增修改仍未保存${overviewWarning}。`, 'warn');
+          toast(`已保存并应用${next ? '启用' : '禁用'}状态${unchanged}；期间新增修改仍未保存${overviewWarning}。`, 'warn');
         } else if (res.overviewError) {
-          toast(`${next ? 'Steer 已启用并应用' : 'Steer 已禁用并清理运行资源'}${overviewWarning}`, 'warn');
+          toast(`${next ? 'Steer 已启用并应用' : 'Steer 已禁用并清理运行资源'}${unchanged}${overviewWarning}`, 'warn');
         } else {
-          toast(next ? 'Steer 已启用并应用。' : 'Steer 已禁用并清理运行资源。', 'ok');
+          toast(`${next ? 'Steer 已启用并应用' : 'Steer 已禁用并清理运行资源'}${unchanged}。`, 'ok');
         }
       }
     } catch (error) {
@@ -368,6 +373,42 @@
     return error;
   }
 
+  /* 共享约定：ok、activated 为 true 且 restarted 为 false 时，说明运行配置没变、服务没有重启。 */
+  function applyUnchanged(result) {
+    const when = S.uiSpec.apply_result?.unchanged_notice_when;
+    return !!when && !!result && typeof result === 'object' &&
+      Object.entries(when).every(([field, expected]) => result[field] === expected);
+  }
+
+  function unchangedNotice() {
+    return S.uiSpec.apply_result?.unchanged_notice?.zh_cn || '';
+  }
+
+  function unchangedSuffix(result) {
+    return applyUnchanged(result) && unchangedNotice() ? `；${unchangedNotice()}` : '';
+  }
+
+  /* 订阅接口的结构化错误码 → 用户能看懂的原因；不显示「CODE: detail」原文和内部 ID。 */
+  function subscriptionErrorMessage(error) {
+    const code = error?.code || '';
+    if (code === 'NODE_STILL_REFERENCED') {
+      const routes = asList(S.store?.intent?.routes);
+      const names = [...new Set(asList(error.details?.validation?.errors)
+        .filter((issue) => issue.object_type === 'route')
+        .map((issue) => routes.find((route) => route.id === issue.object_id))
+        .filter(Boolean)
+        .map((route) => route.name || ({ direct: '直连', block: '拒绝' })[route.kind] || route.id))];
+      return `仍有路由在使用这个节点${names.length ? `（${names.join('、')}）` : ''}，请先修改这些路由`;
+    }
+    return {
+      SUBSCRIPTION_NOT_FOUND: '订阅不在已保存的配置里，请先保存配置',
+      SUBSCRIPTION_NODE_NOT_FOUND: '这个订阅节点已经不存在，节点列表已刷新',
+      SUBSCRIPTION_NODE_CURRENT: '只能清理已失效的节点',
+      VALIDATION_FAILED: '已保存的配置没有通过校验，请先修复后保存',
+      SUBSCRIPTION_NODE_STORE_FAILED: '订阅节点存储读写失败，请查看诊断日志'
+    }[code] || error?.message || '操作失败';
+  }
+
   function applyRecord(status, includeTechnicalDetail = false) {
     const record = status?.last_apply || null;
     if (!record) return h('p', { class: 'muted' }, '尚无应用记录。');
@@ -379,6 +420,7 @@
         h('strong', {}, result.ok ? '应用成功' : '应用失败'),
         h('span', { class: 'muted' }, applyTime(record))
       ]),
+      applyUnchanged(result) ? h('p', { class: 'muted' }, unchangedNotice()) : null,
       failedBeforeActivation
         ? h('p', { class: 'alert alert--err' }, '新配置未启用，当前运行配置保持不变。')
         : (!result.ok && result.activated
@@ -397,10 +439,11 @@
       const res = await S.store.save(!!apply, true);
       if (res.ok) {
         const overviewWarning = res.overviewError ? `；状态刷新失败：${res.overviewError.message}` : '';
+        const unchanged = apply ? unchangedSuffix(res.res.apply_result) : '';
         if (apply && res.res.applied === false) toast(`已覆盖保存，但应用失败：${applyFailureSummary(res.res.apply_result || res.res)}${res.staleDraft ? '；期间新修改仍未保存' : ''}${overviewWarning}`, 'err');
-        else if (res.staleDraft) toast(`请求时的工作副本已覆盖保存；期间新增修改仍未保存${overviewWarning}。`, 'warn');
-        else if (res.overviewError) toast(`${apply ? '已覆盖保存并应用' : '已覆盖保存'}${overviewWarning}`, 'warn');
-        else toast(apply ? '已覆盖保存并应用。' : '已覆盖保存。', 'ok');
+        else if (res.staleDraft) toast(`请求时的工作副本已覆盖保存${unchanged}；期间新增修改仍未保存${overviewWarning}。`, 'warn');
+        else if (res.overviewError) toast(`${apply ? `已覆盖保存并应用${unchanged}` : '已覆盖保存'}${overviewWarning}`, 'warn');
+        else toast(apply ? `已覆盖保存并应用${unchanged}。` : '已覆盖保存。', 'ok');
       } else if (res.busy) {
         toast('已有保存或重新载入操作正在进行，请等待完成。', 'warn');
       }
@@ -889,7 +932,8 @@
       ROUTE_DETOUR_CYCLE: '前置代理链存在循环引用',
       LOCAL_PROXY_AUTH_REQUIRED: '该监听地址允许其他设备连接，必须设置用户名和密码',
       INVALID_DURATION: '更新间隔必须是大于零的时长',
-      DNS_PROJECTION_EMPTY: '该规则仅含连接阶段条件，不影响 DNS 上游选择'
+      DNS_PROJECTION_EMPTY: '该规则仅含连接阶段条件，不影响 DNS 上游选择',
+      SUBSCRIPTION_NODE_IN_CONFIG: '配置里不能包含订阅节点；订阅节点由订阅管理'
     }[issue.code] || issue.message;
   }
 
@@ -1287,15 +1331,23 @@
     return values;
   }
 
-  function creationDraft(collection, overrides = {}) {
-    const defaults = JSON.parse(JSON.stringify(S.uiSpec.creation_defaults?.[collection] || {}));
+  /* 新对象 ID：共享前缀 + 随机后缀，避开草稿里的全部 ID 和订阅节点 ID。 */
+  function newCollectionID(collection) {
     const prefix = S.uiSpec.id_policy?.collection_prefixes?.[collection] || 'item';
-    const used = new Set(Object.values(S.store?.intent || {}).flatMap((value) =>
-      Array.isArray(value) ? value.map((item) => item?.id).filter(Boolean) : []));
+    const used = new Set([
+      ...Object.values(S.store?.intent || {}).flatMap((value) =>
+        Array.isArray(value) ? value.map((item) => item?.id) : []),
+      ...asList(S.store?.allNodes).map((node) => node?.id)
+    ].filter(Boolean));
     let id = S.uid(prefix);
     let collision = 2;
     while (used.has(id)) id = `${prefix}-${collision++}`;
-    return { ...defaults, id, ...overrides };
+    return id;
+  }
+
+  function creationDraft(collection, overrides = {}) {
+    const defaults = JSON.parse(JSON.stringify(S.uiSpec.creation_defaults?.[collection] || {}));
+    return { ...defaults, id: newCollectionID(collection), ...overrides };
   }
 
   function referenceOptions(collection, items) {
@@ -1319,7 +1371,7 @@
           detail += `${detail ? ' · ' : ''}订阅 ${source?.name || '未命名订阅'}`;
         }
       } else if (collection === 'routes') {
-        const node = asList(S.store.intent?.nodes).find((candidate) => candidate.id === item.node);
+        const node = asList(S.store.allNodes).find((candidate) => candidate.id === item.node);
         detail = item.kind === 'single' ? `节点 ${node?.name || '未选择'}` : (item.kind || '');
       } else if (collection === 'dns_profiles') {
         detail = endpoint(item.server, item.server_port) || item.protocol || '';
@@ -1330,5 +1382,5 @@
     });
   }
 
-  Object.assign(S, { ui: { beginRender, beginRoute, isCurrentRoute, renderShell, renderStatusStrip, runState, toast, dialog, conflictDialog, drawer, field, input, textarea, select, multiChoice, toggle, toggleRow, chips, matchEditor, issueList, viewHead, section, fact, facts, emptyState, rowMenu, collectionItemMovable, selectedCollectionID, selectCollectionItem, collectionDragHandle, collectionRowAttributes, selectWithMissing, creationDraft, referenceOptions, classifyLocalProxyListen, applyRecord, applyTime, generationLabel, onValidate, onSave, onDiscard, onToggleEnabled, onRefreshState, jumpToObject, takeObjectFocus, focusDrawerOption, collectionReferences, guardCollectionDeletion } });
+  Object.assign(S, { ui: { beginRender, beginRoute, isCurrentRoute, renderShell, renderStatusStrip, runState, toast, dialog, conflictDialog, drawer, field, input, textarea, select, multiChoice, toggle, toggleRow, chips, matchEditor, issueList, viewHead, section, fact, facts, emptyState, rowMenu, collectionItemMovable, selectedCollectionID, selectCollectionItem, collectionDragHandle, collectionRowAttributes, selectWithMissing, newCollectionID, creationDraft, referenceOptions, classifyLocalProxyListen, applyRecord, applyTime, generationLabel, applyUnchanged, subscriptionErrorMessage, onValidate, onSave, onDiscard, onToggleEnabled, onRefreshState, jumpToObject, takeObjectFocus, focusDrawerOption, collectionReferences, guardCollectionDeletion } });
 })();

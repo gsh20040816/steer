@@ -117,7 +117,7 @@
         sub: '当前工作副本中的对象数量',
         attrs: { 'data-overview-region': 'object_scale' }
       }, h('div', { class: 'stats stats--inset' }, [
-        stat('节点', intent.nodes.length, 'nodes'),
+        stat('节点', S.store.allNodes.length, 'nodes'),
         stat('路由', intent.routes.length, 'routes'),
         stat('DNS 配置', intent.dns_profiles.length, 'dns'),
         stat('本地代理', intent.local_proxies.length, 'proxies'),

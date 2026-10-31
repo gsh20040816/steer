@@ -20,6 +20,11 @@
   let probeResults = { latest_results: [], warnings: [] };
   let externalRevision = '';
   let lastRefreshedAt = '';
+  /* 订阅节点来自订阅节点存储，不进草稿：[{ id, nodes }]，按已保存配置里的订阅分组。 */
+  let subscriptionNodeLists = [];
+  let manualCopies = new Map();
+  let subscriptionNodesError = '';
+  let subscriptionNodesSequence = 0;
 
   const listeners = new Set();
   const emit = () => { for (const fn of listeners) fn(); };
@@ -48,6 +53,45 @@
     mutationEpoch++;
   };
   const snapshotIntent = () => JSON.parse(JSON.stringify(intent));
+  const manualCopyKey = (subscriptionId, nodeId) => `${subscriptionId}\n${nodeId}`;
+  /* manual_copy 单独保存：节点对象原样交给导出等接口，不能夹带额外字段。 */
+  const installSubscriptionNodes = (value) => {
+    const lists = [];
+    const copies = new Map();
+    for (const entry of Array.isArray(value?.subscriptions) ? value.subscriptions : []) {
+      if (!entry || typeof entry.id !== 'string') continue;
+      const nodes = (Array.isArray(entry.nodes) ? entry.nodes : [])
+        .filter((listed) => listed && typeof listed === 'object')
+        .map((listed) => {
+          const { manual_copy: manualCopy, ...node } = listed;
+          if (manualCopy && typeof manualCopy === 'object') copies.set(manualCopyKey(entry.id, node.id), manualCopy);
+          return node;
+        });
+      lists.push({ id: entry.id, nodes });
+    }
+    subscriptionNodeLists = lists;
+    manualCopies = copies;
+    subscriptionNodesError = '';
+  };
+  /* 只采用最近一次发起的读取，乱序返回的旧列表不能覆盖新列表；失败时保留上一份列表。 */
+  const loadSubscriptionNodes = async () => {
+    const sequence = ++subscriptionNodesSequence;
+    try {
+      const value = await S.api.subscriptionNodes();
+      if (sequence === subscriptionNodesSequence) installSubscriptionNodes(value);
+      return { ok: sequence === subscriptionNodesSequence };
+    } catch (error) {
+      if (sequence === subscriptionNodesSequence) subscriptionNodesError = error?.message || '订阅节点读取失败';
+      throw error;
+    }
+  };
+  /* 订阅或节点已经不存在时，界面上的列表已过期，重新读取一次。 */
+  const LIST_OUTDATED_CODES = new Set(['SUBSCRIPTION_NOT_FOUND', 'SUBSCRIPTION_NODE_NOT_FOUND']);
+  const refreshAfterNodeError = async (error) => {
+    if (!LIST_OUTDATED_CODES.has(error?.code)) return;
+    try { await loadSubscriptionNodes(); } catch (_) { /* keep the explicit operation error */ }
+    emit();
+  };
   const parseDraft = (text) => {
     const parsed = JSON.parse(text);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -80,8 +124,68 @@
     get externalRevision() { return externalRevision; },
     get hasExternalChange() { return externalRevision !== '' && externalRevision !== revision; },
     get lastRefreshedAt() { return lastRefreshedAt; },
+    /* 草稿里仍存在的订阅的存储节点，按草稿里的订阅顺序；和后台校验时拼接的节点一致。 */
+    get subscriptionNodes() {
+      const lists = new Map(subscriptionNodeLists.map((entry) => [entry.id, entry]));
+      const seen = new Set();
+      return (Array.isArray(intent?.subscriptions) ? intent.subscriptions : []).map((subscription) => {
+        if (!subscription?.id || seen.has(subscription.id)) return null;
+        seen.add(subscription.id);
+        return lists.get(subscription.id) || null;
+      }).filter(Boolean);
+    },
+    /* 手动节点（草稿）+ 订阅节点：路由选择、引用标签和删除保护都用这份列表。 */
+    get allNodes() {
+      return [...(Array.isArray(intent?.nodes) ? intent.nodes : []), ...store.subscriptionNodes.flatMap((entry) => entry.nodes)];
+    },
+    get subscriptionNodesError() { return subscriptionNodesError; },
 
     normalizeIntent,
+
+    /* 「复制到我的节点」直接使用后台按共享规则生成的 manual_copy（不含 ID）。 */
+    manualCopy(node) {
+      const copy = node && manualCopies.get(manualCopyKey(node.source_subscription, node.id));
+      return copy ? JSON.parse(JSON.stringify(copy)) : null;
+    },
+
+    async refreshSubscriptionNodes() {
+      try {
+        return await loadSubscriptionNodes();
+      } finally {
+        emit();
+      }
+    },
+
+    /* 启用/停用只写订阅节点存储，不改草稿和配置的 revision；成功时后台返回完整列表。 */
+    async setSubscriptionNodeEnabled(subscriptionId, nodeId, enabled) {
+      const sequence = ++subscriptionNodesSequence;
+      let value;
+      try {
+        value = await S.api.setSubscriptionNodeEnabled(subscriptionId, nodeId, enabled);
+      } catch (error) {
+        await refreshAfterNodeError(error);
+        throw error;
+      }
+      if (sequence === subscriptionNodesSequence) {
+        installSubscriptionNodes(value);
+        emit();
+      }
+      await store.refreshOverview().catch(() => null);
+      return value;
+    },
+
+    /* 清理只删除没有引用的已失效节点，写订阅节点存储；配置和它的 revision 不变。 */
+    async cleanSubscriptionNode(subscriptionId, nodeId) {
+      let result;
+      try {
+        result = await S.api.cleanNode(subscriptionId, nodeId);
+      } catch (error) {
+        await refreshAfterNodeError(error);
+        throw error;
+      }
+      const [refreshed] = await Promise.allSettled([store.refreshSubscriptionNodes(), store.refreshOverview()]);
+      return { result, refreshError: refreshed.status === 'rejected' ? refreshed.reason : null };
+    },
 
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
 
@@ -89,7 +193,8 @@
       const [config, ov, runtimeInfo, probeDiagnostics, persistedProbeResults] = await Promise.all([
         S.api.config(), S.api.overview(), S.api.runtime(),
         S.api.diagnostics().catch(() => ({ warnings: ['诊断状态暂时不可用'] })),
-        S.api.probeResults().catch(() => ({ latest_results: [], warnings: ['最近测试结果暂时不可用'] }))
+        S.api.probeResults().catch(() => ({ latest_results: [], warnings: ['最近测试结果暂时不可用'] })),
+        loadSubscriptionNodes().catch(() => null)
       ]);
       installIntent(config.intent);
       revision = config.revision;
@@ -183,9 +288,11 @@
     async refreshServerState() {
       if (saving || reloading || applying) return { ok: false, busy: true };
       const expectedState = stateEpoch;
+      /* 定时的订阅更新只改订阅节点存储、不改配置的 revision，所以节点列表一起刷新。 */
       const [refreshedOverview, refreshedRuntime, refreshedDiagnostics, refreshedProbeResults] = await Promise.all([
         S.api.overview(), S.api.runtime(), S.api.diagnostics().catch(() => diagnostics),
-        S.api.probeResults().catch(() => probeResults)
+        S.api.probeResults().catch(() => probeResults),
+        loadSubscriptionNodes().catch(() => null)
       ]);
       if (expectedState !== stateEpoch) return { ok: false, superseded: true };
       overview = refreshedOverview;
@@ -239,7 +346,10 @@
           const refreshedOverview = await S.api.overview();
           if (expectedState === stateEpoch) {
             overview = refreshedOverview;
-            const [nextDiagnostics, nextProbeResults] = await Promise.allSettled([S.api.diagnostics(), S.api.probeResults()]);
+            /* 保存成功后，后台删掉了被删除订阅的节点存储；新订阅也从这里开始出现。 */
+            const [nextDiagnostics, nextProbeResults] = await Promise.allSettled([
+              S.api.diagnostics(), S.api.probeResults(), loadSubscriptionNodes()
+            ]);
             if (nextDiagnostics.status === 'fulfilled') diagnostics = normalizeDiagnostics(nextDiagnostics.value);
             if (nextProbeResults.status === 'fulfilled') probeResults = normalizeProbeResults(nextProbeResults.value);
             emit();
@@ -271,7 +381,7 @@
           dirty = false;
         }
         // Preserve the original revision for dirty drafts: advancing it would
-        // allow a later save to silently overwrite new subscription inventory.
+        // allow a later save to silently overwrite changes saved elsewhere.
         let overviewError = null;
         try { await store.refreshOverview(); } catch (error) { overviewError = error; }
         return { ok: true, res, staleDraft: dirty, overviewError };
@@ -312,7 +422,8 @@
       try {
         const [config, ov, probeDiagnostics, persistedProbeResults] = await Promise.all([
           S.api.config(), S.api.overview(), S.api.diagnostics().catch(() => diagnostics),
-          S.api.probeResults().catch(() => probeResults)
+          S.api.probeResults().catch(() => probeResults),
+          loadSubscriptionNodes().catch(() => null)
         ]);
         if (operation !== stateEpoch) return { ok: false, superseded: true };
         if (mutationEpoch !== startedMutation) return { ok: false, staleDraft: true };

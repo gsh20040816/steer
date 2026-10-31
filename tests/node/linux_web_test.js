@@ -216,6 +216,10 @@ function createEnvironment(save, intent = { main: { enabled: true } }, options =
     return element;
   };
   let touchCount = 0;
+  /* 订阅节点不在草稿里：测试替身和真实 store 一样，从订阅节点读取接口的载荷得到只读分组。 */
+  const subscriptionNodeLists = (options.subscriptionNodes?.subscriptions || []).map((entry) => ({
+    id: entry.id, nodes: (entry.nodes || []).map(({ manual_copy: _manualCopy, ...node }) => node)
+  }));
   const S = {
     uiSpec,
     h,
@@ -252,6 +256,15 @@ function createEnvironment(save, intent = { main: { enabled: true } }, options =
         this.probeResults = await S.api.probeResults();
         return this.probeResults;
       },
+      get subscriptionNodes() {
+        const configured = new Set((this.intent?.subscriptions || []).map((subscription) => subscription.id));
+        return subscriptionNodeLists.filter((entry) => configured.has(entry.id));
+      },
+      get allNodes() {
+        return [...(this.intent?.nodes || []), ...this.subscriptionNodes.flatMap((entry) => entry.nodes)];
+      },
+      subscriptionNodesError: '',
+      async refreshSubscriptionNodes() { return { ok: true }; },
       touch() { touchCount++; this.dirty = true; }
     }
   };
@@ -843,6 +856,7 @@ async function testStoreTracksSavedPendingApply() {
       async runtime() { return {}; },
       async diagnostics() { return { warnings: [] }; },
       async probeResults() { return { latest_results: [], warnings: [] }; },
+      async subscriptionNodes() { return { subscriptions: [] }; },
       async putConfig(_intent, _revision, apply) {
         assert.strictEqual(apply, false);
         overview = { pending_apply: true, status: {} };
@@ -885,6 +899,7 @@ async function testSharedCollectionOrderingMovesOnlyTheDraft() {
         async runtime() { return {}; },
         async diagnostics() { return { warnings: [] }; },
         async probeResults() { return { latest_results: [], warnings: [] }; },
+        async subscriptionNodes() { return { subscriptions: [] }; },
       }
     };
     const window = { S };
@@ -915,6 +930,7 @@ async function testSharedCollectionOrderingMovesOnlyTheDraft() {
       async runtime() { return {}; },
       async diagnostics() { return { warnings: [] }; },
       async probeResults() { return { latest_results: [], warnings: [] }; },
+      async subscriptionNodes() { return { subscriptions: [] }; },
     }
   };
   new Function('window', fs.readFileSync(path.join(root, 'go/cmd/steer-linux/web/js/store.js'), 'utf8'))({ S });
@@ -936,6 +952,7 @@ async function testSharedCollectionDragCommitsOnceAndCancellationDoesNotMutate()
         async runtime() { return {}; },
         async diagnostics() { return { warnings: [] }; },
         async probeResults() { return { latest_results: [], warnings: [] }; },
+        async subscriptionNodes() { return { subscriptions: [] }; },
       }
     };
     new Function('window', fs.readFileSync(path.join(root, 'go/cmd/steer-linux/web/js/store.js'), 'utf8'))({ S });
@@ -1052,18 +1069,24 @@ async function testCollectionDragInteractionCommitsOnDropOnly() {
 }
 
 function testNodeDisplaySortingHeadersNeverMutateTheDraft() {
+  const fixtureNodes = JSON.parse(JSON.stringify(nodeDisplaySortingFixtures.nodes));
   const intent = runtimeTestIntent();
-  intent.nodes = JSON.parse(JSON.stringify(nodeDisplaySortingFixtures.nodes));
+  /* 草稿只有手动节点；订阅节点来自订阅节点读取接口。 */
+  intent.nodes = fixtureNodes.filter((node) => !node.source_subscription)
+    .map(({ source_subscription: _source, ...node }) => node);
   intent.subscriptions = [ { id: 'feed', name: 'Feed', enabled: true, url: 'https://feed.example/sub', update_interval: '24h' } ];
   const originalIDs = intent.nodes.map((node) => node.id);
   const environment = createEnvironment(async () => ({ ok: true }), intent, {
-    probeResults: { latest_results: nodeDisplaySortingFixtures.latest_results, warnings: [] }
+    probeResults: { latest_results: nodeDisplaySortingFixtures.latest_results, warnings: [] },
+    subscriptionNodes: { subscriptions: [{
+      id: 'feed', nodes: fixtureNodes.filter((node) => node.source_subscription === 'feed')
+    }] }
   });
   loadView(environment, 'nodes');
   const view = environment.S.views.nodes;
 
   for (const fixture of nodeDisplaySortingFixtures.cases) {
-    const group = intent.nodes.filter((node) => (node.source_subscription || '') === fixture.group);
+    const group = fixtureNodes.filter((node) => (node.source_subscription || '') === fixture.group);
     assert.deepEqual(
       view.sortNodesForDisplay(group, fixture.mode, fixture.direction, environment.S.store.probeResults).map((node) => node.id),
       fixture.expected_ids,
@@ -1102,6 +1125,15 @@ function testNodeDisplaySortingHeadersNeverMutateTheDraft() {
   button('下载测速').listeners.click();
   assert.deepEqual(renderedIDs(), [ 'slow', 'stale', 'fast', 'failed', 'tie', 'missing', 'invalid' ]);
   assert.equal(button('顺序'), null, 'configured order is not exposed as a redundant sortable header');
+
+  const feedTab = find(environment.view, (element) => element.tag === 'button' &&
+    element.attributes.role === 'tab' && text(element).startsWith('Feed'));
+  assert.ok(feedTab, 'subscription nodes from the read interface form their own group');
+  assert.match(text(feedTab), /Feed2/, 'the subscription group counts its stored nodes');
+  feedTab.listeners.click();
+  button('下载测速').listeners.click();
+  button('连接测速').listeners.click();
+  assert.deepEqual(renderedIDs(), [ 'feed_fast', 'feed_slow' ], 'sorting remains inside the selected subscription group');
   assert.deepEqual(intent.nodes.map((node) => node.id), originalIDs, 'header sorting never reorders Intent nodes');
   assert.equal(environment.touchCount, 0, 'header sorting never marks the Draft dirty');
 }
@@ -1170,13 +1202,12 @@ async function testActualGenerationAndPersistentApplyFixture() {
 function draftLifecycleIntent() {
   return {
     main: {
-      id: 'main', schema_version: 9, enabled: true, log_level: 'warn',
+      id: 'main', schema_version: 10, enabled: true, log_level: 'warn',
       probe_direct: 'https://direct.example/', probe_proxy: 'https://proxy.example/', speedtest_proxy: 'https://speed.example/'
     },
     bootstrap: { id: 'bootstrap', protocol: 'udp', server: '1.1.1.1', server_port: 53, strategy: 'prefer_ipv4' },
     nodes: [
-      { id: 'node', enabled: true, name: 'Node', type: 'socks', server: 'node.example', server_port: 1080 },
-      { id: 'feed_stale', enabled: true, name: 'Stale', type: 'socks', server: 'stale.example', server_port: 1080, source_subscription: 'feed', pinned_stale: true }
+      { id: 'node', enabled: true, name: 'Node', type: 'socks', server: 'node.example', server_port: 1080 }
     ],
     subscriptions: [{ id: 'feed', enabled: true, name: 'Feed', url: 'https://feed.example/sub', update_interval: '6h' }],
     routes: [
@@ -1188,6 +1219,31 @@ function draftLifecycleIntent() {
     local_proxies: [],
     rules: [{ id: 'default', enabled: true, default: true, dns_profile: 'public', route: 'direct' }]
   };
+}
+
+/* GET /api/v1/subscription-nodes 的载荷：完整节点字段（含凭据）+ 来源字段 + 共享的 manual_copy。 */
+function subscriptionNodeEntry(node) {
+  const { id: _id, source_subscription: _source, source_fingerprint: _fingerprint, pinned_stale: _stale, ...fields } = node;
+  return { ...node, manual_copy: { ...fields, enabled: true } };
+}
+
+function draftLifecycleSubscriptionNodes() {
+  return { subscriptions: [{
+    id: 'feed',
+    nodes: [
+      { id: 'feed_current', enabled: true, name: 'Current', type: 'trojan', server: 'current.example', server_port: 443, password: 'feed-secret', tls_server_name: 'current.example', source_subscription: 'feed', source_fingerprint: 'fp-current' },
+      { id: 'feed_stale', enabled: true, name: 'Stale', type: 'socks', server: 'stale.example', server_port: 1080, source_subscription: 'feed', source_fingerprint: 'fp-stale', pinned_stale: true }
+    ].map(subscriptionNodeEntry)
+  }] };
+}
+
+const SUBSCRIPTION_SOURCE_FIELDS = ['source_subscription', 'source_fingerprint', 'pinned_stale', 'manual_copy'];
+
+function assertDraftHasNoSubscriptionNodes(intent, message) {
+  for (const node of intent.nodes || []) {
+    for (const field of SUBSCRIPTION_SOURCE_FIELDS)
+      assert.ok(!Object.hasOwn(node, field), `${message}: node ${node.id} must not carry ${field}`);
+  }
 }
 
 async function testSharedProbeDiagnosticsAndDisabledActions() {
@@ -1344,7 +1400,8 @@ async function testExternalRevisionRefreshPreservesDraftAndLifecycleFacts() {
     overview: async () => clone(overview),
     runtime: async () => clone(runtime),
     diagnostics: async () => ({ warnings: [] }),
-    probeResults: async () => ({ latest_results: [], warnings: [] })
+    probeResults: async () => ({ latest_results: [], warnings: [] }),
+    subscriptionNodes: async () => ({ subscriptions: [] })
   };
   const environment = createEnvironment(async () => ({ ok: true }), clone(server.intent));
   attachRealStore(environment, api);
@@ -1483,11 +1540,24 @@ async function testSharedUISafetyContracts() {
 function createDraftBackend() {
   const clone = (value) => JSON.parse(JSON.stringify(value));
   const state = {
-    intent: draftLifecycleIntent(), revision: '"revision-1"', configCalls: 0, puts: [],
-    nodeTests: 0, routeTests: 0, subscriptionUpdates: 0, subscriptionCleans: 0, applyCalls: 0
+    intent: draftLifecycleIntent(), revision: '"revision-1"', configCalls: 0, puts: [], validations: [],
+    nodeTests: 0, routeTests: 0, subscriptionUpdates: 0, subscriptionCleans: 0, applyCalls: 0,
+    subscriptionNodes: draftLifecycleSubscriptionNodes(), subscriptionNodeReads: 0, nodeSets: []
   };
+  /* 后台只返回已保存配置里的订阅（含空订阅）。 */
+  const listSubscriptionNodes = () => ({ subscriptions: state.intent.subscriptions.map((subscription) =>
+    state.subscriptionNodes.subscriptions.find((entry) => entry.id === subscription.id) || { id: subscription.id, nodes: [] }) });
   state.api = {
     async config() { state.configCalls++; return { intent: clone(state.intent), revision: state.revision }; },
+    async subscriptionNodes() { state.subscriptionNodeReads++; return clone(listSubscriptionNodes()); },
+    async setSubscriptionNodeEnabled(subscriptionId, nodeId, enabled) {
+      state.nodeSets.push({ subscriptionId, nodeId, enabled });
+      const node = state.subscriptionNodes.subscriptions.find((entry) => entry.id === subscriptionId)
+        ?.nodes.find((candidate) => candidate.id === nodeId);
+      if (!node) throw Object.assign(new Error(`SUBSCRIPTION_NODE_NOT_FOUND: subscription "${subscriptionId}" has no node "${nodeId}"`), { code: 'SUBSCRIPTION_NODE_NOT_FOUND', status: 404 });
+      node.enabled = enabled;
+      return clone(listSubscriptionNodes());
+    },
     async overview() { return { pending_apply: true, status: { healthy: false } }; },
     async runtime() { return {}; },
     async diagnostics() { return { warnings: [] }; },
@@ -1495,7 +1565,7 @@ function createDraftBackend() {
     async diagnostics() { return probeDiagnosticsFixtures.diagnostics; },
     async probeResults() { return probeDiagnosticsFixtures.probe_results; },
     async geodata() { return { readable: true, names: [], count: 0 }; },
-    async validate() { return { ok: true, errors: [], warnings: [] }; },
+    async validate(intent) { state.validations.push(clone(intent)); return { ok: true, errors: [], warnings: [] }; },
     async putConfig(intent, _revision, apply) {
       state.intent = clone(intent);
       state.puts.push({ intent: clone(intent), apply });
@@ -1509,7 +1579,7 @@ function createDraftBackend() {
       return { subscriptions: [{
         id: 'feed', enabled: true, name: 'Feed', url: 'https://feed.example/sub', update_interval: '6h',
         never_fetched: false, last_success: '2026-08-26T01:00:00Z', last_failure: null,
-        node_count: 1, current: 0, added: 0, skipped: 0,
+        node_count: 2, current: 1, added: 0, skipped: 0,
         stale: [{ id: 'feed_stale', name: 'Stale', referenced_by: [] }]
       }] };
     },
@@ -1519,7 +1589,12 @@ function createDraftBackend() {
         id: 'feed', enabled: true, node_count: 1, current: 1, added: 1, skipped: 0, stale: []
       }] };
     },
-    async cleanNode() { state.subscriptionCleans++; return { subscriptions: [] }; }
+    async cleanNode(subscriptionId, nodeId) {
+      state.subscriptionCleans++;
+      const entry = state.subscriptionNodes.subscriptions.find((candidate) => candidate.id === subscriptionId);
+      if (entry) entry.nodes = entry.nodes.filter((node) => node.id !== nodeId);
+      return { subscriptions: [] };
+    }
   };
   return state;
 }
@@ -1699,8 +1774,8 @@ async function testEnableConflictUsesCurrentDraftObject() {
     const local = draftLifecycleIntent();
     local.main.log_level = 'debug';
     if (dirty) environment.S.store.editJSON(JSON.stringify(local));
-    // A subscription update happened after this browser loaded its draft.
-    backend.intent.nodes.push({ id: 'fresh-feed-node', enabled: true });
+    // Another session saved after this browser loaded its draft.
+    backend.intent.nodes.push({ id: 'fresh-node', enabled: true });
     const gate = deferred();
     backend.api.setEnabled = async (enabled) => {
       await gate.promise;
@@ -1718,7 +1793,7 @@ async function testEnableConflictUsesCurrentDraftObject() {
       assert.strictEqual(environment.S.store.dirty, true);
     } else {
       assert.strictEqual(environment.S.store.intent.main.enabled, false);
-      assert.ok(environment.S.store.intent.nodes.some((n) => n.id === 'fresh-feed-node'));
+      assert.ok(environment.S.store.intent.nodes.some((n) => n.id === 'fresh-node'));
       assert.strictEqual(environment.S.store.revision, '"new-revision"');
       assert.strictEqual(environment.S.store.dirty, false);
     }
@@ -1901,6 +1976,13 @@ async function testAdvancedRouterDiscardAndGuardedActions() {
   assert.match(text(environment.toasts), /重新载入期间工作副本又发生变化/);
 }
 
+function addedFeedNode() {
+  return subscriptionNodeEntry({
+    id: 'feed_added', enabled: true, name: 'Added', type: 'socks', server: 'added.example', server_port: 1080,
+    source_subscription: 'feed', source_fingerprint: 'fp-added'
+  });
+}
+
 async function testSubscriptionAsyncWorkPreservesNewDraftAndRoute() {
   const backend = createDraftBackend();
   const environment = createEnvironment(async () => ({ ok: true }));
@@ -1914,7 +1996,8 @@ async function testSubscriptionAsyncWorkPreservesNewDraftAndRoute() {
   backend.api.updateSubscription = async () => {
     backend.subscriptionUpdates++;
     await updateGate.promise;
-    return { subscriptions: [{ id: 'feed', node_count: 1, current: 1, added: 0, skipped: 0, stale: [] }] };
+    backend.subscriptionNodes.subscriptions[0].nodes.push(addedFeedNode());
+    return { subscriptions: [{ id: 'feed', node_count: 3, current: 2, added: 1, skipped: 0, stale: [] }] };
   };
   const configCallsBeforeUpdate = backend.configCalls;
   const updating = buttonWithText(environment.view, '立即更新').listeners.click();
@@ -1928,10 +2011,12 @@ async function testSubscriptionAsyncWorkPreservesNewDraftAndRoute() {
   await flushUI();
   assert.strictEqual(environment.S.store.dirty, true);
   assert.strictEqual(environment.S.store.intent.main.log_level, 'debug', 'subscription response must preserve edits made while it was in flight');
-  assert.strictEqual(backend.configCalls, configCallsBeforeUpdate, 'changed Draft must prevent unconditional subscription reload');
+  assert.strictEqual(backend.configCalls, configCallsBeforeUpdate, 'subscription update writes only the node store and never reloads the Draft');
+  assert.ok(environment.S.store.allNodes.some((node) => node.id === 'feed_added'), 'subscription update refreshes the stored node list');
+  assertDraftHasNoSubscriptionNodes(environment.S.store.intent, 'subscription update');
   assert.strictEqual(application.location.hash, '#/general');
   assert.match(text(environment.view), /基础设置/, 'stale subscription render must not overwrite the newer route');
-  assert.match(text(environment.toasts), /工作副本已变化/, 'inventory update must explain why the working copy was preserved');
+  assert.match(text(environment.toasts), /订阅节点已更新，当前运行配置未改变/, 'the inventory notice is shown without reloading the working copy');
 
   await environment.S.store.reload();
   environment.S.renderCurrent();
@@ -1939,14 +2024,16 @@ async function testSubscriptionAsyncWorkPreservesNewDraftAndRoute() {
   environment.S.router('subscriptions');
   await flushUI();
   const cleanGate = deferred();
-  backend.api.cleanNode = async () => {
+  backend.api.cleanNode = async (subscriptionId, nodeId) => {
     backend.subscriptionCleans++;
     await cleanGate.promise;
-    return { snapshot: {} };
+    const entry = backend.subscriptionNodes.subscriptions.find((candidate) => candidate.id === subscriptionId);
+    entry.nodes = entry.nodes.filter((node) => node.id !== nodeId);
+    return { subscriptions: [] };
   };
   buttonWithText(environment.view, '清理失效节点 ×1').listeners.click();
   const configCallsBeforeClean = backend.configCalls;
-  const cleaning = lastButtonWithText(environment.body, '移除').listeners.click();
+  const cleaning = lastButtonWithText(environment.body, uiSpec.subscription_nodes.actions.clean.zh_cn).listeners.click();
   await Promise.resolve();
   environment.S.store.intent.main.log_level = 'info';
   environment.S.store.touch();
@@ -1955,15 +2042,17 @@ async function testSubscriptionAsyncWorkPreservesNewDraftAndRoute() {
   cleanGate.resolve();
   await cleaning;
   await flushUI();
+  assert.strictEqual(backend.subscriptionCleans, 1);
   assert.strictEqual(environment.S.store.dirty, true);
   assert.strictEqual(environment.S.store.intent.main.log_level, 'info', 'clean response must preserve edits made while it was in flight');
-  assert.ok(environment.S.store.intent.nodes.some((node) => node.id === 'feed_stale'), 'preserved Draft must retain its local inventory object');
-  assert.strictEqual(backend.configCalls, configCallsBeforeClean, 'changed Draft must prevent unconditional clean reload');
+  assert.ok(!environment.S.store.allNodes.some((node) => node.id === 'feed_stale'), 'clean refreshes the stored node list');
+  assert.deepStrictEqual(environment.S.store.intent.nodes.map((node) => node.id), ['node'], 'clean never changes the Draft nodes');
+  assert.strictEqual(backend.configCalls, configCallsBeforeClean, 'stale cleanup never reloads the Draft');
   assert.strictEqual(application.location.hash, '#/general');
   assert.match(text(environment.view), /基础设置/, 'stale clean render must not overwrite the newer route');
 }
 
-async function testSubscriptionAsyncWorkReloadsLatestAfterDiscard() {
+async function testSubscriptionAsyncWorkRefreshesOnlyTheNodeListAfterDiscard() {
   let backend = createDraftBackend();
   let environment = createEnvironment(async () => ({ ok: true }));
   attachRealStore(environment, backend.api);
@@ -1975,9 +2064,8 @@ async function testSubscriptionAsyncWorkReloadsLatestAfterDiscard() {
   backend.api.updateSubscription = async () => {
     backend.subscriptionUpdates++;
     await updateGate.promise;
-    backend.intent.main.log_level = 'warn';
-    backend.revision = '"revision-update-latest"';
-    return { subscriptions: [{ id: 'feed', node_count: 1, current: 1, added: 0, skipped: 0, stale: [] }] };
+    backend.subscriptionNodes.subscriptions[0].nodes.push(addedFeedNode());
+    return { subscriptions: [{ id: 'feed', node_count: 3, current: 2, added: 1, skipped: 0, stale: [] }] };
   };
   const configCallsBeforeUpdate = backend.configCalls;
   const updating = buttonWithText(environment.view, '立即更新').listeners.click();
@@ -1991,11 +2079,11 @@ async function testSubscriptionAsyncWorkReloadsLatestAfterDiscard() {
   updateGate.resolve();
   await updating;
   await flushUI();
-  assert.strictEqual(backend.configCalls, configCallsBeforeUpdate + 2,
-    'epoch change with a clean Draft must reload once for Discard and once after subscription update');
-  assert.strictEqual(environment.S.store.revision, '"revision-update-latest"');
-  assert.strictEqual(environment.S.store.intent.main.log_level, 'warn',
-    'subscription completion must load the server state newer than the discarded Draft');
+  assert.strictEqual(backend.configCalls, configCallsBeforeUpdate + 1,
+    'only Discard reloads the configuration; the subscription update refreshes the node list');
+  assert.strictEqual(environment.S.store.revision, '"revision-discard-base"', 'subscription update never changes the configuration revision');
+  assert.strictEqual(environment.S.store.intent.main.log_level, 'error');
+  assert.ok(environment.S.store.allNodes.some((node) => node.id === 'feed_added'));
 
   backend = createDraftBackend();
   environment = createEnvironment(async () => ({ ok: true }));
@@ -2005,17 +2093,14 @@ async function testSubscriptionAsyncWorkReloadsLatestAfterDiscard() {
   await environment.S.views.subscriptions.render(environment.view);
 
   const cleanGate = deferred();
-  backend.api.cleanNode = async () => {
-    backend.subscriptionCleans++;
+  const realClean = backend.api.cleanNode;
+  backend.api.cleanNode = async (...args) => {
     await cleanGate.promise;
-    backend.intent.nodes = backend.intent.nodes.filter((node) => node.id !== 'feed_stale');
-    backend.intent.main.log_level = 'warn';
-    backend.revision = '"revision-clean-latest"';
-    return { snapshot: {} };
+    return realClean(...args);
   };
   buttonWithText(environment.view, '清理失效节点 ×1').listeners.click();
   const configCallsBeforeClean = backend.configCalls;
-  const cleaning = lastButtonWithText(environment.body, '移除').listeners.click();
+  const cleaning = lastButtonWithText(environment.body, uiSpec.subscription_nodes.actions.clean.zh_cn).listeners.click();
   await Promise.resolve();
   environment.S.store.intent.main.log_level = 'debug';
   environment.S.store.touch();
@@ -2026,12 +2111,13 @@ async function testSubscriptionAsyncWorkReloadsLatestAfterDiscard() {
   cleanGate.resolve();
   await cleaning;
   await flushUI();
-  assert.strictEqual(backend.configCalls, configCallsBeforeClean + 2,
-    'epoch change with a clean Draft must reload once for Discard and once after stale cleanup');
-  assert.strictEqual(environment.S.store.revision, '"revision-clean-latest"');
-  assert.strictEqual(environment.S.store.intent.main.log_level, 'warn');
-  assert.ok(!environment.S.store.intent.nodes.some((node) => node.id === 'feed_stale'),
-    'cleanup completion must load the latest server inventory after the discarded Draft');
+  assert.strictEqual(backend.configCalls, configCallsBeforeClean + 1,
+    'only Discard reloads the configuration; stale cleanup refreshes the node list');
+  assert.strictEqual(environment.S.store.revision, '"revision-clean-discard-base"');
+  assert.strictEqual(environment.S.store.intent.main.log_level, 'error');
+  assert.ok(!environment.S.store.allNodes.some((node) => node.id === 'feed_stale'),
+    'cleanup completion shows the latest stored node list');
+  assert.match(text(environment.toasts), /已清理 Stale/);
 }
 
 function localProxyIntent(proxy) {
@@ -2255,10 +2341,9 @@ async function testSharedSubscriptionStatusLifecycleAndDisabledUpdate() {
   intent.subscriptions = statuses.map((status) => ({
     id: status.id, enabled: status.enabled, name: status.name, url: status.url, update_interval: status.update_interval
   }));
-  intent.nodes.push(
-    { id: 'failed_blocked', enabled: true, name: 'Blocked stale', type: 'socks', server: 'blocked.example', server_port: 1080, source_subscription: 'failed', pinned_stale: true }
-  );
   let updates = 0;
+  let nodeListRefreshes = 0;
+  let reloads = 0;
   const environment = createEnvironment(async () => ({ ok: true }), intent, { api: {
     subscriptions: async () => ({ subscriptions: statuses }),
     updateSubscription: async (id) => {
@@ -2266,10 +2351,12 @@ async function testSharedSubscriptionStatusLifecycleAndDisabledUpdate() {
       return { subscriptions: statuses.filter((status) => status.id === id) };
     },
     cleanNode: async () => ({ subscriptions: statuses })
-  } });
-  environment.S.store.draftEpoch = 0;
-  environment.S.store.reload = async () => ({ ok: true });
+  }, subscriptionNodes: { subscriptions: [{ id: 'failed', nodes: [subscriptionNodeEntry(
+    { id: 'failed_blocked', enabled: true, name: 'Blocked stale', type: 'socks', server: 'blocked.example', server_port: 1080, source_subscription: 'failed', source_fingerprint: 'fp-blocked', pinned_stale: true }
+  )] }] } });
+  environment.S.store.reload = async () => { reloads++; return { ok: true }; };
   environment.S.store.refreshOverview = async () => ({});
+  environment.S.store.refreshSubscriptionNodes = async () => { nodeListRefreshes++; return { ok: true }; };
   loadView(environment, 'subscriptions');
   await environment.S.views.subscriptions.render(environment.view);
 
@@ -2292,11 +2379,341 @@ async function testSharedSubscriptionStatusLifecycleAndDisabledUpdate() {
   const successIndex = statuses.findIndex((status) => status.id === 'success');
   await updateButtons[successIndex].listeners.click();
   assert.strictEqual(updates, 1);
+  assert.strictEqual(nodeListRefreshes, 1, 'a subscription update refreshes the stored node list');
+  assert.strictEqual(reloads, 0, 'a subscription update never reloads the configuration Draft');
   const updateToast = text(environment.toasts);
   assert.match(updateToast, /新增 2 · 当前 2 · 已失效 0 · 已跳过 0/,
     'update toast uses the same status contract and all inventory counters');
   assert.match(updateToast, /当前运行配置未改变/);
   assert.match(updateToast, /仍被路由使用的节点已自动保留/);
+}
+
+const SUBSCRIPTION_NODE_ACTIONS = uiSpec.subscription_nodes.actions;
+
+async function subscriptionNodeEnvironment(prepare) {
+  const backend = createDraftBackend();
+  prepare?.(backend);
+  const environment = createEnvironment(async () => ({ ok: true }));
+  attachRealStore(environment, backend.api);
+  for (const name of ['nodes', 'routes', 'subscriptions']) loadView(environment, name);
+  await environment.S.store.init();
+  return { backend, environment, store: environment.S.store };
+}
+
+function nodeRow(rootElement, id) {
+  return find(rootElement, (element) => element.tag === 'tr' && element.dataset.collectionId === id);
+}
+
+function openNodeGroup(environment, label) {
+  environment.S.views.nodes.render(environment.view);
+  const tab = find(environment.view, (element) => element.tag === 'button' &&
+    element.attributes.role === 'tab' && text(element).startsWith(label));
+  assert.ok(tab, `node group ${label} must be listed`);
+  tab.listeners.click();
+}
+
+async function testSubscriptionNodesLoadReadOnlyAndStayOutOfDrafts() {
+  const { backend, environment, store } = await subscriptionNodeEnvironment();
+  assert.strictEqual(backend.subscriptionNodeReads, 1, 'init loads subscription nodes alongside the configuration');
+  assert.deepStrictEqual(store.intent.nodes.map((node) => node.id), ['node'], 'the Draft holds only manual nodes');
+  assert.deepStrictEqual(store.subscriptionNodes.map((entry) => [entry.id, entry.nodes.map((node) => node.id)]),
+    [['feed', ['feed_current', 'feed_stale']]], 'stored nodes are grouped by subscription');
+  assert.deepStrictEqual(store.allNodes.map((node) => node.id), ['node', 'feed_current', 'feed_stale']);
+  assert.ok(store.allNodes.every((node) => !Object.hasOwn(node, 'manual_copy')),
+    'manual_copy stays beside the node objects, which are sent unchanged to export');
+
+  environment.S.views.nodes.render(environment.view);
+  const tabs = findAll(environment.view, (element) => element.tag === 'button' && element.attributes.role === 'tab');
+  assert.deepStrictEqual(tabs.map(text), ['手动节点1', 'Feed2'], 'manual nodes and each subscription form their own group');
+  tabs[1].listeners.click();
+  const rows = findAll(environment.view, (element) => element.tag === 'tr' && !!element.dataset.collectionId);
+  assert.deepStrictEqual(rows.map((row) => row.dataset.collectionId), ['feed_current', 'feed_stale']);
+  for (const row of rows) {
+    assert.strictEqual(buttonWithText(row, '编辑'), null, 'subscription nodes have no field editor');
+    assert.strictEqual(buttonWithText(row, '删除'), null, 'subscription nodes cannot be deleted from the Draft');
+    assert.strictEqual(find(row, (element) => classSet(element).has('switch')), null, 'subscription nodes have no Draft switch');
+    assert.strictEqual(find(row, (element) => classSet(element).has('collection-drag-handle')), null,
+      'subscription nodes cannot be reordered');
+    assert.ok(buttonWithText(row, SUBSCRIPTION_NODE_ACTIONS.disable.zh_cn), 'every subscription node can be disabled');
+    assert.ok(buttonWithText(row, SUBSCRIPTION_NODE_ACTIONS.copy_to_manual.zh_cn), 'every subscription node can be copied');
+    assert.ok(buttonWithText(row, '连接') && buttonWithText(row, '下载'), 'subscription nodes keep their probe actions');
+  }
+  assert.strictEqual(buttonWithText(rows[0], SUBSCRIPTION_NODE_ACTIONS.clean.zh_cn), null, 'current nodes cannot be cleaned');
+  assert.ok(buttonWithText(rows[1], SUBSCRIPTION_NODE_ACTIONS.clean.zh_cn), 'stale nodes offer the shared Clean up action');
+  assert.match(text(rows[1]), /已失效/);
+  assert.strictEqual(buttonWithText(environment.view, '添加节点'), null, 'subscription groups cannot add nodes');
+  assert.doesNotMatch(text(environment.view), /feed-secret|fp-current/, 'credentials and fingerprints stay out of the DOM');
+
+  await environment.S.ui.onValidate();
+  assertDraftHasNoSubscriptionNodes(backend.validations.at(-1), 'validated Draft');
+  assert.deepStrictEqual(backend.validations.at(-1).nodes.map((node) => node.id), ['node']);
+  store.intent.main.log_level = 'debug';
+  store.touch();
+  const readsBeforeSave = backend.subscriptionNodeReads;
+  assert.strictEqual((await store.save(false)).ok, true);
+  assertDraftHasNoSubscriptionNodes(backend.puts.at(-1).intent, 'saved Draft');
+  assert.deepStrictEqual(backend.puts.at(-1).intent.nodes.map((node) => node.id), ['node']);
+  assert.ok(backend.subscriptionNodeReads > readsBeforeSave, 'a successful save refreshes the stored node list');
+
+  const readsBeforeRefresh = backend.subscriptionNodeReads;
+  backend.subscriptionNodes.subscriptions[0].nodes.push(addedFeedNode());
+  await store.refreshServerState();
+  assert.strictEqual(backend.subscriptionNodeReads, readsBeforeRefresh + 1,
+    'the periodic state refresh picks up timer updates, which never change the configuration revision');
+  assert.ok(store.allNodes.some((node) => node.id === 'feed_added'));
+
+  store.intent.subscriptions = [];
+  store.touch();
+  assert.deepStrictEqual(store.allNodes.map((node) => node.id), ['node'],
+    'a subscription removed from the Draft no longer contributes nodes, as in backend validation');
+
+  const failing = await subscriptionNodeEnvironment((state) => {
+    state.api.subscriptionNodes = async () => { throw new Error('SUBSCRIPTION_NODE_STORE_FAILED: read failed'); };
+  });
+  assert.deepStrictEqual(failing.store.allNodes.map((node) => node.id), ['node'], 'a store read failure does not block the console');
+  failing.environment.S.views.nodes.render(failing.environment.view);
+  assert.match(text(failing.environment.view), /订阅节点暂时无法读取/);
+  assert.doesNotMatch(text(failing.environment.view), /SUBSCRIPTION_NODE_STORE_FAILED/);
+}
+
+async function testSubscriptionNodeEnableDisableUsesTheStoreEndpoint() {
+  const { backend, environment, store } = await subscriptionNodeEnvironment();
+  openNodeGroup(environment, 'Feed');
+  await buttonWithText(nodeRow(environment.view, 'feed_current'), SUBSCRIPTION_NODE_ACTIONS.disable.zh_cn).listeners.click();
+  await flushUI();
+  assert.deepStrictEqual(backend.nodeSets, [{ subscriptionId: 'feed', nodeId: 'feed_current', enabled: false }]);
+  assert.strictEqual(store.dirty, false, 'enable/disable writes the node store, not the Draft');
+  assert.strictEqual(backend.puts.length, 0);
+  assert.match(text(nodeRow(environment.view, 'feed_current')), /已停用/);
+  assert.ok(buttonWithText(nodeRow(environment.view, 'feed_current'), SUBSCRIPTION_NODE_ACTIONS.enable.zh_cn),
+    'a disabled subscription node offers Enable');
+  assert.match(text(environment.toasts), /Current 已停用/);
+
+  await buttonWithText(nodeRow(environment.view, 'feed_current'), SUBSCRIPTION_NODE_ACTIONS.enable.zh_cn).listeners.click();
+  await flushUI();
+  assert.deepStrictEqual(backend.nodeSets.at(-1), { subscriptionId: 'feed', nodeId: 'feed_current', enabled: true });
+  assert.match(text(nodeRow(environment.view, 'feed_current')), /已启用/);
+
+  const storeImplementation = backend.api.setSubscriptionNodeEnabled;
+  backend.api.setSubscriptionNodeEnabled = async () => {
+    throw Object.assign(new Error('NODE_STILL_REFERENCED: route "proxy" still references subscription node "feed_stale"'), {
+      code: 'NODE_STILL_REFERENCED', status: 422,
+      details: {
+        ok: false, error_code: 'NODE_STILL_REFERENCED',
+        error: 'NODE_STILL_REFERENCED: route "proxy" still references subscription node "feed_stale"',
+        validation: { ok: false, warnings: [], errors: [
+          { code: 'DISABLED_NODE', object_type: 'route', object_id: 'proxy', option: 'node', message: 'route uses a disabled node' }
+        ] }
+      }
+    });
+  };
+  await buttonWithText(nodeRow(environment.view, 'feed_stale'), SUBSCRIPTION_NODE_ACTIONS.disable.zh_cn).listeners.click();
+  await flushUI();
+  const toastText = text(environment.toasts);
+  assert.match(toastText, /停用失败：仍有路由在使用这个节点（Proxy），请先修改这些路由/);
+  assert.doesNotMatch(toastText, /NODE_STILL_REFERENCED|route "proxy"/, 'error codes and raw backend text stay out of toasts');
+  assert.match(text(nodeRow(environment.view, 'feed_stale')), /已启用/, 'a rejected disable keeps the node enabled');
+
+  backend.api.setSubscriptionNodeEnabled = storeImplementation;
+  backend.subscriptionNodes.subscriptions[0].nodes = backend.subscriptionNodes.subscriptions[0].nodes
+    .filter((node) => node.id !== 'feed_stale');
+  const readsBeforeMissing = backend.subscriptionNodeReads;
+  await buttonWithText(nodeRow(environment.view, 'feed_stale'), SUBSCRIPTION_NODE_ACTIONS.disable.zh_cn).listeners.click();
+  await flushUI();
+  assert.strictEqual(backend.subscriptionNodeReads, readsBeforeMissing + 1, 'a missing node refreshes the outdated list');
+  assert.strictEqual(nodeRow(environment.view, 'feed_stale'), null, 'the refreshed list no longer shows the removed node');
+  assert.match(text(environment.toasts), /这个订阅节点已经不存在/);
+  assert.strictEqual(store.dirty, false);
+}
+
+async function testSubscriptionNodeAPIUsesSharedPayloads() {
+  const requests = [];
+  let reply = { status: 200, body: { subscriptions: [] } };
+  class TestHeaders {
+    constructor(values) { this.values = { ...(values || {}) }; }
+    set(name, value) { this.values[name.toLowerCase()] = value; }
+    has(name) { return Object.hasOwn(this.values, name.toLowerCase()); }
+  }
+  const fetch = async (url, options) => {
+    requests.push({ url, options });
+    return {
+      ok: reply.status < 300, status: reply.status, statusText: '',
+      headers: { get() { return ''; } }, json: async () => reply.body
+    };
+  };
+  const window = { S: { asList: (value) => value || [] } };
+  const source = fs.readFileSync(path.join(root, 'go/cmd/steer-linux/web/js/api.js'), 'utf8');
+  new Function('window', 'sessionStorage', 'Headers', 'fetch', 'document', 'setTimeout', 'location', source)(
+    window, { getItem() { return ''; }, setItem() {}, removeItem() {} }, TestHeaders, fetch,
+    { querySelector() { return null; }, body: new Element('body') }, () => 0, {}
+  );
+  const api = window.S.api;
+  await api.subscriptionNodes();
+  await api.subscriptionNodes('jdub');
+  await api.setSubscriptionNodeEnabled('jdub', 'node/1', false);
+  assert.deepStrictEqual(requests.map((request) => [request.url, request.options?.method || 'GET', request.options?.body || '']), [
+    ['/api/v1/subscription-nodes', 'GET', ''],
+    ['/api/v1/subscription-nodes?id=jdub', 'GET', ''],
+    ['/api/v1/subscriptions/jdub/nodes/node%2F1', 'PUT', '{"enabled":false}']
+  ]);
+
+  const validation = { ok: false, warnings: [], errors: [{ code: 'DISABLED_NODE', object_type: 'route', object_id: 'proxy', option: 'node' }] };
+  reply = { status: 422, body: { ok: false, error_code: 'NODE_STILL_REFERENCED', error: 'NODE_STILL_REFERENCED: route "proxy"', validation } };
+  await assert.rejects(() => api.setSubscriptionNodeEnabled('jdub', 'x', false), (error) =>
+    error.code === 'NODE_STILL_REFERENCED' && error.status === 422 && error.details.validation === validation);
+  reply = { status: 404, body: { ok: false, error_code: 'SUBSCRIPTION_NOT_FOUND', error: 'SUBSCRIPTION_NOT_FOUND: gone' } };
+  await assert.rejects(() => api.cleanNode('gone', 'x'), (error) => error.code === 'SUBSCRIPTION_NOT_FOUND' && error.status === 404);
+  reply = { status: 422, body: { ok: false, error_code: 'SUBSCRIPTION_NODE_CURRENT', error: 'SUBSCRIPTION_NODE_CURRENT: current' } };
+  await assert.rejects(() => api.cleanNode('jdub', 'x'), (error) => error.code === 'SUBSCRIPTION_NODE_CURRENT');
+}
+
+async function testCopySubscriptionNodeToMyNodes() {
+  const { backend, environment, store } = await subscriptionNodeEnvironment((state) => {
+    state.intent.routes.push({ id: 'feed_route', enabled: true, name: 'Feed route', kind: 'single', node: 'feed_current' });
+  });
+  /* 随机 ID 恰好和订阅节点重名时，共享的手动节点 ID 规则要换一个。 */
+  environment.S.uid = () => 'feed_current';
+  openNodeGroup(environment, 'Feed');
+  const routesBefore = JSON.stringify(store.intent.routes);
+  const originalBefore = JSON.stringify(store.allNodes.find((node) => node.id === 'feed_current'));
+  buttonWithText(nodeRow(environment.view, 'feed_current'), SUBSCRIPTION_NODE_ACTIONS.copy_to_manual.zh_cn).listeners.click();
+
+  const copy = store.intent.nodes.at(-1);
+  const expected = draftLifecycleSubscriptionNodes().subscriptions[0].nodes[0].manual_copy;
+  assert.strictEqual(copy.id, 'node-2', 'the copy gets a new manual node ID that collides with no Draft or subscription node');
+  assert.match(copy.id, new RegExp(uiSpec.id_policy.pattern));
+  assert.deepStrictEqual(copy, { id: 'node-2', ...expected }, 'the copy is exactly the shared manual_copy plus a new ID');
+  assert.strictEqual(copy.password, 'feed-secret', 'the copy keeps credentials');
+  assertDraftHasNoSubscriptionNodes(store.intent, 'copy to my nodes');
+  assert.strictEqual(store.dirty, true, 'the copy is an ordinary unsaved Draft edit');
+  assert.strictEqual(JSON.stringify(store.intent.routes), routesBefore, 'copying never retargets routes');
+  assert.strictEqual(JSON.stringify(store.allNodes.find((node) => node.id === 'feed_current')), originalBefore,
+    'the original subscription node is unchanged');
+  assert.strictEqual(backend.nodeSets.length + backend.puts.length, 0, 'copying needs no backend write');
+  assert.ok(buttonWithText(nodeRow(environment.view, 'node-2'), '编辑'), 'the manual group shows the editable copy');
+  const name = find(fieldWithLabel(environment.drawerRoot, '名称'), (element) => element.tag === 'input');
+  assert.strictEqual(name?.value, 'Current', 'the copy opens in the manual node editor with the original name');
+
+  name.value = 'My current';
+  buttonWithText(environment.drawerRoot, '保存到工作副本').listeners.click();
+  assert.strictEqual(copy.name, 'My current');
+  assert.strictEqual((await store.save(false)).ok, true);
+  assert.deepStrictEqual(backend.puts.at(-1).intent.nodes.map((node) => node.id), ['node', 'node-2']);
+  assertDraftHasNoSubscriptionNodes(backend.puts.at(-1).intent, 'saved copy');
+}
+
+async function testRoutePickerAndLabelsIncludeSubscriptionNodes() {
+  const { environment, store } = await subscriptionNodeEnvironment((state) => {
+    state.intent.nodes = [];
+    state.intent.routes.find((route) => route.id === 'proxy').node = 'feed_current';
+  });
+  environment.S.views.routes.render(environment.view);
+  const proxyRow = findAll(environment.view, (element) => element.tag === 'tr' && text(element).includes('Proxy'))[0];
+  assert.match(text(proxyRow), /Current/, 'a route chain labels its subscription node by name');
+  assert.doesNotMatch(text(proxyRow), /feed_current/);
+  const add = buttonWithText(environment.view, '添加路由');
+  assert.ok(!Object.hasOwn(add.attributes, 'disabled'), 'subscription nodes alone are enough to add a route');
+
+  buttonWithText(proxyRow, '编辑').listeners.click();
+  const picker = find(fieldWithLabel(environment.drawerRoot, '节点'), (element) => element.tag === 'select');
+  assert.deepStrictEqual(picker.children.map((option) => [option.value, text(option)]),
+    [['feed_current', 'Current'], ['feed_stale', 'Stale']], 'the route node picker lists subscription nodes');
+  assert.strictEqual(picker.value, 'feed_current', 'a route referencing a subscription node is not shown as missing');
+
+  const labels = environment.S.ui.referenceOptions('routes', [
+    { id: 'same_a', name: 'Same', kind: 'single', node: 'feed_current' },
+    { id: 'same_b', name: 'Same', kind: 'single', node: 'feed_stale' }
+  ]).map(([, label]) => label);
+  assert.match(labels[0], /节点 Current/, 'duplicate route labels resolve subscription node names');
+  const duplicateNodes = environment.S.ui.referenceOptions('nodes', [
+    { id: 'manual_same', name: 'Twin', type: 'socks', server: 'a.example', server_port: 1 },
+    { ...store.allNodes[0], id: 'feed_twin', name: 'Twin', server: 'b.example', server_port: 2 }
+  ]).map(([, label]) => label);
+  assert.match(duplicateNodes[1], /订阅 Feed/, 'duplicate node labels name the source subscription');
+
+  store.intent.routes.push(environment.S.ui.creationDraft('routes', { node: store.allNodes.find((node) => node.enabled !== false)?.id }));
+  assert.strictEqual(store.intent.routes.at(-1).node, 'feed_current');
+}
+
+async function testSubscriptionDeletionKeepsNodesOutOfTheDraftAndGuardsRoutes() {
+  const { backend, environment, store } = await subscriptionNodeEnvironment((state) => {
+    state.intent.routes.find((route) => route.id === 'proxy').node = 'feed_current';
+  });
+  assert.strictEqual(environment.S.ui.guardCollectionDeletion('nodes', 'feed_current', 'Current'), false,
+    'the node guard sees routes that use subscription nodes');
+  await environment.S.views.subscriptions.render(environment.view);
+  buttonWithText(environment.view, '删除').listeners.click();
+  assert.match(text(environment.body), /不能删除 · Feed/, 'deleting a subscription is blocked while a route uses its node');
+  assert.match(text(environment.body), /Proxy/);
+  assert.deepStrictEqual(store.intent.subscriptions.map((subscription) => subscription.id), ['feed']);
+  assert.strictEqual(store.dirty, false);
+
+  store.intent.routes.find((route) => route.id === 'proxy').node = 'node';
+  store.touch();
+  buttonWithText(environment.view, '删除').listeners.click();
+  assert.match(text(environment.body), /保存后，它的 2 个订阅节点也会一并删除/);
+  lastButtonWithText(environment.body, '删除').listeners.click();
+  assert.deepStrictEqual(store.intent.subscriptions, [], 'only the subscription leaves the Draft');
+  assert.deepStrictEqual(store.intent.nodes.map((node) => node.id), ['node'], 'deleting a subscription does not touch Draft nodes');
+  assert.deepStrictEqual(store.allNodes.map((node) => node.id), ['node'], 'its stored nodes disappear from pickers immediately');
+
+  assert.strictEqual((await store.save(false)).ok, true);
+  assertDraftHasNoSubscriptionNodes(backend.puts.at(-1).intent, 'saved subscription deletion');
+  assert.deepStrictEqual(store.subscriptionNodes, [], 'after saving, the backend no longer lists the deleted subscription');
+}
+
+async function testSubscriptionNodeCleanFromNodesPage() {
+  const { backend, environment, store } = await subscriptionNodeEnvironment((state) => {
+    state.intent.routes.push({ id: 'stale_route', enabled: true, name: 'Stale route', kind: 'single', node: 'feed_stale' });
+  });
+  const clean = SUBSCRIPTION_NODE_ACTIONS.clean.zh_cn;
+  openNodeGroup(environment, 'Feed');
+  buttonWithText(nodeRow(environment.view, 'feed_stale'), clean).listeners.click();
+  assert.match(text(environment.body), /不能删除 · Stale/, 'a stale node used by a Draft route cannot be cleaned');
+  assert.strictEqual(backend.subscriptionCleans, 0);
+
+  store.intent.routes = store.intent.routes.filter((route) => route.id !== 'stale_route');
+  store.touch();
+  openNodeGroup(environment, 'Feed');
+  buttonWithText(nodeRow(environment.view, 'feed_stale'), clean).listeners.click();
+  await lastButtonWithText(environment.body, clean).listeners.click();
+  await flushUI();
+  assert.strictEqual(backend.subscriptionCleans, 1);
+  assert.strictEqual(nodeRow(environment.view, 'feed_stale'), null, 'the cleaned node leaves the refreshed list');
+  assert.match(text(environment.toasts), /已清理 Stale/);
+  assert.ok(nodeRow(environment.view, 'feed_current'), 'current nodes are untouched');
+}
+
+async function testApplyResultUnchangedRuntimeNotice() {
+  const notice = uiSpec.apply_result.unchanged_notice.zh_cn;
+  assert.strictEqual(notice, '运行配置没有变化，未重启');
+  const unchanged = { ok: true, activated: true, restarted: false };
+  const saveToast = async (applyResult) => {
+    const environment = createEnvironment(async () => ({
+      ok: true, res: { saved: true, applied: applyResult.ok, apply_result: applyResult }
+    }));
+    await environment.S.ui.onSave(true);
+    return text(environment.toasts);
+  };
+  assert.ok((await saveToast(unchanged)).includes(notice), 'Save and Apply shows the shared unchanged notice');
+  assert.ok(!(await saveToast({ ...unchanged, restarted: true })).includes(notice), 'a restart has no unchanged notice');
+  assert.ok(!(await saveToast({ ok: true, activated: true })).includes(notice), 'a result without restarted has no notice');
+  assert.ok(!(await saveToast({ ok: false, activated: false, restarted: false, error: 'activate failed' })).includes(notice));
+
+  let environment = createEnvironment(async () => ({ ok: true }), runtimeTestIntent(), {
+    pendingApply: true, applySaved: async () => ({ ...unchanged })
+  });
+  environment.S.ui.renderStatusStrip();
+  await buttonWithText(environment.strip, '应用已保存配置').listeners.click();
+  assert.ok(text(environment.toasts).includes(notice), 'Apply Saved shows the shared unchanged notice');
+
+  environment = createEnvironment(async () => ({ ok: true, res: { saved: true, applied: true, apply_result: unchanged } }));
+  await environment.S.ui.onToggleEnabled(true);
+  assert.ok(text(environment.toasts).includes(notice), 'the global switch shows the shared unchanged notice');
+
+  assert.ok(text(environment.S.ui.applyRecord({ last_apply: { sequence: '1', result: unchanged } })).includes(notice),
+    'the latest Apply record shows the notice from last_apply.result.restarted');
+  assert.ok(!text(environment.S.ui.applyRecord({ last_apply: { sequence: '1', result: { ...unchanged, restarted: true } } })).includes(notice));
 }
 
 Promise.resolve()
@@ -2330,7 +2747,7 @@ Promise.resolve()
   .then(testEnableConflictUsesCurrentDraftObject)
   .then(testAdvancedRouterDiscardAndGuardedActions)
   .then(testSubscriptionAsyncWorkPreservesNewDraftAndRoute)
-  .then(testSubscriptionAsyncWorkReloadsLatestAfterDiscard)
+  .then(testSubscriptionAsyncWorkRefreshesOnlyTheNodeListAfterDiscard)
   .then(testLocalProxyAddressFixturesAndMixedLabel)
   .then(testLocalProxyKeepsPasswordWhileUpdatingUsername)
   .then(testLocalProxyReplacesAndRemovesAuthentication)
@@ -2338,6 +2755,14 @@ Promise.resolve()
   .then(testLocalProxyBlocksRemovingAuthenticationFromExposedListener)
   .then(testLinuxWebRuntimeFactsResponsiveLogoutAndNodeEndpoints)
   .then(testSharedSubscriptionStatusLifecycleAndDisabledUpdate)
+  .then(testSubscriptionNodesLoadReadOnlyAndStayOutOfDrafts)
+  .then(testSubscriptionNodeEnableDisableUsesTheStoreEndpoint)
+  .then(testSubscriptionNodeAPIUsesSharedPayloads)
+  .then(testCopySubscriptionNodeToMyNodes)
+  .then(testRoutePickerAndLabelsIncludeSubscriptionNodes)
+  .then(testSubscriptionDeletionKeepsNodesOutOfTheDraftAndGuardsRoutes)
+  .then(testSubscriptionNodeCleanFromNodesPage)
+  .then(testApplyResultUnchangedRuntimeNotice)
   .then(() => console.log('Linux web regression tests passed.'))
   .catch((error) => {
     console.error(error);

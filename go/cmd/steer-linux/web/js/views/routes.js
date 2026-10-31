@@ -31,8 +31,9 @@
 
   function probeAction(button) { return h('div', { class: 'probe-action' }, button, button._latest); }
 
-  function nodeLabel(intent, id) {
-    const node = intent.nodes.find((n) => n.id === id);
+  /* 路由可以选手动节点，也可以选订阅节点（来自订阅节点读取接口）。 */
+  function nodeLabel(id) {
+    const node = S.store.allNodes.find((n) => n.id === id);
     return node ? (node.name || id) : id;
   }
 
@@ -44,7 +45,7 @@
       seen.add(cursor);
       const r = intent.routes.find((x) => x.id === cursor);
       if (!r || r.kind !== 'single') break;
-      hops.push(h('span', { class: 'hop' }, nodeLabel(intent, r.node)));
+      hops.push(h('span', { class: 'hop' }, nodeLabel(r.node)));
       cursor = r.detour;
     }
     const parts = [];
@@ -126,7 +127,7 @@
         const name = ui.input({ value: draft.name || '', placeholder: '路由名称' });
         const enabled = ui.toggle(draft.enabled, (v) => { draft.enabled = v; });
         draft.kind = 'single';
-        const nodeOpts = ui.referenceOptions('nodes', intent.nodes);
+        const nodeOpts = ui.referenceOptions('nodes', S.store.allNodes);
         const nodeSel = ui.select(ui.selectWithMissing(nodeOpts, draft.node, '缺失节点'), draft.node ?? '', (v) => { draft.node = v; });
         const detourOpts = [['', '直连（无前置）'], ...ui.referenceOptions('routes', intent.routes.filter((r) => r.kind === 'single'))];
         const detourSel = ui.select(ui.selectWithMissing(detourOpts, draft.detour ?? ''), draft.detour ?? '', (v) => { draft.detour = v; });
@@ -188,6 +189,7 @@
       const direct = intent.routes.find((r) => r.kind === 'direct');
       const block = intent.routes.find((r) => r.kind === 'block');
       const singles = intent.routes.filter((r) => r.kind === 'single');
+      const allNodes = S.store.allNodes;
 
       const deleteRoute = (route) => {
         if (!ui.guardCollectionDeletion('routes', route.id, route.name || route.id)) return;
@@ -227,10 +229,10 @@
 
       const addButton = () => h('button', {
         class: 'btn btn--primary',
-        disabled: intent.nodes.length === 0,
-        title: intent.nodes.length === 0 ? '请先添加节点' : '添加经由节点出网的路由',
+        disabled: allNodes.length === 0,
+        title: allNodes.length === 0 ? '请先添加节点' : '添加经由节点出网的路由',
         onclick: () => openRouteEditor(ui.creationDraft('routes', {
-          node: intent.nodes.find((node) => node.enabled !== false)?.id || ''
+          node: allNodes.find((node) => node.enabled !== false)?.id || ''
         }))
       }, icon('plus', 15), '添加路由');
 
@@ -243,7 +245,7 @@
         h('h2', { class: 'section-title' }, '节点路由'),
         singles.length
           ? h('div', { class: 'card table-card' }, h('div', { class: 'table-wrap' }, table))
-          : ui.emptyState(intent.nodes.length ? '还没有节点路由。添加后可以在规则中选择它。' : '还没有节点路由。请先在“节点”页添加节点。', [addButton()], 'route')
+          : ui.emptyState(allNodes.length ? '还没有节点路由。添加后可以在规则中选择它。' : '还没有节点路由。请先在“节点”页添加节点。', [addButton()], 'route')
       );
 
       const focus = ui.takeObjectFocus('route');
