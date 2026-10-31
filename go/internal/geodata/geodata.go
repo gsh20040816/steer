@@ -149,24 +149,11 @@ func Catalog(seedDirectory, kind string) ([]string, error) {
 	return values, nil
 }
 
-// ValidateRequiredRules reports a category that the manifest does not list
-// and a required SRS file that is missing, before Apply touches the runtime.
-func ValidateRequiredRules(ruleSets []compiler.GeoRuleSet, seedDirectory string) error {
-	if len(ruleSets) == 0 {
-		return nil
-	}
-	manifest, err := ReadManifest(seedDirectory)
-	if err != nil {
-		return err
-	}
-	available := make(map[string]bool, len(manifest.Rules))
-	for _, rule := range manifest.Rules {
-		available[rule.Kind+"\x00"+rule.Category] = true
-	}
+// ValidateRequiredRules reports a required SRS file that is missing, before
+// Apply touches the runtime. Platform validation has already checked that the
+// manifest lists every referenced category.
+func ValidateRequiredRules(ruleSets []compiler.GeoRuleSet) error {
 	for _, required := range ruleSets {
-		if !available[required.Kind+"\x00"+required.Category] {
-			return &Error{Code: ErrorCategoryNotFound, Kind: required.Kind, Category: required.Category}
-		}
 		if _, err := os.Stat(required.InitialPath); err != nil {
 			return &Error{Code: ErrorSeedInvalid, Kind: required.Kind, Category: required.Category, Path: required.InitialPath, Err: err}
 		}

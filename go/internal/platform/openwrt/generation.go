@@ -12,6 +12,7 @@ import (
 	"github.com/gsh20040816/steer/go/internal/capability"
 	"github.com/gsh20040816/steer/go/internal/compiler"
 	"github.com/gsh20040816/steer/go/internal/generation"
+	"github.com/gsh20040816/steer/go/internal/geodata"
 	model "github.com/gsh20040816/steer/go/internal/intent"
 )
 
@@ -57,7 +58,7 @@ func (backend *Backend) Prepare(ctx context.Context, value model.Intent, compile
 		return generation.Candidate{}, fmt.Errorf("installed sing-box %s cannot satisfy this intent; specify an explicit compatible sing-box version/build: %v", capabilityReport.Version, capabilityReport.Errors)
 	}
 	firewall := RenderFirewall(backend.plan)
-	if err := ValidateGeoRules(compiled.GeoRuleSets, backend.options.GeoDataDirectory); err != nil {
+	if err := geodata.ValidateRequiredRules(compiled.GeoRuleSets); err != nil {
 		return generation.Candidate{}, err
 	}
 	if err := os.MkdirAll(backend.options.StateDirectory, 0o700); err != nil {

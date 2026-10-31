@@ -66,7 +66,7 @@ func (backend *Backend) Prepare(ctx context.Context, value model.Intent, compile
 	if !capabilityReport.OK {
 		return generation.Candidate{}, fmt.Errorf("sing-box capability check failed: %v", capabilityReport.Errors)
 	}
-	if err := geodata.ValidateRequiredRules(compiled.GeoRuleSets, backend.options.GeoDataDirectory); err != nil {
+	if err := geodata.ValidateRequiredRules(compiled.GeoRuleSets); err != nil {
 		return generation.Candidate{}, err
 	}
 	paths := backend.paths()

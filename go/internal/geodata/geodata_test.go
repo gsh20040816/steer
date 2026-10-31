@@ -70,35 +70,27 @@ func TestCatalogIncludesExactAttributeSelectors(t *testing.T) {
 	}
 }
 
-func TestValidateRequiredRulesChecksCategoriesAndFiles(t *testing.T) {
+func TestValidateRequiredRulesChecksOnlyThatFilesExist(t *testing.T) {
 	root := writeSeed(t)
 	rule := compiler.GeoRuleSet{
 		Kind: "geosite", Category: "category-example@cn", Tag: "steer-geosite-category-example@cn",
 		InitialPath: filepath.Join(root, "rules", "steer-geosite-category-example@cn.srs"),
 	}
-	if err := ValidateRequiredRules([]compiler.GeoRuleSet{rule}, root); err != nil {
+	if err := ValidateRequiredRules([]compiler.GeoRuleSet{rule}); err != nil {
 		t.Fatal(err)
 	}
-	missing := rule
-	missing.Category = "missing"
-	missing.Tag = "steer-geosite-missing"
-	missing.InitialPath = filepath.Join(root, "rules", "steer-geosite-missing.srs")
-	err := ValidateRequiredRules([]compiler.GeoRuleSet{missing}, root)
-	var geoErr *Error
-	if !errors.As(err, &geoErr) || geoErr.Code != ErrorCategoryNotFound {
-		t.Fatalf("unexpected missing-category error: %#v", err)
-	}
-	// Only presence is checked: the recorded size and hash are not compared.
+	// The recorded size and hash are not compared.
 	if err := os.WriteFile(rule.InitialPath, []byte("replaced with other content\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateRequiredRules([]compiler.GeoRuleSet{rule}, root); err != nil {
+	if err := ValidateRequiredRules([]compiler.GeoRuleSet{rule}); err != nil {
 		t.Fatalf("seed file with a different size was rejected: %v", err)
 	}
 	if err := os.Remove(rule.InitialPath); err != nil {
 		t.Fatal(err)
 	}
-	err = ValidateRequiredRules([]compiler.GeoRuleSet{rule}, root)
+	err := ValidateRequiredRules([]compiler.GeoRuleSet{rule})
+	var geoErr *Error
 	if !errors.As(err, &geoErr) || geoErr.Code != ErrorSeedInvalid || geoErr.Path != rule.InitialPath {
 		t.Fatalf("unexpected missing-file error: %#v", err)
 	}

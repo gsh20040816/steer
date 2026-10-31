@@ -58,7 +58,7 @@ func (backend *Backend) Prepare(ctx context.Context, value model.Intent, compile
 	if !capabilityReport.OK {
 		return generation.Candidate{}, fmt.Errorf("installed sing-box %s cannot satisfy this intent; specify an explicit compatible sing-box version/build: %v", capabilityReport.Version, capabilityReport.Errors)
 	}
-	if err := geodata.ValidateRequiredRules(compiled.GeoRuleSets, backend.options.GeoDataDirectory); err != nil {
+	if err := geodata.ValidateRequiredRules(compiled.GeoRuleSets); err != nil {
 		return generation.Candidate{}, err
 	}
 	if err := os.MkdirAll(backend.options.StateDirectory, 0o700); err != nil {
