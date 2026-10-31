@@ -116,4 +116,6 @@ macOS    <平台状态目录>/subscription-nodes/<订阅 ID>.json
 - 比较函数是 `generation.Unchanged`，`sing-box.json` 由共享代码固定比较，平台只传自己的运行文件（可附带去掉生成 ID 的规范化函数）和健康检查；切换 `current` 链接的 `generation.PublishLink` 也由 OpenWrt 和 Linux 共用。
 - 配置读取以外的入口全部用完整 Saved Intent：OpenWrt 的 `validate`、`apply`、`_start`、`_state`、`_export-intent`、`_export-node`、`probe`、`_diagnostics`、`_probe-results` 新增 `--node-dir`（默认 `/etc/steer/subscription-nodes`），LuCI 的候选配置校验也因此会拼上存储节点；Linux 和 macOS 从 `--state-dir` 推出存储目录。
 - 共享代码里的订阅更新、清理、启用/停用、读取列表、复制规则和迁移计划分别是 `subscription.Update`、`CleanStale`、`SetNodeEnabled`、`ListNodes`、`CopyAsManual`、`PlanMigration`/`WriteMigratedNodes`；错误载荷由 `subscription.ErrorPayloadOf` 统一生成。
-- 界面共用的文案和字段放在界面描述的 `subscription_nodes`（只读、`manual_copy`、四个操作的英文 msgid 和中文、错误码）和 `apply_result`（`restarted` 字段、显示提示的条件、提示文案）里。
+- 界面共用的文案和字段放在界面描述的 `subscription_nodes`（只读、`manual_copy`、四个操作、每个错误码的提示、`SUBSCRIPTION_NODE_IN_CONFIG`、只读说明、读取失败、空分组、过期标记、清理结果和路由名称的分隔符）和 `apply_result`（`restarted` 字段、显示提示的条件、提示文案）里。每条文案都是 LuCI 的英文 msgid 加 `zh_cn`，LuCI 的中文翻译必须和 `zh_cn` 完全相同；`NODE_STILL_REFERENCED` 的提示用 `{routes}` 占位，界面换成仍在使用这个节点的路由名称。没有列出的错误码显示后端的 `error`。
+- 因为订阅节点的操作不改配置，三端界面的放行规则相同：启用/停用和更新不看草稿或 UCI 里有没有未保存、未提交的修改（rpcd 的 `subscription_update`、`subscription_clean`、`subscription_node_set` 也不再要求会话里没有未提交的修改）；完成后只重新读取订阅节点列表和订阅状态，不重新载入或覆盖草稿，也不弹出版本冲突；清理只在当前草稿或已保存配置里有路由引用这个节点时阻止，并列出这些路由。后端照旧只按 Saved 配置和节点存储校验。具体约定见 `docs/UI_DEVELOPMENT.md` 的「订阅节点（三端一样）」。
+- 配置里的节点都是手动节点，界面描述的节点排序策略不再按 `source_subscription` 分组。共享样例 `ui/*-fixtures.json` 的配置对象只放手动节点，订阅节点放在单独的 `subscription_nodes` 里，格式和读取接口的返回完全一样。

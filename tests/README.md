@@ -10,7 +10,7 @@ go test -race ./...
 go vet ./...
 ```
 
-共享核心的测试覆盖：schema 9、JSON/UCI 的严格解析、引用和链式代理的校验、编译结果是否稳定、每条路由的独立出口、DNS 通道、Geo 规则集和数据清单、应用流程、运行配置文件、订阅合并、测速。
+共享核心的测试覆盖：schema 10 和从 schema 9 的迁移、JSON/UCI 的严格解析、引用和链式代理的校验、编译结果是否稳定、每条路由的独立出口、DNS 通道、Geo 规则集和数据清单、应用流程、运行配置文件、订阅合并、测速。
 
 - **OpenWrt**：执行计划、nftables 规则、启用、健康检查和日志。
 - **Linux**：本机和转发流量的执行计划、DNS 接管、本机目标地址的例外规则、监听端口保护、源 MAC 规则、JSON 原子写入和 ETag 冲突、systemd 和应用流程、网页界面的 token 认证和 CSP、开关失败后的回滚、临时测速进程的流量标记、静态编译。
@@ -37,18 +37,20 @@ swift test --disable-sandbox --build-system native
 - `steer_helper_test.js`：LuCI 提交 UCI 后应用过程的提示、错误信息的本地化、单独的校验、会话权限。
 - `linux_web_test.js`：Linux 网页的开关和冲突回滚、总览页、规则和节点的标签、SSH 私钥、本地代理认证、高级 JSON 编辑、无效 JSON 时阻止离开页面、放弃修改前的确认。
 - Swift 测试：本地代理、订阅、测速、总览里 Saved/Active 的状态、提交前的检查。
-- `check-luci-i18n.py`：LuCI 里出现的文字都有中文翻译。
+- `check-luci-i18n.py`：LuCI 里出现的文字都有中文翻译；界面描述里三端共用的文案，LuCI 的中文翻译和 `zh_cn` 完全相同。
 - `check-release-consistency.py`：同一个版本号或校验值在不同文件里是否一致（sing-box 版本和 SHA、geoview 提交、两个 OpenWrt 包的版本、Arch 的 PKGBUILD 和 .SRCINFO），GitHub Actions 是否都固定到具体提交，LuCI 的 rpcd 脚本是否没有调用 shell。
 - `check-ui-contract.py`：生成的界面描述文件是最新的，LuCI 菜单和它一致。
 - `check-macos-packaging.py`：把安装器里清除 plist 隔离属性的那段脚本拿出来，在真实的扩展属性上运行一遍。
 
-三端共用的测试数据放在 `ui/` 下：
+三端共用的测试数据放在 `ui/` 下。配置对象里只有手动节点；订阅节点放在单独的 `subscription_nodes` 里，格式和订阅节点读取接口的返回完全一样（含 `manual_copy`），`internal/uispec` 的 Go 测试逐个核对：
 
-- `subscription-status-fixtures.json`：订阅从未拉取、成功、有节点被跳过、成功后又失败、已停用、部分节点过期且被引用。
+- `subscription-status-fixtures.json`：订阅从未拉取、成功、有节点被跳过、成功后又失败、已停用、部分节点过期且被引用，以及这些订阅的 `subscription_nodes`。
 - `probe-diagnostics-fixtures.json`：测速结果的脱敏、界面上显示的摘要、端口 53 劫持检查、启用和停用时能做的操作。
 - `state-lifecycle-fixtures.json`：全新安装、等待停用、应用失败、正常运行时的 Draft/Saved/Active 状态。
 - `validation-issue-fixtures.json`：保存失败时问题的定位和不含凭据的错误信息。
-- `collection-reference-fixtures.json`：删除节点、路由、DNS、本地代理、订阅时的引用保护。
+- `collection-reference-fixtures.json`：删除节点、路由、DNS、本地代理、订阅时的引用保护（订阅节点来自 `subscription_nodes`）。
+- `node-display-sorting-fixtures.json`：按测试结果给手动节点和一个订阅分组里的节点排序。
+- `collection-ordering-fixtures.json`、`collection-drag-fixtures.json`：按稳定 ID 上移、下移和拖动。
 - `rule-summary-fixtures.json`：规则匹配条件的摘要，以及 DNS 阶段和连接阶段的区别。
 - `form-input-fixtures.json`：测试网址、订阅网址、时间间隔、DNS HTTP 路径的格式。
 - `macos-system-component-fixtures.json`：macOS 各组件缺失或版本不一致的情况，区分「安装是否完整」和「是否正在运行」。
