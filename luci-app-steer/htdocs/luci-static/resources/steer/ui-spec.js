@@ -3,7 +3,7 @@
 'require baseclass';
 return baseclass.extend({
   "schema_version": 1,
-  "canonical_schema": 9,
+  "canonical_schema": 10,
   "subscription_update_interval_default": "6h",
   "id_policy": {
     "pattern": "^[a-z][a-z0-9_-]{0,31}$",
@@ -41,7 +41,7 @@ return baseclass.extend({
     "main": {
       "enabled": false,
       "log_level": "warn",
-      "schema_version": 9
+      "schema_version": 10
     },
     "nodes": {
       "enabled": true,
@@ -1528,6 +1528,48 @@ return baseclass.extend({
     "unreferenced_nodes": "removed",
     "stale_referenced_nodes": "preserved",
     "notice": "Subscription inventory updated; current Active configuration was not changed. Removed unreferenced nodes are deleted automatically, while nodes still referenced by Routes are preserved as stale."
+  },
+  "subscription_nodes": {
+    "read_only": true,
+    "manual_copy_field": "manual_copy",
+    "actions": {
+      "clean": {
+        "label": "Clean up",
+        "zh_cn": "清理"
+      },
+      "copy_to_manual": {
+        "label": "Copy to my nodes",
+        "zh_cn": "复制到我的节点"
+      },
+      "disable": {
+        "label": "Disable",
+        "zh_cn": "停用"
+      },
+      "enable": {
+        "label": "Enable",
+        "zh_cn": "启用"
+      }
+    },
+    "error_codes": [
+      "SUBSCRIPTION_NOT_FOUND",
+      "SUBSCRIPTION_NODE_NOT_FOUND",
+      "NODE_STILL_REFERENCED",
+      "SUBSCRIPTION_NODE_CURRENT",
+      "VALIDATION_FAILED",
+      "SUBSCRIPTION_NODE_STORE_FAILED"
+    ]
+  },
+  "apply_result": {
+    "restarted_field": "restarted",
+    "unchanged_notice_when": {
+      "activated": true,
+      "ok": true,
+      "restarted": false
+    },
+    "unchanged_notice": {
+      "label": "Runtime configuration unchanged; not restarted",
+      "zh_cn": "运行配置没有变化，未重启"
+    }
   },
   "node_display_sorting": {
     "modes": [

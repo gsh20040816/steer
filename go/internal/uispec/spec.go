@@ -7,6 +7,11 @@ package uispec
 
 //go:generate go run ../../cmd/steer-ui-spec --root ../../..
 
+import (
+	model "github.com/gsh20040816/steer/go/internal/intent"
+	"github.com/gsh20040816/steer/go/internal/subscription"
+)
+
 const SchemaVersion = 1
 
 type Choice struct {
@@ -122,6 +127,35 @@ type SubscriptionInventoryContract struct {
 	Notice                  string `json:"notice"`
 }
 
+// UIText is one user-visible text shared by the three frontends. Label is the
+// English LuCI msgid; ZhCN is the exact wording of the Linux web console and
+// the macOS app, and the zh-cn translation LuCI uses for Label.
+type UIText struct {
+	Label string `json:"label"`
+	ZhCN  string `json:"zh_cn"`
+}
+
+// ApplyResultContract describes how every frontend reads an Apply result.
+// An Apply whose runtime did not change switches the current generation
+// without restarting the service; UnchangedNoticeWhen lists the result fields
+// and values that identify it.
+type ApplyResultContract struct {
+	RestartedField      string          `json:"restarted_field"`
+	UnchangedNoticeWhen map[string]bool `json:"unchanged_notice_when"`
+	UnchangedNotice     UIText          `json:"unchanged_notice"`
+}
+
+// SubscriptionNodesContract describes subscription nodes, which are kept by
+// their subscription and read-only in every frontend. Each listed node carries
+// ManualCopyField, the manual node produced by the shared "copy to my nodes"
+// rule without an ID; the frontend assigns one and adds it to its draft.
+type SubscriptionNodesContract struct {
+	ReadOnly        bool              `json:"read_only"`
+	ManualCopyField string            `json:"manual_copy_field"`
+	Actions         map[string]UIText `json:"actions"`
+	ErrorCodes      []string          `json:"error_codes"`
+}
+
 type NodeDisplaySortingContract struct {
 	Modes             []string `json:"modes"`
 	DirectionModes    []string `json:"direction_modes"`
@@ -159,6 +193,8 @@ type Contract struct {
 	Navigation                        []NavigationGroup                   `json:"navigation"`
 	DNSBoundaries                     map[string]DNSBoundary              `json:"dns_boundaries"`
 	SubscriptionInventory             SubscriptionInventoryContract       `json:"subscription_inventory"`
+	SubscriptionNodes                 SubscriptionNodesContract           `json:"subscription_nodes"`
+	ApplyResult                       ApplyResultContract                 `json:"apply_result"`
 	NodeDisplaySorting                NodeDisplaySortingContract          `json:"node_display_sorting"`
 }
 
@@ -198,7 +234,7 @@ func ContractValue() Contract {
 	transportTypes := []string{"vmess", "vless", "trojan"}
 	contract := Contract{
 		SchemaVersion:                     SchemaVersion,
-		CanonicalSchema:                   9,
+		CanonicalSchema:                   model.SchemaVersion,
 		SubscriptionUpdateIntervalDefault: "6h",
 		IDPolicy: IDPolicy{
 			Pattern: `^[a-z][a-z0-9_-]{0,31}$`, MaxLength: 32, AutoGenerate: true,
@@ -209,7 +245,7 @@ func ContractValue() Contract {
 		},
 		CreationDefaults: map[string]map[string]interface{}{
 			"wireguard_tunnels": {"enabled": true, "address": []string{}, "private_key": "", "peers": []any{}, "access": []any{}},
-			"main":              {"schema_version": 9, "enabled": false, "log_level": "warn"},
+			"main":              {"schema_version": model.SchemaVersion, "enabled": false, "log_level": "warn"},
 			"bootstrap":         {"protocol": "udp", "server": "1.1.1.1", "server_port": 53, "strategy": "prefer_ipv4"},
 			"nodes":             {"enabled": true, "type": "socks", "server": "", "server_port": 1080},
 			"routes":            {"enabled": true, "kind": "single", "node": ""},
@@ -324,6 +360,25 @@ func ContractValue() Contract {
 			UnreferencedNodes:       "removed",
 			StaleReferencedNodes:    "preserved",
 			Notice:                  "Subscription inventory updated; current Active configuration was not changed. Removed unreferenced nodes are deleted automatically, while nodes still referenced by Routes are preserved as stale.",
+		},
+		SubscriptionNodes: SubscriptionNodesContract{
+			ReadOnly:        true,
+			ManualCopyField: "manual_copy",
+			Actions: map[string]UIText{
+				"enable":         {Label: "Enable", ZhCN: "启用"},
+				"disable":        {Label: "Disable", ZhCN: "停用"},
+				"clean":          {Label: "Clean up", ZhCN: "清理"},
+				"copy_to_manual": {Label: "Copy to my nodes", ZhCN: "复制到我的节点"},
+			},
+			ErrorCodes: []string{
+				subscription.ErrorSubscriptionNotFound, subscription.ErrorNodeNotFound, subscription.ErrorNodeStillReferenced,
+				subscription.ErrorNodeCurrent, subscription.ErrorValidationFailed, subscription.ErrorNodeStoreFailed,
+			},
+		},
+		ApplyResult: ApplyResultContract{
+			RestartedField:      "restarted",
+			UnchangedNoticeWhen: map[string]bool{"ok": true, "activated": true, "restarted": false},
+			UnchangedNotice:     UIText{Label: "Runtime configuration unchanged; not restarted", ZhCN: "运行配置没有变化，未重启"},
 		},
 		NodeDisplaySorting: NodeDisplaySortingContract{
 			Modes:             []string{"default", "connect", "download"},

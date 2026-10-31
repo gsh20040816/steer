@@ -14,7 +14,7 @@ import (
 
 func TestContractCoversEveryNodeType(t *testing.T) {
 	contract := ContractValue()
-	if contract.SchemaVersion != SchemaVersion || contract.CanonicalSchema != 9 {
+	if contract.SchemaVersion != SchemaVersion || contract.CanonicalSchema != model.SchemaVersion || contract.CreationDefaults["main"]["schema_version"] != model.SchemaVersion {
 		t.Fatalf("unexpected schema contract: %#v", contract)
 	}
 	seen := map[string]bool{}
@@ -287,5 +287,33 @@ func collectJSONFields(value reflect.Type, fields map[string]bool) {
 		if name != "" && name != "-" {
 			fields[name] = true
 		}
+	}
+}
+
+func TestSubscriptionNodeAndApplyResultContractsMatchTheBackend(t *testing.T) {
+	contract := ContractValue()
+	if !contract.SubscriptionNodes.ReadOnly || contract.SubscriptionNodes.ManualCopyField != "manual_copy" {
+		t.Fatalf("unexpected subscription node contract: %#v", contract.SubscriptionNodes)
+	}
+	for _, action := range []string{"enable", "disable", "clean", "copy_to_manual"} {
+		text := contract.SubscriptionNodes.Actions[action]
+		if text.Label == "" || text.ZhCN == "" {
+			t.Fatalf("subscription node action %q has no shared wording", action)
+		}
+	}
+	if contract.SubscriptionNodes.Actions["copy_to_manual"].ZhCN != "复制到我的节点" {
+		t.Fatal("copy action wording drifted")
+	}
+	encoded, err := json.Marshal(map[string]any{"ok": true, "activated": true, "restarted": false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]bool
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatal(err)
+	}
+	if contract.ApplyResult.RestartedField != "restarted" || !reflect.DeepEqual(contract.ApplyResult.UnchangedNoticeWhen, result) ||
+		contract.ApplyResult.UnchangedNotice.ZhCN != "运行配置没有变化，未重启" {
+		t.Fatalf("unexpected Apply result contract: %#v", contract.ApplyResult)
 	}
 }
