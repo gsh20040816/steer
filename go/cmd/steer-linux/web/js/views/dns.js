@@ -100,19 +100,13 @@
         );
         return {
           submit() {
-            if (!server.value.trim()) { ui.toast('服务器不能为空', 'err'); return false; }
             draft.name = name.value.trim() || undefined;
             draft.server = server.value.trim();
             draft.server_port = Number(port.value);
-            if (!protocolSpec(draft.protocol)) { ui.toast('请选择 DNS 协议', 'err'); return false; }
-            if (!Number.isInteger(draft.server_port) || draft.server_port < 1 || draft.server_port > 65535) { ui.toast('端口必须是 1–65535', 'err'); return false; }
             for (const field of ['path', 'tls_server_name']) {
               if (typeof draft[field] === 'string') draft[field] = draft[field].trim() || undefined;
             }
             cleanupProtocolFields(draft);
-            const spec = protocolSpec(draft.protocol);
-            const missing = spec.required_fields.find((field) => !String(draft[field] || '').trim());
-            if (missing) { ui.toast('加密 DNS 需要 TLS 服务器名', 'err'); return false; }
             for (const key of Object.keys(draft)) if (draft[key] == null) delete draft[key];
             return commitProfile(profile, draft);
           }

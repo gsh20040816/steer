@@ -2287,7 +2287,7 @@ function testLocalProxyReplacesAndRemovesAuthentication() {
     'remove authentication must clear the paired fields together');
 }
 
-function testLocalProxyBlocksExposedUnauthenticatedDraftAndCreatesCredentials() {
+function testLocalProxyWarnsAboutExposureAndCreatesCredentials() {
   const intent = localProxyIntent(null);
   const environment = createEnvironment(async () => ({ ok: true }), intent);
   loadView(environment, 'proxies');
@@ -2296,62 +2296,37 @@ function testLocalProxyBlocksExposedUnauthenticatedDraftAndCreatesCredentials() 
 
   proxyControl(environment, '名称', 'input').value = 'LAN entry';
   const listen = proxyControl(environment, '监听地址', 'input');
-  const action = proxyControl(environment, '认证操作', 'select');
-  action.value = 'replace';
-  action.listeners.change({ target: action });
-  proxyControl(environment, '用户名', 'input').value = 'new-user';
-  const newPassword = proxyControl(environment, '新密码', 'input');
-  newPassword.value = 'new-secret';
-  listen.value = 'router.lan';
-  listen.listeners.input({ target: listen });
-  buttonWithText(environment.drawerRoot, '保存到工作副本').listeners.click();
-  assert.strictEqual(intent.local_proxies.length, 0, 'hostname listeners must not enter the Draft even with authentication');
-  assert.ok(text(environment.body.querySelector('#toasts')).includes('不能填写域名'),
-    'a rejected hostname must explain that an IP address is required');
-
-  listen.value = '127.0.0.1';
-  newPassword.value = '';
-  buttonWithText(environment.drawerRoot, '保存到工作副本').listeners.click();
-  assert.strictEqual(intent.local_proxies.length, 0, 'incomplete authentication must not enter the Draft');
-  assert.ok(text(environment.body.querySelector('#toasts')).includes('同时填写'),
-    'incomplete authentication must explain the paired-field requirement');
-  newPassword.value = 'new-secret';
-
-  action.value = 'remove';
-  action.listeners.change({ target: action });
   listen.value = '0.0.0.0';
   listen.listeners.input({ target: listen });
   const warning = find(environment.drawerRoot, (element) => classSet(element).has('local-proxy-exposure'));
   assert.ok(warning && warning.hidden === false && text(warning).includes('扩大访问范围'),
     'non-loopback input must show a prominent exposure warning');
 
-  buttonWithText(environment.drawerRoot, '保存到工作副本').listeners.click();
-  assert.strictEqual(intent.local_proxies.length, 0, 'an exposed endpoint without authentication must not enter the Draft');
-  assert.ok(text(environment.body.querySelector('#toasts')).includes('可能允许其他设备连接'),
-    'blocked exposed listeners must explain the risk');
-
+  const action = proxyControl(environment, '认证操作', 'select');
   action.value = 'replace';
   action.listeners.change({ target: action });
+  proxyControl(environment, '用户名', 'input').value = 'new-user';
+  proxyControl(environment, '新密码', 'input').value = 'new-secret';
   buttonWithText(environment.drawerRoot, '保存到工作副本').listeners.click();
-  assert.strictEqual(intent.local_proxies.length, 1, 'paired authentication must allow an exposed endpoint into the Draft');
+  assert.strictEqual(intent.local_proxies.length, 1, 'an exposed endpoint with paired authentication must enter the Draft');
+  assert.strictEqual(intent.local_proxies[0].listen, '0.0.0.0', 'the listen address must be written to the Draft');
   assert.strictEqual(intent.local_proxies[0].username, 'new-user', 'new username must be written to the Draft');
   assert.strictEqual(intent.local_proxies[0].password, 'new-secret', 'new password must be written to the Draft');
 }
 
-function testLocalProxyBlocksRemovingAuthenticationFromExposedListener() {
-  const proxy = {
-    id: 'entry', enabled: true, name: 'LAN entry', protocol: 'mixed', listen: '::', listen_port: 1080,
-    username: 'user', password: 'secret'
-  };
-  const environment = createEnvironment(async () => ({ ok: true }), localProxyIntent(proxy));
-  openProxyEditor(environment);
-  const action = proxyControl(environment, '认证操作', 'select');
-  action.value = 'remove';
-  action.listeners.change({ target: action });
+function testLocalProxyEditorLeavesValidationToTheBackend() {
+  const intent = localProxyIntent(null);
+  const environment = createEnvironment(async () => ({ ok: true }), intent);
+  loadView(environment, 'proxies');
+  environment.S.views.proxies.render(environment.view);
+  buttonWithText(environment.view, '添加本地代理').listeners.click();
+
+  const listen = proxyControl(environment, '监听地址', 'input');
+  listen.value = 'router.lan';
+  listen.listeners.input({ target: listen });
   buttonWithText(environment.drawerRoot, '保存到工作副本').listeners.click();
-  assert.strictEqual(proxy.username, 'user', 'blocked removal must preserve the existing username');
-  assert.strictEqual(proxy.password, 'secret', 'blocked removal must preserve the existing password');
-  assert.strictEqual(environment.touchCount, 0, 'blocked removal must not mark the Draft dirty');
+  assert.strictEqual(intent.local_proxies.length, 1, 'the editor must not repeat the backend listen-address validation');
+  assert.strictEqual(intent.local_proxies[0].listen, 'router.lan', 'the Draft must keep the entered value for backend validation');
 }
 
 async function testLinuxWebRuntimeFactsResponsiveLogoutAndNodeEndpoints() {
@@ -2919,8 +2894,8 @@ Promise.resolve()
   .then(testLocalProxyAddressFixturesAndMixedLabel)
   .then(testLocalProxyKeepsPasswordWhileUpdatingUsername)
   .then(testLocalProxyReplacesAndRemovesAuthentication)
-  .then(testLocalProxyBlocksExposedUnauthenticatedDraftAndCreatesCredentials)
-  .then(testLocalProxyBlocksRemovingAuthenticationFromExposedListener)
+  .then(testLocalProxyWarnsAboutExposureAndCreatesCredentials)
+  .then(testLocalProxyEditorLeavesValidationToTheBackend)
   .then(testLinuxWebRuntimeFactsResponsiveLogoutAndNodeEndpoints)
   .then(testSharedSubscriptionStatusLifecycleAndDisabledUpdate)
   .then(testSubscriptionNodesLoadReadOnlyAndStayOutOfDrafts)

@@ -53,19 +53,6 @@
     return h('span', { class: 'chain', title: '先连接前置代理' }, parts, hops.length > 1 ? h('span', { class: 'muted' }, '出口') : null);
   }
 
-  function wouldCycle(routeId, detourId, routes) {
-    let cursor = detourId;
-    const seen = new Set();
-    while (cursor) {
-      if (cursor === routeId) return true;
-      if (seen.has(cursor)) return true;
-      seen.add(cursor);
-      const r = routes.find((x) => x.id === cursor);
-      cursor = r?.detour;
-    }
-    return false;
-  }
-
   function routeTestButton(label, download, routeId, eligible) {
     const btn = h('button', { class: 'btn btn--sm', onclick: async () => {
       if (!eligible) {
@@ -131,20 +118,6 @@
         const nodeSel = ui.select(ui.selectWithMissing(nodeOpts, draft.node, '缺失节点'), draft.node ?? '', (v) => { draft.node = v; });
         const detourOpts = [['', '直连（无前置）'], ...ui.referenceOptions('routes', intent.routes.filter((r) => r.kind === 'single'))];
         const detourSel = ui.select(ui.selectWithMissing(detourOpts, draft.detour ?? ''), draft.detour ?? '', (v) => { draft.detour = v; });
-        const warn = h('div', {});
-        const check = () => {
-          if (draft.detour && wouldCycle(draft.id, draft.detour, intent.routes)) {
-            warn.replaceChildren(h('div', { class: 'alert alert--err' }, '前置代理链存在循环引用，请重新选择前置节点。'));
-          } else if (draft.detour) {
-            const d = intent.routes.find((r) => r.id === draft.detour);
-            if (d && !d.enabled) warn.replaceChildren(h('div', { class: 'alert' }, '所选前置路由已停用，请启用或更换。'));
-            else if (d && d.kind !== 'single') warn.replaceChildren(h('div', { class: 'alert' }, '前置必须是单节点路由。'));
-            else warn.replaceChildren();
-          } else {
-            warn.replaceChildren();
-          }
-        };
-        detourSel.addEventListener('change', check);
         nodeSel.addEventListener('change', () => { draft.node = nodeSel.value; });
 
         body.append(
@@ -152,8 +125,7 @@
             ui.field('名称', name, null, 'name'),
             ui.field('启用', enabled, null, 'enabled'),
             ui.field('节点', nodeSel, '用于连接网络的出口节点', 'node'),
-            ui.field('前置代理', detourSel, '先连接所选前置路由；留空表示直接连接', 'detour'),
-            warn
+            ui.field('前置代理', detourSel, '先连接所选前置路由；留空表示直接连接', 'detour')
           ])
         );
         return {
@@ -162,7 +134,6 @@
             draft.kind = 'single';
             draft.node = nodeSel.value || undefined;
             draft.detour = detourSel.value || undefined;
-            if (draft.detour && wouldCycle(draft.id, draft.detour, intent.routes)) { ui.toast('前置链存在循环引用，不能保存', 'err'); return false; }
             Object.assign(route, draft);
             return route;
           }

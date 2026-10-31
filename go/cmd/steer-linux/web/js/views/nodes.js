@@ -321,9 +321,6 @@
               if (nameInput) node.name = nameInput.value.trim() || node.name;
               nodes.forEach((candidate) => {
                 candidate.id = ui.creationDraft('nodes').id;
-                delete candidate.source_subscription;
-                delete candidate.source_fingerprint;
-                delete candidate.pinned_stale;
                 S.store.intent.nodes.push(candidate);
               });
               S.store.touch();
@@ -501,11 +498,8 @@
               delete draft.server;
               delete draft.server_port;
             } else {
-              if (!trim(server.value)) { ui.toast('服务器不能为空', 'err'); return false; }
-              const p = Number(port.value);
-              if (!port.value || p < 1 || p > 65535) { ui.toast('端口必须是 1–65535', 'err'); return false; }
               draft.server = trim(server.value);
-              draft.server_port = p;
+              draft.server_port = Number(port.value);
             }
             const allowed = new Set(fieldsFor(draft.type).map((field) => field.key));
             for (const key of NODE_OPTION_KEYS) if (!allowed.has(key)) delete draft[key];

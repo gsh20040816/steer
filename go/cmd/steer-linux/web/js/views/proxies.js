@@ -72,14 +72,6 @@
         );
         return {
           submit() {
-            if (!listen.value.trim()) { ui.toast('监听地址不能为空', 'err'); return false; }
-            if (!S.uiSpec.local_proxy_protocols.some((item) => item.value === draft.protocol)) { ui.toast('请选择代理协议', 'err'); return false; }
-            const listenAddress = listen.value.trim();
-            const listenClass = ui.classifyLocalProxyListen(listenAddress);
-            if (listenClass === 'invalid') { ui.toast('监听地址必须是有效的 IP 地址，不能填写域名', 'err'); return false; }
-            const p = Number(port.value);
-            if (!port.value || p < 1 || p > 65535) { ui.toast('端口必须是 1–65535', 'err'); return false; }
-
             let nextUsername = '';
             let nextPassword = '';
             if (authAction === 'keep') {
@@ -89,19 +81,11 @@
               nextUsername = username.value.trim();
               nextPassword = password.value;
             }
-            if ((nextUsername === '') !== (nextPassword === '')) {
-              ui.toast('用户名和密码必须同时填写；替换密码时不能留空', 'err');
-              return false;
-            }
-            if (listenClass === 'non_loopback' && nextUsername === '') {
-              ui.toast('该监听地址可能允许其他设备连接，必须设置用户名和密码', 'err');
-              return false;
-            }
 
             draft.name = name.value.trim() || undefined;
-            draft.listen = listenAddress;
-            draft.listen_port = p;
-            if (nextUsername) {
+            draft.listen = listen.value.trim();
+            draft.listen_port = Number(port.value);
+            if (nextUsername || nextPassword) {
               draft.username = nextUsername;
               draft.password = nextPassword;
             } else {

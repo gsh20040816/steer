@@ -84,7 +84,6 @@
         );
         return {
           submit() {
-            if (!/^https?:\/\//.test(url.value.trim())) { ui.toast('订阅 URL 必须是 http(s)://', 'err'); return false; }
             draft.name = name.value.trim() || undefined;
             draft.url = url.value.trim();
             draft.update_interval = interval.value.trim() || undefined;
