@@ -72,3 +72,35 @@ func TestJSONRoundTripPreservesTLSALPN(t *testing.T) {
 		t.Fatalf("TLS ALPN changed during JSON round trip: %#v", decoded.Nodes[0].ALPN)
 	}
 }
+
+func TestJSONNodeDomainStrategyIsOptional(t *testing.T) {
+	value := validIntent()
+	var encoded bytes.Buffer
+	if err := EncodeJSON(&encoded, value); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(encoded.String(), "domain_strategy") {
+		t.Fatalf("a node without a domain strategy gained the field: %s", encoded.String())
+	}
+
+	value.Nodes[0].DomainStrategy = "prefer_ipv4"
+	encoded.Reset()
+	if err := EncodeJSON(&encoded, value); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(encoded.String(), `"domain_strategy": "prefer_ipv4"`) {
+		t.Fatalf("domain strategy was not encoded: %s", encoded.String())
+	}
+	decoded, err := DecodeJSON(&encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(decoded.Nodes, value.Nodes) {
+		t.Fatalf("domain strategy changed during JSON round trip: %#v", decoded.Nodes[0])
+	}
+
+	raw := `{"main":{"schema_version":10},"nodes":[{"id":"proxy","type":"socks","server":"proxy.example","server_port":1080,"domainStrategy":"prefer_ipv4"}]}`
+	if _, err := DecodeJSON(strings.NewReader(raw)); err == nil {
+		t.Fatal("a misspelled domain strategy field was accepted")
+	}
+}

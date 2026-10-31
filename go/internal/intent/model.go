@@ -46,6 +46,9 @@ type Node struct {
 	Type       string `json:"type"`
 	Server     string `json:"server"`
 	ServerPort int    `json:"server_port"`
+	// DomainStrategy is the address strategy used to resolve a domain server.
+	// Empty follows bootstrap.strategy; IP literal servers are not resolved.
+	DomainStrategy string `json:"domain_strategy,omitempty"`
 	NodeCredentials
 	NodeTransport
 	NodeProtocol

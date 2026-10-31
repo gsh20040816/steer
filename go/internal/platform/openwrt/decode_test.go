@@ -2,6 +2,7 @@
 package openwrt
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -234,5 +235,56 @@ func TestDecodeDirectBypass(t *testing.T) {
 		if err != nil || value.Main.DirectBypass != mode {
 			t.Fatalf("mode %q: value=%#v err=%v", mode, value.Main, err)
 		}
+	}
+}
+
+func TestDecodeNodeDomainStrategy(t *testing.T) {
+	nodes := `
+config node 'osa'
+	option type 'socks'
+	option server 'osa.example'
+	option server_port '1080'
+	option domain_strategy 'prefer_ipv4'
+
+config node 'lax'
+	option type 'socks'
+	option server 'lax.example'
+	option server_port '1080'
+`
+	value, err := Decode(strings.NewReader(minimalConfig + nodes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(value.Nodes) != 2 || value.Nodes[0].DomainStrategy != "prefer_ipv4" || value.Nodes[1].DomainStrategy != "" {
+		t.Fatalf("UCI domain_strategy was not decoded: %#v", value.Nodes)
+	}
+	if validation := model.Validate(value); !validation.OK {
+		t.Fatalf("decoded domain strategy is invalid: %#v", validation.Errors)
+	}
+	var encoded bytes.Buffer
+	if err := model.EncodeJSON(&encoded, value); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(encoded.String(), `"domain_strategy"`) != 1 {
+		t.Fatalf("Canonical JSON must carry domain_strategy only where UCI sets it: %s", encoded.String())
+	}
+	decoded, err := model.DecodeJSON(&encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(decoded.Nodes, value.Nodes) {
+		t.Fatalf("UCI nodes changed through Canonical JSON: %#v", decoded.Nodes)
+	}
+
+	invalid, err := Decode(strings.NewReader(minimalConfig + strings.Replace(nodes, "'prefer_ipv4'", "'ipv4'", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validation := model.Validate(invalid); validation.OK || validation.Errors[0].Code != "INVALID_DOMAIN_STRATEGY" || validation.Errors[0].Option != "domain_strategy" {
+		t.Fatalf("invalid UCI domain_strategy was accepted: %#v", validation.Errors)
+	}
+	list := strings.Replace(nodes, "option domain_strategy", "list domain_strategy", 1)
+	if _, err := Decode(strings.NewReader(minimalConfig + list)); err == nil || !strings.Contains(err.Error(), "must use option") {
+		t.Fatalf("domain_strategy list was accepted: %v", err)
 	}
 }

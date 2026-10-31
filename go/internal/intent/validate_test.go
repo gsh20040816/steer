@@ -180,6 +180,31 @@ func TestValidateNodeAllowsMultilinePrivateKey(t *testing.T) {
 	}
 }
 
+func TestValidateNodeDomainStrategy(t *testing.T) {
+	for _, server := range []string{"proxy.example", "192.0.2.10", "2001:db8::10"} {
+		for _, strategy := range []string{"", "prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"} {
+			intent := validIntent()
+			intent.Nodes[0].Server, intent.Nodes[0].DomainStrategy = server, strategy
+			if validation := Validate(intent); !validation.OK {
+				t.Fatalf("server %q with domain strategy %q was rejected: %#v", server, strategy, validation.Errors)
+			}
+		}
+	}
+	for _, strategy := range []string{"as_is", "PREFER_IPV4", "ipv4", "prefer_ipv4 ", "prefer ipv4"} {
+		intent := validIntent()
+		intent.Nodes[0].DomainStrategy = strategy
+		validation := Validate(intent)
+		if validation.OK || len(validation.Errors) != 1 || !hasIssueForOption(validation, "INVALID_DOMAIN_STRATEGY", "domain_strategy") ||
+			validation.Errors[0].ObjectType != "node" || validation.Errors[0].ObjectID != "proxy" {
+			t.Fatalf("invalid domain strategy %q was not rejected on its node: %#v", strategy, validation.Errors)
+		}
+	}
+	tor := Node{ID: "tor", Enabled: true, Type: "tor", DomainStrategy: "prefer_ipv4", NodeProtocol: NodeProtocol{ExecutablePath: "/usr/bin/tor"}}
+	if validation := ValidateNode(tor); validation.OK || !hasIssueForOption(validation, "UNSUPPORTED_NODE_OPTION", "domain_strategy") {
+		t.Fatalf("Tor without a remote server accepted a domain strategy: %#v", validation.Errors)
+	}
+}
+
 func TestValidateRequiresEveryHTTPSProbe(t *testing.T) {
 	intent := validIntent()
 	intent.Main.ProbeDirectURL = ""

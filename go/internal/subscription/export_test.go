@@ -77,3 +77,40 @@ func TestEncodeURIEscapesCredentialsAndNames(t *testing.T) {
 		t.Fatalf("escaped values did not round trip: node=%#v err=%v raw=%s", parsed, err, raw)
 	}
 }
+
+// The domain strategy is a local Steer setting, not part of any share-link
+// format: parsing never sets it, export ignores it and subscription node
+// fingerprints (and with them IDs and merge state) stay as in v0.12.0.
+func TestShareLinksDoNotCarryDomainStrategy(t *testing.T) {
+	const raw = "vless://00000000-0000-4000-8000-000000000001@osa.example:443?security=tls&sni=osa.example&type=ws&path=%2Fproxy#osa-01"
+	result := ParseList(raw)
+	if len(result.Nodes) != 1 || result.Nodes[0].DomainStrategy != "" {
+		t.Fatalf("a share link produced a domain strategy: %#v", result.Nodes)
+	}
+	parsed := result.Nodes[0]
+	if got := Fingerprint(parsed); got != "23a2c365416dde94e6e493eee08dce0982d3a15b0720e5984ba14f7f8f763980" {
+		t.Fatalf("subscription node fingerprint changed: %s", got)
+	}
+	plain, err := EncodeURI(parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned := parsed
+	pinned.DomainStrategy = "prefer_ipv4"
+	exported, err := EncodeURI(pinned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exported != plain || strings.Contains(exported, "prefer_ipv4") {
+		t.Fatalf("export wrote the domain strategy: %s != %s", exported, plain)
+	}
+	if reparsed, err := ParseURI(exported); err != nil || reparsed.DomainStrategy != "" {
+		t.Fatalf("re-import produced a domain strategy: %#v err=%v", reparsed, err)
+	}
+	if copy := CopyAsManual(pinned); copy.DomainStrategy != "prefer_ipv4" {
+		t.Fatalf("copy to my nodes dropped the node's domain strategy: %#v", copy)
+	}
+	if copy := CopyAsManual(parsed); copy.DomainStrategy != "" {
+		t.Fatalf("copy to my nodes invented a domain strategy: %#v", copy)
+	}
+}

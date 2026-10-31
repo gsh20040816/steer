@@ -362,6 +362,13 @@ func validateNode(value Node, err, warn issueFn) {
 	if value.Type != "tor" {
 		validPort(value.ServerPort, "node", value.ID, "server_port", err)
 	}
+	if value.DomainStrategy != "" {
+		if value.Type == "tor" {
+			err("UNSUPPORTED_NODE_OPTION", "node", value.ID, "domain_strategy", "domain strategy is only supported by nodes with a remote server")
+		} else if !validStrategy(value.DomainStrategy) {
+			err("INVALID_DOMAIN_STRATEGY", "node", value.ID, "domain_strategy", "domain strategy must be prefer_ipv4, prefer_ipv6, ipv4_only or ipv6_only")
+		}
+	}
 	if value.Network != "" {
 		if value.Type != "vmess" {
 			err("UNSUPPORTED_NODE_OPTION", "node", value.ID, "network", "network is only supported by VMess outbounds")
