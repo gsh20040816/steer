@@ -3,7 +3,7 @@
 // Package model defines Steer's platform-neutral canonical intent.
 package intent
 
-const SchemaVersion = 9
+const SchemaVersion = 10
 
 type Intent struct {
 	WireGuardTunnels []WireGuardTunnel `json:"wireguard_tunnels,omitempty"`
@@ -110,6 +110,9 @@ type NodeTLS struct {
 	UTLSFingerprint  string   `json:"utls_fingerprint,omitempty"`
 }
 
+// NodeSource marks a node owned by a subscription. Since schema 10 these
+// fields appear only on nodes attached from the subscription node store; a
+// node written in the Saved configuration never carries them.
 type NodeSource struct {
 	SourceSubscription string `json:"source_subscription,omitempty"`
 	SourceFingerprint  string `json:"source_fingerprint,omitempty"`

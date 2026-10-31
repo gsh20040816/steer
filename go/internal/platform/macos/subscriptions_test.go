@@ -3,16 +3,21 @@
 package macos
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/gsh20040816/steer/go/internal/compiler"
 	model "github.com/gsh20040816/steer/go/internal/intent"
+	"github.com/gsh20040816/steer/go/internal/subscription"
 )
 
 func TestConfiguredSubscriptionSchedule(t *testing.T) {
@@ -44,11 +49,11 @@ func TestConfiguredSubscriptionSchedule(t *testing.T) {
 			stateDirectory := filepath.Join(root, "state")
 			value := validIntent()
 			value.Subscriptions = []model.Subscription{{ID: "public", Enabled: true, URL: server.URL, UpdateInterval: test.interval}}
-			if _, err := (IntentStore{Paths: Paths{ConfigPath: configPath}}).Save(value, ""); err != nil {
+			if _, err := SavedStore(configPath, stateDirectory).Save(value, ""); err != nil {
 				t.Fatal(err)
 			}
 			if test.snapshotAge != 0 {
-				if err := saveSubscriptionSnapshot(stateDirectory, SubscriptionSnapshot{SubscriptionID: "public", URL: server.URL, FetchedAt: time.Now().Add(-test.snapshotAge)}); err != nil {
+				if err := subscription.SaveSnapshot(stateDirectory, SubscriptionSnapshot{SubscriptionID: "public", URL: server.URL, FetchedAt: time.Now().Add(-test.snapshotAge)}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -78,11 +83,11 @@ func TestConfiguredSubscriptionUpdatePersistsStatus(t *testing.T) {
 	stateDirectory := filepath.Join(root, "state")
 	value := validIntent()
 	value.Subscriptions = []model.Subscription{{ID: "public", Enabled: true, Name: "Public", URL: server.URL, UpdateInterval: "1h"}}
-	if _, err := (IntentStore{Paths: Paths{ConfigPath: configPath}}).Save(value, ""); err != nil {
+	if _, err := SavedStore(configPath, stateDirectory).Save(value, ""); err != nil {
 		t.Fatal(err)
 	}
 	snapshots, err := UpdateConfiguredSubscriptions(context.Background(), server.Client(), configPath, stateDirectory, "public")
-	if err != nil || len(snapshots) != 1 || len(snapshots[0].Nodes) != 1 {
+	if err != nil || len(snapshots) != 1 || snapshots[0].Added != 1 {
 		t.Fatalf("unexpected subscription update: %#v %v", snapshots, err)
 	}
 	statuses, err := ReadSubscriptionStatus(configPath, stateDirectory)
@@ -91,7 +96,7 @@ func TestConfiguredSubscriptionUpdatePersistsStatus(t *testing.T) {
 	}
 }
 
-func TestConfiguredSubscriptionUpdateDropsOnlyUnreferencedDisappearedNodes(t *testing.T) {
+func TestSubscriptionUpdateWritesOnlyTheNodeStore(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_, _ = writer.Write([]byte("socks://user:pass@new.example:1080#New\n"))
 	}))
@@ -99,19 +104,26 @@ func TestConfiguredSubscriptionUpdateDropsOnlyUnreferencedDisappearedNodes(t *te
 	root := t.TempDir()
 	configPath := filepath.Join(root, "config.json")
 	stateDirectory := filepath.Join(root, "state")
-	value := validIntent()
-	value.Subscriptions = []model.Subscription{{ID: "public", Enabled: true, URL: server.URL}}
+	store := SavedStore(configPath, stateDirectory)
 	referenced := model.Node{ID: "public_referenced", Enabled: true, Type: "socks", Server: "referenced.example", ServerPort: 1080, NodeSource: model.NodeSource{SourceSubscription: "public"}}
 	unreferenced := model.Node{ID: "public_unreferenced", Enabled: true, Type: "socks", Server: "unreferenced.example", ServerPort: 1080, NodeSource: model.NodeSource{SourceSubscription: "public"}}
-	value.Nodes = append(value.Nodes, referenced, unreferenced)
+	if err := (subscription.NodeStore{Directory: subscription.NodeDirectory(stateDirectory)}).Save("public", []model.Node{referenced, unreferenced}); err != nil {
+		t.Fatal(err)
+	}
+	value := validIntent()
+	value.Subscriptions = []model.Subscription{{ID: "public", Enabled: true, URL: server.URL}}
 	value.Routes = append(value.Routes, model.Route{ID: "subscription_route", Enabled: true, Kind: "single", Node: referenced.ID})
-	if _, err := (IntentStore{Paths: Paths{ConfigPath: configPath}}).Save(value, ""); err != nil {
+	revision, err := store.Save(value, "")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := UpdateConfiguredSubscriptions(context.Background(), server.Client(), configPath, stateDirectory, "public"); err != nil {
 		t.Fatal(err)
 	}
-	loaded, _, err := (IntentStore{Paths: Paths{ConfigPath: configPath}}).Load()
+	if _, current, err := store.Load(); err != nil || current != revision {
+		t.Fatalf("subscription update changed config.json: %v", err)
+	}
+	loaded, _, err := store.LoadSaved()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,6 +137,55 @@ func TestConfiguredSubscriptionUpdateDropsOnlyUnreferencedDisappearedNodes(t *te
 	statuses, err := ReadSubscriptionStatus(configPath, stateDirectory)
 	if err != nil || len(statuses) != 1 || len(statuses[0].Stale) != 1 || len(statuses[0].Stale[0].ReferencedBy) != 1 {
 		t.Fatalf("referenced stale status drifted: %#v %v", statuses, err)
+	}
+	if err := SetSubscriptionNodeEnabled(configPath, stateDirectory, "public", referenced.ID, false); subscription.ErrorPayloadOf(err).ErrorCode != subscription.ErrorNodeStillReferenced {
+		t.Fatalf("disabling a referenced node was not rejected: %v", err)
+	}
+	list, err := ListSubscriptionNodes(configPath, stateDirectory, "")
+	if err != nil || len(list.Subscriptions) != 1 || len(list.Subscriptions[0].Nodes) != 2 {
+		t.Fatalf("unexpected node list: %#v %v", list, err)
+	}
+}
+
+func TestMigrateMovesSubscriptionNodesWithoutChangingTheRuntime(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "config.json")
+	stateDirectory := filepath.Join(root, "state")
+	legacy := validIntent()
+	legacy.Main.SchemaVersion = subscription.LegacySchemaVersion
+	legacy.Nodes = []model.Node{
+		{ID: "public_b", Enabled: true, Type: "socks", Server: "b.example", ServerPort: 1080, NodeSource: model.NodeSource{SourceSubscription: "public", SourceFingerprint: "fp-b"}},
+		{ID: "manual", Enabled: true, Type: "socks", Server: "192.0.2.1", ServerPort: 1080},
+	}
+	legacy.Subscriptions = []model.Subscription{{ID: "public", Enabled: true, URL: "https://feed.example/"}}
+	legacy.Routes = append(legacy.Routes, model.Route{ID: "via_b", Enabled: true, Kind: "single", Node: "public_b"})
+	legacy.Rules = append([]model.Rule{{ID: "proxied", Enabled: true, DomainMatch: []string{"domain:example.com"}, DNSProfile: "dns", Route: "via_b"}}, legacy.Rules...)
+	var encoded bytes.Buffer
+	if err := model.EncodeJSON(&encoded, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, encoded.Bytes(), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := Migrate(configPath, stateDirectory); err != nil || !changed || NeedsMigration(configPath) {
+		t.Fatalf("migration did not run: %v", err)
+	}
+	saved, _, err := SavedStore(configPath, stateDirectory).LoadSaved()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validation := Validate(saved); !validation.OK {
+		t.Fatalf("migrated Saved Intent is invalid: %#v", validation.Errors)
+	}
+	compile := func(value model.Intent) string {
+		encoded, _ := json.Marshal(compiler.Compile(value, compiler.Options{Target: NewPlan(value).CompilerTarget()}).SingBox)
+		return string(encoded)
+	}
+	if runtime := compile(saved); runtime != compile(legacy) || !strings.Contains(runtime, "b.example") {
+		t.Fatal("migration changed the compiled sing-box configuration")
+	}
+	if changed, err := Migrate(configPath, stateDirectory); err != nil || changed {
+		t.Fatalf("migration is not idempotent: %v", err)
 	}
 }
 
@@ -143,7 +204,7 @@ func TestFailedRefreshKeepsLastSuccessfulSubscriptionStatus(t *testing.T) {
 	stateDirectory := filepath.Join(root, "state")
 	value := validIntent()
 	value.Subscriptions = []model.Subscription{{ID: "public", Enabled: true, URL: server.URL}}
-	if _, err := (IntentStore{Paths: Paths{ConfigPath: configPath}}).Save(value, ""); err != nil {
+	if _, err := SavedStore(configPath, stateDirectory).Save(value, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := UpdateConfiguredSubscriptions(context.Background(), server.Client(), configPath, stateDirectory, "public"); err != nil {

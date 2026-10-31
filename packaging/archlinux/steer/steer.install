@@ -1,0 +1,6 @@
+# Move schema 9 subscription nodes from /etc/steer/config.json into
+# /var/lib/steer/subscription-nodes. The migration is idempotent and leaves
+# any other schema to `steer validate`.
+post_upgrade() {
+  /usr/bin/steer _migrate >/dev/null
+}

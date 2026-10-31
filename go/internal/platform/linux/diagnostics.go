@@ -10,7 +10,7 @@ import (
 )
 
 func ReadDiagnostics(configPath, runDirectory, stateDirectory string) probe.Diagnostics {
-	identity, warnings := readProbeIdentity(configPath, runDirectory)
+	identity, warnings := readProbeIdentity(configPath, runDirectory, stateDirectory)
 	latest := probe.ReadLatestProbeResults(stateDirectory, identity)
 	diagnostics := probe.Diagnostics{Warnings: append(warnings, latest.Warnings...)}
 	if identity.ActiveGeneration != "" {
@@ -27,16 +27,16 @@ func ReadDiagnostics(configPath, runDirectory, stateDirectory string) probe.Diag
 }
 
 func ReadLatestProbeResults(configPath, runDirectory, stateDirectory string) probe.LatestProbeResults {
-	identity, warnings := readProbeIdentity(configPath, runDirectory)
+	identity, warnings := readProbeIdentity(configPath, runDirectory, stateDirectory)
 	results := probe.ReadLatestProbeResults(stateDirectory, identity)
 	results.Warnings = append(warnings, results.Warnings...)
 	return results
 }
 
-func readProbeIdentity(configPath, runDirectory string) (probe.Identity, []string) {
+func readProbeIdentity(configPath, runDirectory, stateDirectory string) (probe.Identity, []string) {
 	identity := probe.Identity{}
 	warnings := []string{}
-	if value, _, err := (IntentStore{Path: configPath}).Load(); err == nil {
+	if value, _, err := SavedStore(configPath, stateDirectory).LoadSaved(); err == nil {
 		identity.SavedDigest = compiler.IntentDigest(value)
 	} else {
 		warnings = append(warnings, "the Saved configuration identity is unavailable")

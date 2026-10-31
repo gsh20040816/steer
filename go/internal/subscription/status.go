@@ -67,6 +67,21 @@ func NewUpdateError(subscriptionID string, err error) error {
 	return UpdateError{SubscriptionID: subscriptionID, Summary: SafeFailureSummary(err)}
 }
 
+// Statuses builds the status of every configured subscription from the
+// complete Saved Intent and the status snapshots.
+func Statuses(saved model.Intent, stateDirectory string) []Status {
+	statuses := make([]Status, 0, len(saved.Subscriptions))
+	for _, configured := range saved.Subscriptions {
+		snapshot, err := ReadSnapshot(stateDirectory, configured.ID)
+		var previous *Snapshot
+		if err == nil {
+			previous = &snapshot
+		}
+		statuses = append(statuses, BuildStatus(configured, saved.Nodes, saved.Routes, previous, err))
+	}
+	return statuses
+}
+
 func BuildStatus(configured model.Subscription, nodes []model.Node, routes []model.Route, snapshot *Snapshot, stateErr error) Status {
 	status := Status{
 		ID: configured.ID, Name: configured.Name, URL: configured.URL,
@@ -117,7 +132,6 @@ func SuccessfulSnapshot(configured model.Subscription, previous *Snapshot, old, 
 		SubscriptionID: configured.ID,
 		URL:            configured.URL,
 		FetchedAt:      now.UTC(),
-		Nodes:          merged,
 		Skipped:        parsed.Skipped,
 		SkippedReasons: append([]SkippedReason(nil), parsed.SkippedReasons...),
 		Added:          addedNodeCount(old, merged),
@@ -129,7 +143,7 @@ func SuccessfulSnapshot(configured model.Subscription, previous *Snapshot, old, 
 }
 
 func FailedSnapshot(configured model.Subscription, previous *Snapshot, err error, now time.Time) Snapshot {
-	snapshot := Snapshot{SubscriptionID: configured.ID, URL: configured.URL, Nodes: []model.Node{}}
+	snapshot := Snapshot{SubscriptionID: configured.ID, URL: configured.URL}
 	if previous != nil {
 		snapshot = *previous
 		snapshot.SubscriptionID = configured.ID

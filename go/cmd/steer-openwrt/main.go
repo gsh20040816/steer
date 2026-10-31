@@ -83,6 +83,8 @@ func run(args []string) error {
 		return runUIState(args[1:])
 	case "_start":
 		return runServiceStart(args[1:])
+	case "_migrate":
+		return runMigrate(args[1:])
 	default:
 		return usage()
 	}
@@ -101,6 +103,7 @@ func runUIState(args []string) error {
 	runDirectory := flags.String("run-dir", "/run/steer", "runtime state directory")
 	stateDirectory := flags.String("state-dir", "/var/lib/steer", "generated state directory")
 	seedDirectory := flags.String("seed-dir", "/usr/share/steer/geodata-seed", "package-owned Geo seed directory")
+	nodeDirectory := flags.String("node-dir", openwrt.DefaultNodeDirectory, "subscription node store directory")
 	nftBinary := flags.String("nft", "/usr/sbin/nft", "nft binary")
 	savedOnly := flags.Bool("saved-only", false, "omit Active runtime inspection")
 	if err := flags.Parse(args); err != nil {
@@ -109,7 +112,7 @@ func runUIState(args []string) error {
 	if flags.NArg() != 0 {
 		return errors.New("_state accepts flags only")
 	}
-	value, decodeValidation := loadIntent(*configPath)
+	value, decodeValidation := loadIntent(*configPath, *nodeDirectory)
 	saved := uistate.IntentState{Counts: uistate.Counts{}, Validation: decodeValidation}
 	if decodeValidation.OK {
 		validation := openwrt.ValidateWithGeoDataDirectory(value, *seedDirectory)
@@ -133,13 +136,14 @@ func runDiagnostics(args []string) error {
 	configPath := flags.String("config", "/etc/config/steer", "UCI configuration file")
 	runDirectory := flags.String("run-dir", "/run/steer", "runtime state directory")
 	stateDirectory := flags.String("state-dir", "/var/lib/steer", "generated state directory")
+	nodeDirectory := flags.String("node-dir", openwrt.DefaultNodeDirectory, "subscription node store directory")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
 		return errors.New("_diagnostics accepts flags only")
 	}
-	writeJSON(openwrt.ReadDiagnostics(*configPath, *runDirectory, *stateDirectory))
+	writeJSON(openwrt.ReadDiagnostics(*configPath, *nodeDirectory, *runDirectory, *stateDirectory))
 	return nil
 }
 
@@ -149,13 +153,14 @@ func runProbeResults(args []string) error {
 	configPath := flags.String("config", "/etc/config/steer", "UCI configuration file")
 	runDirectory := flags.String("run-dir", "/run/steer", "runtime state directory")
 	stateDirectory := flags.String("state-dir", "/var/lib/steer", "generated state directory")
+	nodeDirectory := flags.String("node-dir", openwrt.DefaultNodeDirectory, "subscription node store directory")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
 		return errors.New("_probe-results accepts flags only")
 	}
-	writeJSON(openwrt.ReadLatestProbeResults(*configPath, *runDirectory, *stateDirectory))
+	writeJSON(openwrt.ReadLatestProbeResults(*configPath, *nodeDirectory, *runDirectory, *stateDirectory))
 	return nil
 }
 
@@ -163,13 +168,14 @@ func runExportIntent(args []string) error {
 	flags := flag.NewFlagSet("_export-intent", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	configPath := flags.String("config", "/etc/config/steer", "UCI configuration file")
+	nodeDirectory := flags.String("node-dir", openwrt.DefaultNodeDirectory, "subscription node store directory")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
 		return errors.New("_export-intent accepts flags only")
 	}
-	value, decodeValidation := loadIntent(*configPath)
+	value, decodeValidation := loadIntent(*configPath, *nodeDirectory)
 	if !decodeValidation.OK {
 		writeJSON(decodeValidation)
 		return errors.New("configuration decode failed")
@@ -182,6 +188,7 @@ func runExportNode(args []string) error {
 	flags := flag.NewFlagSet("_export-node", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	configPath := flags.String("config", "/etc/config/steer", "UCI configuration file")
+	nodeDirectory := flags.String("node-dir", openwrt.DefaultNodeDirectory, "subscription node store directory")
 	nodeID := flags.String("id", "", "node ID")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -189,7 +196,7 @@ func runExportNode(args []string) error {
 	if flags.NArg() != 0 || *nodeID == "" {
 		return errors.New("_export-node requires --id")
 	}
-	value, decodeValidation := loadIntent(*configPath)
+	value, decodeValidation := loadIntent(*configPath, *nodeDirectory)
 	if !decodeValidation.OK {
 		writeJSON(map[string]any{"ok": false, "error_code": "NODE_EXPORT_FAILED", "error": "Unable to decode the node configuration."})
 		return nil
@@ -281,13 +288,14 @@ func runValidate(args []string) error {
 	flags := flag.NewFlagSet("validate", flag.ContinueOnError)
 	configPath := flags.String("config", "/etc/config/steer", "UCI configuration file")
 	seedDirectory := flags.String("seed-dir", "/usr/share/steer/geodata-seed", "package-owned Geo seed directory")
+	nodeDirectory := flags.String("node-dir", openwrt.DefaultNodeDirectory, "subscription node store directory")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
 		return errors.New("validate accepts flags only")
 	}
-	value, decodeValidation := loadIntent(*configPath)
+	value, decodeValidation := loadIntent(*configPath, *nodeDirectory)
 	if !decodeValidation.OK {
 		writeJSON(decodeValidation)
 		return errors.New("configuration decode failed")
@@ -310,6 +318,7 @@ func runApply(args []string) error {
 	seedDirectory := flags.String("seed-dir", "/usr/share/steer/geodata-seed", "package-owned Geo seed directory")
 	nftBinary := flags.String("nft", "/usr/sbin/nft", "nft binary")
 	initScript := flags.String("init", "/etc/init.d/steer", "procd init script")
+	nodeDirectory := flags.String("node-dir", openwrt.DefaultNodeDirectory, "subscription node store directory")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -321,7 +330,7 @@ func runApply(args []string) error {
 	}
 	saved := false
 	return runLockedApplyOutput(*runDirectory, func() (coreapply.Result, error) {
-		value, decodeValidation := loadIntent(*configPath)
+		value, decodeValidation := loadIntent(*configPath, *nodeDirectory)
 		if !decodeValidation.OK {
 			return coreapply.Result{Validation: &decodeValidation}, errors.New("configuration decode failed")
 		}
@@ -342,7 +351,13 @@ func runApply(args []string) error {
 			RunDirectory: *runDirectory, StateDirectory: *stateDirectory, SingBoxBinary: *singBoxPath,
 			GeoDataDirectory: *seedDirectory, NFTBinary: *nftBinary, InitScript: *initScript,
 		})
-		return coreapply.Run(context.Background(), value, backend.CompilerOptions(), backend)
+		result, err := coreapply.Run(context.Background(), value, backend.CompilerOptions(), backend)
+		if err == nil {
+			// LuCI deletes subscriptions straight from UCI; their stored nodes
+			// are never attached and are reclaimed here. Failure is harmless.
+			_ = openwrt.RemoveOrphanNodes(*configPath, *nodeDirectory)
+		}
+		return result, err
 	}, func(result coreapply.Result) {
 		if *enabledText == "" {
 			writeJSON(result)
@@ -423,6 +438,7 @@ func runServiceStart(args []string) error {
 	seedDirectory := flags.String("seed-dir", "/usr/share/steer/geodata-seed", "package-owned Geo seed directory")
 	runDirectory := flags.String("run-dir", "/run/steer", "runtime state directory")
 	nftBinary := flags.String("nft", "/usr/sbin/nft", "nft binary")
+	nodeDirectory := flags.String("node-dir", openwrt.DefaultNodeDirectory, "subscription node store directory")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -434,7 +450,11 @@ func runServiceStart(args []string) error {
 		return err
 	}
 	defer lock.Close()
-	value, decodeValidation := loadIntent(*configPath)
+	// The first boot after an upgrade may still find schema 9.
+	if _, err := openwrt.Migrate(context.Background(), *configPath, *stateDirectory, *nodeDirectory); err != nil {
+		return fmt.Errorf("migrate configuration to schema %d: %w", model.SchemaVersion, err)
+	}
+	value, decodeValidation := loadIntent(*configPath, *nodeDirectory)
 	if !decodeValidation.OK {
 		return errors.New(decodeValidation.Errors[0].Message)
 	}
@@ -493,6 +513,7 @@ func runProbe(args []string) error {
 	runDirectory := flags.String("run-dir", "/run/steer", "runtime state directory")
 	configPath := flags.String("config", "/etc/config/steer", "UCI configuration file")
 	stateDirectory := flags.String("state-dir", "/var/lib/steer", "generated state directory")
+	nodeDirectory := flags.String("node-dir", openwrt.DefaultNodeDirectory, "subscription node store directory")
 	singBoxPath := flags.String("sing-box", "/usr/bin/sing-box", "sing-box binary")
 	kind := flags.String("kind", "direct", "probe kind: direct, proxy or speedtest")
 	nodeID := flags.String("node", "", "run a temporary test through this node")
@@ -513,9 +534,9 @@ func runProbe(args []string) error {
 		}
 		var err error
 		if *nodeID != "" {
-			_, err = openwrt.SpeedTestNode(context.Background(), *configPath, *stateDirectory, *singBoxPath, *nodeID, *download)
+			_, err = openwrt.SpeedTestNode(context.Background(), *configPath, *nodeDirectory, *stateDirectory, *singBoxPath, *nodeID, *download)
 		} else {
-			_, err = openwrt.SpeedTestRoute(context.Background(), *configPath, *stateDirectory, *singBoxPath, *routeID, *download)
+			_, err = openwrt.SpeedTestRoute(context.Background(), *configPath, *nodeDirectory, *stateDirectory, *singBoxPath, *routeID, *download)
 		}
 		scope, objectID := "nodes", *nodeID
 		if *routeID != "" {
@@ -525,7 +546,7 @@ func runProbe(args []string) error {
 		if *download {
 			testKind = "download"
 		}
-		results := openwrt.ReadLatestProbeResults(*configPath, *runDirectory, *stateDirectory)
+		results := openwrt.ReadLatestProbeResults(*configPath, *nodeDirectory, *runDirectory, *stateDirectory)
 		if latest, ok := coreprobe.FindLatestProbeResult(results, scope, objectID, testKind); ok {
 			writeJSON(latest)
 			return nil
@@ -535,8 +556,8 @@ func runProbe(args []string) error {
 		}
 		return err
 	}
-	_, err := openwrt.ProbeOverview(context.Background(), *configPath, *runDirectory, *stateDirectory, *kind, nil)
-	results := openwrt.ReadLatestProbeResults(*configPath, *runDirectory, *stateDirectory)
+	_, err := openwrt.ProbeOverview(context.Background(), *configPath, *nodeDirectory, *runDirectory, *stateDirectory, *kind, nil)
+	results := openwrt.ReadLatestProbeResults(*configPath, *nodeDirectory, *runDirectory, *stateDirectory)
 	if latest, ok := coreprobe.FindLatestProbeResult(results, "overview", "", *kind); ok {
 		writeJSON(latest)
 		return nil
@@ -548,70 +569,123 @@ func runProbe(args []string) error {
 }
 
 func runSubscription(args []string) error {
-	if len(args) == 0 || (args[0] != "update" && args[0] != "status" && args[0] != "clean") {
-		return errors.New("usage: steer subscription update|status [--id ID] | clean --id ID --node NODE_ID")
+	commands := map[string]bool{"update": true, "status": true, "clean": true, "nodes": true, "node": true}
+	if len(args) == 0 || !commands[args[0]] {
+		return errors.New("usage: steer subscription update|status|nodes [--id ID] | clean --id ID --node NODE_ID | node --id ID --node NODE_ID --enabled 0|1")
 	}
 	command := args[0]
 	flags := flag.NewFlagSet("subscription", flag.ContinueOnError)
 	configPath := flags.String("config", "/etc/config/steer", "UCI configuration file")
 	stateDirectory := flags.String("state-dir", "/var/lib/steer", "subscription snapshot directory")
-	id := flags.String("id", "", "only update this subscription ID")
-	nodeID := flags.String("node", "", "subscription node ID for clean")
+	nodeDirectory := flags.String("node-dir", openwrt.DefaultNodeDirectory, "subscription node store directory")
+	runDirectory := flags.String("run-dir", "/run/steer", "shared operation lock directory")
+	id := flags.String("id", "", "subscription ID")
+	nodeID := flags.String("node", "", "subscription node ID")
+	enabledText := flags.String("enabled", "", "node enabled state for node: 0 or 1")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
 		return errors.New("subscription subcommands accept flags only")
 	}
-	if command == "status" {
-		statuses, err := openwrt.ReadSubscriptionStatus(*configPath, *stateDirectory)
-		if err != nil {
-			return err
-		}
-		writeJSON(struct {
-			OK            bool                         `json:"ok"`
-			Subscriptions []openwrt.SubscriptionStatus `json:"subscriptions"`
-		}{true, statuses})
-		return nil
+	if (command == "clean" || command == "node") && (*id == "" || *nodeID == "") {
+		return fmt.Errorf("subscription %s requires --id and --node", command)
 	}
-	if command == "clean" {
-		if *id == "" || *nodeID == "" {
-			return errors.New("subscription clean requires --id and --node")
-		}
-		_, err := openwrt.CleanSubscriptionNode(*configPath, *stateDirectory, *id, *nodeID)
-		if err != nil {
-			writeJSON(struct {
-				OK    bool   `json:"ok"`
-				Error string `json:"error"`
-			}{false, err.Error()})
-			return err
-		}
-		statuses, err := openwrt.ReadSubscriptionStatus(*configPath, *stateDirectory)
-		if err != nil {
-			return err
-		}
-		writeJSON(struct {
-			OK            bool                         `json:"ok"`
-			Subscriptions []openwrt.SubscriptionStatus `json:"subscriptions"`
-		}{true, statuses})
-		return nil
+	if command == "node" && *enabledText != "0" && *enabledText != "1" {
+		return errors.New("subscription node requires --enabled 0 or 1")
 	}
-	_, err := openwrt.UpdateConfiguredSubscriptions(context.Background(), &http.Client{Timeout: 30 * time.Second}, *configPath, *stateDirectory, *id)
-	if err != nil {
-		writeJSON(struct {
-			OK    bool   `json:"ok"`
-			Error string `json:"error"`
-		}{false, err.Error()})
+	if command != "node" && *enabledText != "" {
+		return errors.New("--enabled is only accepted by subscription node")
+	}
+	fail := func(err error) error {
+		writeJSON(subscription.ErrorPayloadOf(err))
 		return err
 	}
-	statuses, err := openwrt.ReadSubscriptionStatus(*configPath, *stateDirectory)
-	if err != nil {
-		return err
+	switch command {
+	case "status":
+		statuses, err := openwrt.ReadSubscriptionStatus(*configPath, *stateDirectory, *nodeDirectory)
+		if err != nil {
+			return fail(err)
+		}
+		writeSubscriptionStatuses(statuses)
+		return nil
+	case "nodes":
+		list, err := openwrt.ListSubscriptionNodes(*configPath, *nodeDirectory, *id)
+		if err != nil {
+			return fail(err)
+		}
+		writeJSON(list)
+		return nil
 	}
+	// Writers share the Apply lock so validation and the store write see the
+	// same Saved state as a concurrent Apply.
+	lock, err := acquireApplyLock(*runDirectory)
+	if err != nil {
+		return fail(err)
+	}
+	defer lock.Close()
+	switch command {
+	case "node":
+		if err := openwrt.SetSubscriptionNodeEnabled(*configPath, *nodeDirectory, *id, *nodeID, *enabledText == "1"); err != nil {
+			return fail(err)
+		}
+		list, err := openwrt.ListSubscriptionNodes(*configPath, *nodeDirectory, "")
+		if err != nil {
+			return fail(err)
+		}
+		writeJSON(list)
+		return nil
+	case "clean":
+		if err := openwrt.CleanSubscriptionNode(*configPath, *nodeDirectory, *id, *nodeID); err != nil {
+			return fail(err)
+		}
+	default:
+		if _, err := openwrt.UpdateConfiguredSubscriptions(context.Background(), &http.Client{Timeout: 30 * time.Second}, *configPath, *stateDirectory, *nodeDirectory, *id); err != nil {
+			return fail(err)
+		}
+	}
+	statuses, err := openwrt.ReadSubscriptionStatus(*configPath, *stateDirectory, *nodeDirectory)
+	if err != nil {
+		return fail(err)
+	}
+	writeSubscriptionStatuses(statuses)
+	return nil
+}
+
+func writeSubscriptionStatuses(statuses []openwrt.SubscriptionStatus) {
 	writeJSON(struct {
 		OK            bool                         `json:"ok"`
 		Subscriptions []openwrt.SubscriptionStatus `json:"subscriptions"`
 	}{true, statuses})
+}
+
+// runMigrate is the internal schema 9 to 10 migration used by the package
+// uci-defaults script. It is idempotent and holds the Apply lock.
+func runMigrate(args []string) error {
+	flags := flag.NewFlagSet("_migrate", flag.ContinueOnError)
+	configPath := flags.String("config", "/etc/config/steer", "UCI configuration file")
+	stateDirectory := flags.String("state-dir", "/var/lib/steer", "subscription snapshot directory")
+	nodeDirectory := flags.String("node-dir", openwrt.DefaultNodeDirectory, "subscription node store directory")
+	runDirectory := flags.String("run-dir", "/run/steer", "shared operation lock directory")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("_migrate accepts flags only")
+	}
+	lock, err := acquireApplyLock(*runDirectory)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	changed, err := openwrt.Migrate(context.Background(), *configPath, *stateDirectory, *nodeDirectory)
+	if err != nil {
+		return err
+	}
+	writeJSON(struct {
+		OK      bool `json:"ok"`
+		Changed bool `json:"changed"`
+	}{true, changed})
 	return nil
 }
 
@@ -677,13 +751,15 @@ func writeApplyRecord(runDirectory string, record coreapply.Record) error {
 	return nil
 }
 
-func loadIntent(path string) (model.Intent, model.Validation) {
-	file, err := os.Open(path)
-	if err != nil {
-		return model.Intent{}, decodeFailure(fmt.Sprintf("open configuration: %v", err))
+// loadIntent returns the complete Saved Intent (UCI plus stored subscription
+// nodes). Subscription nodes written into UCI are reported as validation
+// errors, everything else that prevents loading as DECODE_FAILED.
+func loadIntent(path, nodeDirectory string) (model.Intent, model.Validation) {
+	value, err := openwrt.LoadSaved(path, nodeDirectory)
+	var configErr subscription.ConfigError
+	if errors.As(err, &configErr) {
+		return model.Intent{}, configErr.Validation
 	}
-	defer file.Close()
-	value, err := openwrt.Decode(file)
 	if err != nil {
 		return model.Intent{}, decodeFailure(err.Error())
 	}

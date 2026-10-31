@@ -11,8 +11,8 @@ import (
 	"github.com/gsh20040816/steer/go/internal/probe"
 )
 
-func ReadDiagnostics(configPath, runDirectory, stateDirectory string) probe.Diagnostics {
-	identity, warnings := readProbeIdentity(configPath, runDirectory)
+func ReadDiagnostics(configPath, nodeDirectory, runDirectory, stateDirectory string) probe.Diagnostics {
+	identity, warnings := readProbeIdentity(configPath, nodeDirectory, runDirectory)
 	latest := probe.ReadLatestProbeResults(stateDirectory, identity)
 	diagnostics := probe.Diagnostics{Warnings: append(warnings, latest.Warnings...)}
 	currentPath := filepath.Join(runDirectory, "current")
@@ -23,22 +23,18 @@ func ReadDiagnostics(configPath, runDirectory, stateDirectory string) probe.Diag
 	return diagnostics
 }
 
-func ReadLatestProbeResults(configPath, runDirectory, stateDirectory string) probe.LatestProbeResults {
-	identity, warnings := readProbeIdentity(configPath, runDirectory)
+func ReadLatestProbeResults(configPath, nodeDirectory, runDirectory, stateDirectory string) probe.LatestProbeResults {
+	identity, warnings := readProbeIdentity(configPath, nodeDirectory, runDirectory)
 	results := probe.ReadLatestProbeResults(stateDirectory, identity)
 	results.Warnings = append(warnings, results.Warnings...)
 	return results
 }
 
-func readProbeIdentity(configPath, runDirectory string) (probe.Identity, []string) {
+func readProbeIdentity(configPath, nodeDirectory, runDirectory string) (probe.Identity, []string) {
 	identity := probe.Identity{}
 	warnings := []string{}
-	if config, err := os.ReadFile(configPath); err == nil {
-		if value, decodeErr := DecodeBytes(config); decodeErr == nil {
-			identity.SavedDigest = compiler.IntentDigest(value)
-		} else {
-			warnings = append(warnings, "the Saved configuration identity is unavailable")
-		}
+	if value, err := LoadSaved(configPath, nodeDirectory); err == nil {
+		identity.SavedDigest = compiler.IntentDigest(value)
 	} else {
 		warnings = append(warnings, "the Saved configuration identity is unavailable")
 	}

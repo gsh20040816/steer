@@ -149,7 +149,7 @@ func TestCanonicalStoresRejectUnknownSelectorsBeforePersistence(t *testing.T) {
 
 	t.Run("linux", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "config.json")
-		_, err := (linuxplatform.IntentStore{Path: path, GeoDataDirectory: seedDirectory}).Save(value, "")
+		_, err := (linuxplatform.IntentStore{Path: path, GeoDataDirectory: seedDirectory, NodeDirectory: filepath.Join(filepath.Dir(path), "nodes")}).Save(value, "")
 		var validationErr linuxplatform.ValidationError
 		if !errors.As(err, &validationErr) {
 			t.Fatalf("save returned %v, want a structured validation error", err)
@@ -165,7 +165,7 @@ func TestCanonicalStoresRejectUnknownSelectorsBeforePersistence(t *testing.T) {
 	t.Run("macos", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "config.json")
 		store := macosplatform.IntentStore{
-			Paths: macosplatform.Paths{ConfigPath: path}, GeoDataDirectory: seedDirectory,
+			Paths: macosplatform.Paths{ConfigPath: path, StateDirectory: filepath.Join(filepath.Dir(path), "state")}, GeoDataDirectory: seedDirectory,
 		}
 		_, err := store.Save(value, "")
 		var validationErr macosplatform.ValidationError

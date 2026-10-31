@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"os"
 )
 
 func runWeb(args []string) error {
@@ -21,6 +22,11 @@ func runWeb(args []string) error {
 	}
 	if flags.NArg() != 0 {
 		return errors.New("web accepts flags only")
+	}
+	// A failed migration leaves schema 9 in place; the page still has to
+	// load to show the validation errors.
+	if err := migrateLocked(*configPath, *runDirectory, *stateDirectory); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 	}
 	return serveWeb(*listen, *webConfigPath, *configPath, *runDirectory, *stateDirectory, *seedDirectory)
 }

@@ -193,7 +193,7 @@ func TestProbeOverviewUsesSavedIntentWithoutActiveGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	report, err := ProbeOverview(
-		context.Background(), configPath, filepath.Join(root, "run"), filepath.Join(root, "state"), "direct", server.Client(),
+		context.Background(), configPath, filepath.Join(root, "nodes"), filepath.Join(root, "run"), filepath.Join(root, "state"), "direct", server.Client(),
 	)
 	if err != nil {
 		t.Fatal(err)

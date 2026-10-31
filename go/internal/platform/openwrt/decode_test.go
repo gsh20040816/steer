@@ -13,7 +13,7 @@ import (
 
 const minimalConfig = `
 config steer 'main'
-	option schema_version '9'
+	option schema_version '10'
 	option enabled '1'
 	option log_level 'warn'
 	option probe_direct 'https://www.baidu.com/'

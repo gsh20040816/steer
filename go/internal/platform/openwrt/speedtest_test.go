@@ -75,10 +75,10 @@ config route 'disabled_route'
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := SpeedTestNode(context.Background(), configPath, t.TempDir(), "/definitely/missing/sing-box", "disabled_node", false); err == nil {
+	if _, err := SpeedTestNode(context.Background(), configPath, t.TempDir(), t.TempDir(), "/definitely/missing/sing-box", "disabled_node", false); err == nil {
 		t.Fatal("disabled node test was accepted")
 	}
-	if _, err := SpeedTestRoute(context.Background(), configPath, t.TempDir(), "/definitely/missing/sing-box", "disabled_route", false); err == nil {
+	if _, err := SpeedTestRoute(context.Background(), configPath, t.TempDir(), t.TempDir(), "/definitely/missing/sing-box", "disabled_route", false); err == nil {
 		t.Fatal("disabled route test was accepted")
 	}
 }
@@ -95,7 +95,7 @@ func TestReadLatestProbeResultsReturnsBackendDTO(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	results := ReadLatestProbeResults(configPath, filepath.Join(root, "run"), stateDirectory)
+	results := ReadLatestProbeResults(configPath, filepath.Join(root, "nodes"), filepath.Join(root, "run"), stateDirectory)
 	if len(results.Results) != 1 || results.Results[0].Kind != "direct" || !results.Results[0].Stale {
 		t.Fatalf("unexpected latest probe results: %#v", results)
 	}
@@ -126,7 +126,7 @@ func TestReadDiagnosticsInspectsCurrentGenerationDNSCaptureArtifacts(t *testing.
 		t.Fatal(err)
 	}
 
-	diagnostics := ReadDiagnostics(configPath, runDirectory, filepath.Join(root, "state"))
+	diagnostics := ReadDiagnostics(configPath, filepath.Join(root, "nodes"), runDirectory, filepath.Join(root, "state"))
 	if !diagnostics.DNSCapture.Configured || diagnostics.DNSCapture.ActiveGeneration != filepath.Base(candidate.Directory) ||
 		diagnostics.DNSCapture.Mode != "native_hijack_with_local_shim" {
 		t.Fatalf("current OpenWrt DNS capture artifacts were not diagnosed: %#v", diagnostics.DNSCapture)

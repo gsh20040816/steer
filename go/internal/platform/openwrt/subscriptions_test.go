@@ -4,6 +4,7 @@ package openwrt
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -42,27 +43,17 @@ func TestConfiguredSubscriptionSchedule(t *testing.T) {
 			}))
 			defer server.Close()
 
-			root := t.TempDir()
-			configPath := filepath.Join(root, "steer")
-			stateDirectory := filepath.Join(root, "state")
 			config := validSubscriptionConfig(server.URL)
 			if test.interval != "" {
 				config = strings.Replace(config, "\toption url '"+server.URL+"'\n", "\toption url '"+server.URL+"'\n\toption update_interval '"+test.interval+"'\n", 1)
 			}
-			if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			paths := writeSubscriptionFixture(t, config)
 			if test.snapshotAge != 0 {
-				if err := saveSubscriptionSnapshot(stateDirectory, SubscriptionSnapshot{SubscriptionID: "public", URL: server.URL, FetchedAt: time.Now().Add(-test.snapshotAge)}); err != nil {
+				if err := subscription.SaveSnapshot(paths.state, SubscriptionSnapshot{SubscriptionID: "public", URL: server.URL, FetchedAt: time.Now().Add(-test.snapshotAge)}); err != nil {
 					t.Fatal(err)
 				}
 			}
-
-			commits := 0
-			snapshots, err := UpdateConfiguredSubscriptionsWithWriter(context.Background(), server.Client(), configPath, stateDirectory, test.manualID, func(context.Context, string) error {
-				commits++
-				return nil
-			})
+			snapshots, err := UpdateConfiguredSubscriptions(context.Background(), server.Client(), paths.config, paths.state, paths.nodes, test.manualID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -70,11 +61,48 @@ func TestConfiguredSubscriptionSchedule(t *testing.T) {
 			if test.wantFetch {
 				wantCount = 1
 			}
-			if got := requests.Load(); got != wantCount || len(snapshots) != int(wantCount) || commits != int(wantCount) {
-				t.Fatalf("requests=%d snapshots=%d commits=%d, want %d", got, len(snapshots), commits, wantCount)
+			if got := requests.Load(); got != wantCount || len(snapshots) != int(wantCount) {
+				t.Fatalf("requests=%d snapshots=%d, want %d", got, len(snapshots), wantCount)
 			}
+			paths.assertUCIUnchanged(t)
 		})
 	}
+}
+
+type subscriptionFixture struct {
+	config, state, nodes, original string
+}
+
+func writeSubscriptionFixture(t *testing.T, config string) subscriptionFixture {
+	t.Helper()
+	root := t.TempDir()
+	paths := subscriptionFixture{
+		config: filepath.Join(root, "steer"), state: filepath.Join(root, "state"),
+		nodes: filepath.Join(root, "subscription-nodes"), original: config,
+	}
+	if err := os.WriteFile(paths.config, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return paths
+}
+
+// assertUCIUnchanged checks the schema 10 promise that subscription work
+// never writes UCI, so it can never trigger a procd reload.
+func (paths subscriptionFixture) assertUCIUnchanged(t *testing.T) {
+	t.Helper()
+	content, err := os.ReadFile(paths.config)
+	if err != nil || string(content) != paths.original {
+		t.Fatalf("subscription operation changed UCI: %v\n%s", err, content)
+	}
+}
+
+func (paths subscriptionFixture) storedNodes(t *testing.T) []model.Node {
+	t.Helper()
+	nodes, err := subscription.NodeStore{Directory: paths.nodes}.Load("public")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return nodes
 }
 
 func TestSubscriptionDisappearanceIsPinnedStale(t *testing.T) {
@@ -113,23 +141,6 @@ func TestSubscriptionRefreshPreservesDisabledNode(t *testing.T) {
 	if len(merged) != 1 || merged[0].ID != old.ID || merged[0].Enabled {
 		t.Fatalf("subscription refresh did not preserve the local enabled state: %#v", merged)
 	}
-	var batch strings.Builder
-	appendNodeBatch(&batch, merged[0])
-	if !strings.Contains(batch.String(), "set steer.public_node.enabled=0\n") {
-		t.Fatalf("disabled subscription node was not persisted: %s", batch.String())
-	}
-}
-
-func TestSubscriptionNodeBatchPersistsTUICALPN(t *testing.T) {
-	node := model.Node{ID: "tuic", Enabled: true, Type: "tuic", Server: "example.com", ServerPort: 443,
-		NodeCredentials: model.NodeCredentials{UUID: "00000000-0000-4000-8000-000000000001"},
-		NodeTLS:         model.NodeTLS{TLSServerName: "example.com", ALPN: []string{"h3", "h2"}}}
-	var batch strings.Builder
-	appendNodeBatch(&batch, node)
-	text := batch.String()
-	if !strings.Contains(text, "add_list steer.tuic.alpn='h3'\n") || !strings.Contains(text, "add_list steer.tuic.alpn='h2'\n") {
-		t.Fatalf("TUIC ALPN list was not persisted to UCI: %s", text)
-	}
 }
 
 func TestSubscriptionDuplicateFingerprintsAreCollapsed(t *testing.T) {
@@ -150,112 +161,111 @@ func TestSubscriptionNodeIDIsAddressableByUCI(t *testing.T) {
 	}
 }
 
-func TestCleanSubscriptionNodeRefusesCurrentNodeBeforeUCICommit(t *testing.T) {
-	configPath, stateDirectory := writeCleanupFixture(t, false, false)
-	committed := false
-	_, err := CleanSubscriptionNodeWithWriter(configPath, stateDirectory, "public", "public_stale", func(context.Context, string) error {
-		committed = true
-		return nil
-	})
-	if err == nil || committed || !strings.Contains(err.Error(), "is current") {
-		t.Fatalf("current subscription node cleanup: committed=%v err=%v", committed, err)
+func TestCleanSubscriptionNodeWritesOnlyTheNodeStore(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		stale, referenced bool
+		code              string
+	}{
+		{name: "current", code: subscription.ErrorNodeCurrent},
+		{name: "referenced stale", stale: true, referenced: true, code: subscription.ErrorNodeStillReferenced},
+		{name: "unreferenced stale", stale: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			paths := writeCleanupFixture(t, test.stale, test.referenced)
+			err := CleanSubscriptionNode(paths.config, paths.nodes, "public", "public_stale")
+			paths.assertUCIUnchanged(t)
+			if test.code != "" {
+				if subscription.ErrorPayloadOf(err).ErrorCode != test.code || len(paths.storedNodes(t)) != 1 {
+					t.Fatalf("cleanup was not refused with %s: %v", test.code, err)
+				}
+				return
+			}
+			if err != nil || len(paths.storedNodes(t)) != 0 {
+				t.Fatalf("unreferenced stale node was not removed: %v", err)
+			}
+		})
 	}
 }
 
-func TestCleanSubscriptionNodeRefusesReferencedStaleNodeBeforeUCICommit(t *testing.T) {
-	configPath, stateDirectory := writeCleanupFixture(t, true, true)
-	committed := false
-	_, err := CleanSubscriptionNodeWithWriter(configPath, stateDirectory, "public", "public_stale", func(context.Context, string) error {
-		committed = true
-		return nil
-	})
-	if err == nil || committed || !strings.Contains(err.Error(), "NODE_STILL_REFERENCED") || !strings.Contains(err.Error(), "proxy") {
-		t.Fatalf("referenced stale node cleanup: committed=%v err=%v", committed, err)
+func TestSetSubscriptionNodeEnabledWritesOnlyTheNodeStore(t *testing.T) {
+	paths := writeCleanupFixture(t, false, true)
+	if err := SetSubscriptionNodeEnabled(paths.config, paths.nodes, "public", "public_stale", false); subscription.ErrorPayloadOf(err).ErrorCode != subscription.ErrorNodeStillReferenced {
+		t.Fatalf("disabling a referenced node was not rejected: %v", err)
 	}
-	snapshot, readErr := readSubscriptionSnapshot(SubscriptionSnapshotPath(stateDirectory, "public"))
-	if readErr != nil || len(snapshot.Nodes) != 1 {
-		t.Fatalf("failed cleanup changed snapshot: snapshot=%#v err=%v", snapshot, readErr)
-	}
-}
-
-func TestCleanSubscriptionNodeCommitsUnreferencedStaleNode(t *testing.T) {
-	configPath, stateDirectory := writeCleanupFixture(t, true, false)
-	var batch string
-	snapshot, err := CleanSubscriptionNodeWithWriter(configPath, stateDirectory, "public", "public_stale", func(_ context.Context, value string) error {
-		batch = value
-		return nil
-	})
-	if err != nil {
+	paths = writeCleanupFixture(t, false, false)
+	if err := SetSubscriptionNodeEnabled(paths.config, paths.nodes, "public", "public_stale", false); err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Nodes) != 0 || batch != "delete steer.public_stale\ncommit steer\n" {
-		t.Fatalf("unexpected successful cleanup: snapshot=%#v batch=%q", snapshot, batch)
+	paths.assertUCIUnchanged(t)
+	if nodes := paths.storedNodes(t); len(nodes) != 1 || nodes[0].Enabled {
+		t.Fatalf("disabled state was not stored: %#v", nodes)
 	}
-	saved, err := readSubscriptionSnapshot(SubscriptionSnapshotPath(stateDirectory, "public"))
-	if err != nil || len(saved.Nodes) != 0 {
-		t.Fatalf("successful cleanup did not update snapshot: snapshot=%#v err=%v", saved, err)
+	list, err := ListSubscriptionNodes(paths.config, paths.nodes, "")
+	if err != nil || len(list.Subscriptions) != 1 || list.Subscriptions[0].Nodes[0].ManualCopy.SourceSubscription != "" {
+		t.Fatalf("unexpected subscription node list: %#v %v", list, err)
+	}
+	statuses, err := ReadSubscriptionStatus(paths.config, paths.state, paths.nodes)
+	if err != nil || len(statuses) != 1 || statuses[0].NodeCount != 1 {
+		t.Fatalf("status did not use the node store: %#v %v", statuses, err)
 	}
 }
 
-func writeCleanupFixture(t *testing.T, stale, referenced bool) (string, string) {
-	t.Helper()
-	nodeOptions := ""
-	if stale {
-		nodeOptions = "\toption pinned_stale '1'\n"
-	}
-	route := ""
-	if referenced {
-		route = `
-config route 'proxy'
-	option kind 'single'
-	option node 'public_stale'
-`
-	}
-	config := strings.Replace(validSubscriptionConfig("https://example.com/subscription"), "config route 'block'", `config node 'public_stale'
-	option enabled '1'
+func TestLoadSavedRejectsSubscriptionNodesInUCI(t *testing.T) {
+	config := strings.Replace(validSubscriptionConfig("https://example.com/subscription"), "config route 'block'", `config node 'public_old'
 	option type 'socks'
 	option server '192.0.2.10'
 	option server_port '1080'
 	option source_subscription 'public'
-	option source_fingerprint 'fixture'
-`+nodeOptions+route+`
+
 config route 'block'`, 1)
-	directory := t.TempDir()
-	configPath := filepath.Join(directory, "steer")
-	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
-		t.Fatal(err)
+	paths := writeSubscriptionFixture(t, config)
+	_, err := LoadSaved(paths.config, paths.nodes)
+	var configErr subscription.ConfigError
+	if !errors.As(err, &configErr) || configErr.Validation.Errors[0].Code != "SUBSCRIPTION_NODE_IN_CONFIG" || configErr.Validation.Errors[0].ObjectID != "public_old" {
+		t.Fatalf("a subscription node in UCI was accepted: %v", err)
 	}
-	stateDirectory := filepath.Join(directory, "state")
-	snapshot := SubscriptionSnapshot{SubscriptionID: "public", URL: "https://example.com/subscription", Nodes: []model.Node{{
-		ID: "public_stale", Enabled: true, Type: "socks", Server: "192.0.2.10", ServerPort: 1080,
-		NodeSource: model.NodeSource{SourceSubscription: "public", SourceFingerprint: "fixture", PinnedStale: stale},
-	}}}
-	if err := saveSubscriptionSnapshot(stateDirectory, snapshot); err != nil {
-		t.Fatal(err)
-	}
-	return configPath, stateDirectory
 }
 
-func TestUpdateSubscriptionWritesUCIAndDoesNotApply(t *testing.T) {
+func writeCleanupFixture(t *testing.T, stale, referenced bool) subscriptionFixture {
+	t.Helper()
+	config := validSubscriptionConfig("https://example.com/subscription")
+	if referenced {
+		config = strings.Replace(config, "config route 'block'", `config route 'proxy'
+	option kind 'single'
+	option node 'public_stale'
+
+config route 'block'`, 1)
+	}
+	paths := writeSubscriptionFixture(t, config)
+	node := model.Node{
+		ID: "public_stale", Enabled: true, Type: "socks", Server: "192.0.2.10", ServerPort: 1080,
+		NodeSource: model.NodeSource{SourceSubscription: "public", SourceFingerprint: "fixture", PinnedStale: stale},
+	}
+	if err := (subscription.NodeStore{Directory: paths.nodes}).Save("public", []model.Node{node}); err != nil {
+		t.Fatal(err)
+	}
+	return paths
+}
+
+func TestUpdateSubscriptionWritesNodeStoreAndDoesNotApply(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		_, _ = response.Write([]byte("vless://00000000-0000-4000-8000-000000000001@example.com:443?security=tls&sni=edge.example.com\n"))
 	}))
 	defer server.Close()
-	configPath := filepath.Join(t.TempDir(), "steer")
-	config := validSubscriptionConfig(server.URL)
-	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	var batch string
-	result, err := UpdateConfiguredSubscriptionsWithWriter(context.Background(), server.Client(), configPath, t.TempDir(), "public", func(_ context.Context, value string) error { batch = value; return nil })
+	paths := writeSubscriptionFixture(t, validSubscriptionConfig(server.URL))
+	result, err := UpdateConfiguredSubscriptions(context.Background(), server.Client(), paths.config, paths.state, paths.nodes, "public")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 1 || !strings.Contains(batch, "commit steer\n") || strings.Contains(batch, "apply") || !strings.Contains(batch, "source_subscription") {
-		t.Fatalf("unexpected subscription batch: result=%#v batch=%s", result, batch)
+	paths.assertUCIUnchanged(t)
+	nodes := paths.storedNodes(t)
+	if len(result) != 1 || len(nodes) != 1 || nodes[0].SourceSubscription != "public" || !nodes[0].Enabled {
+		t.Fatalf("unexpected subscription update: result=%#v nodes=%#v", result, nodes)
 	}
-	if strings.Contains(batch, ".enabled=1\n") || strings.Contains(batch, ".pinned_stale=0\n") {
-		t.Fatalf("subscription batch persisted default boolean values: %s", batch)
+	saved, err := LoadSaved(paths.config, paths.nodes)
+	if err != nil || len(saved.Nodes) != 1 || saved.Nodes[0].ID != nodes[0].ID {
+		t.Fatalf("stored nodes were not attached to the Saved Intent: %#v %v", saved.Nodes, err)
 	}
 }
 
@@ -266,23 +276,13 @@ func TestUpdateSubscriptionSkipsInvalidCandidateNodes(t *testing.T) {
 			"socks5://user:password@example.com:1080\n"))
 	}))
 	defer server.Close()
-	configPath := filepath.Join(t.TempDir(), "steer")
-	if err := os.WriteFile(configPath, []byte(validSubscriptionConfig(server.URL)), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	var batch string
-	result, err := UpdateConfiguredSubscriptionsWithWriter(context.Background(), server.Client(), configPath, t.TempDir(), "public", func(_ context.Context, value string) error {
-		batch = value
-		return nil
-	})
+	paths := writeSubscriptionFixture(t, validSubscriptionConfig(server.URL))
+	result, err := UpdateConfiguredSubscriptions(context.Background(), server.Client(), paths.config, paths.state, paths.nodes, "public")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 1 || result[0].Skipped != 1 || len(result[0].Nodes) != 1 || result[0].Nodes[0].Type != "socks" {
-		t.Fatalf("invalid node was not skipped independently: %#v", result)
-	}
-	if !strings.Contains(batch, ".type='socks'") {
-		t.Fatalf("valid node was not committed: %s", batch)
+	if nodes := paths.storedNodes(t); len(result) != 1 || result[0].Skipped != 1 || len(nodes) != 1 || nodes[0].Type != "socks" {
+		t.Fatalf("invalid node was not skipped independently: %#v %#v", result, nodes)
 	}
 }
 
@@ -291,29 +291,17 @@ func TestUpdateSubscriptionAllInvalidPreservesExistingNodes(t *testing.T) {
 		_, _ = response.Write([]byte("not-a-node\nstill-not-a-node\n"))
 	}))
 	defer server.Close()
-	configPath := filepath.Join(t.TempDir(), "steer")
-	config := strings.Replace(validSubscriptionConfig(server.URL), "config route 'block'", `config node 'public_old'
-	option enabled '1'
-	option type 'socks'
-	option server '192.0.2.10'
-	option server_port '1080'
-	option source_subscription 'public'
-	option source_fingerprint 'fixture'
-
-config route 'block'`, 1)
-	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+	paths := writeSubscriptionFixture(t, validSubscriptionConfig(server.URL))
+	old := model.Node{ID: "public_old", Enabled: true, Type: "socks", Server: "192.0.2.10", ServerPort: 1080, NodeSource: model.NodeSource{SourceSubscription: "public", SourceFingerprint: "fixture"}}
+	if err := (subscription.NodeStore{Directory: paths.nodes}).Save("public", []model.Node{old}); err != nil {
 		t.Fatal(err)
 	}
-	var batch string
-	_, err := UpdateConfiguredSubscriptionsWithWriter(context.Background(), server.Client(), configPath, t.TempDir(), "public", func(_ context.Context, value string) error {
-		batch = value
-		return nil
-	})
+	_, err := UpdateConfiguredSubscriptions(context.Background(), server.Client(), paths.config, paths.state, paths.nodes, "public")
 	if err == nil || !strings.Contains(err.Error(), "no valid nodes") {
 		t.Fatalf("all-invalid subscription was not rejected: %v", err)
 	}
-	if batch != "" {
-		t.Fatalf("all-invalid subscription emitted a configuration mutation: %s", batch)
+	if nodes := paths.storedNodes(t); len(nodes) != 1 || nodes[0].ID != old.ID {
+		t.Fatalf("all-invalid subscription changed stored nodes: %#v", nodes)
 	}
 }
 
@@ -327,45 +315,33 @@ func TestFailedRefreshKeepsLastSuccessfulSnapshot(t *testing.T) {
 		_, _ = writer.Write([]byte("socks://user:pass@127.0.0.1:1080#Imported\n"))
 	}))
 	defer server.Close()
-	configPath := filepath.Join(t.TempDir(), "steer")
-	stateDirectory := t.TempDir()
-	if err := os.WriteFile(configPath, []byte(validSubscriptionConfig(server.URL)), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	writer := func(context.Context, string) error { return nil }
-	if _, err := UpdateConfiguredSubscriptionsWithWriter(context.Background(), server.Client(), configPath, stateDirectory, "public", writer); err != nil {
+	paths := writeSubscriptionFixture(t, validSubscriptionConfig(server.URL))
+	if _, err := UpdateConfiguredSubscriptions(context.Background(), server.Client(), paths.config, paths.state, paths.nodes, "public"); err != nil {
 		t.Fatal(err)
 	}
 	fail.Store(true)
-	if _, err := UpdateConfiguredSubscriptionsWithWriter(context.Background(), server.Client(), configPath, stateDirectory, "public", writer); err == nil || err.Error() != "update subscription public: subscription server returned HTTP 503" {
+	if _, err := UpdateConfiguredSubscriptions(context.Background(), server.Client(), paths.config, paths.state, paths.nodes, "public"); err == nil || err.Error() != "update subscription public: subscription server returned HTTP 503" {
 		t.Fatalf("unexpected safe update failure: %v", err)
 	}
-	snapshot, err := readSubscriptionSnapshot(SubscriptionSnapshotPath(stateDirectory, "public"))
-	if err != nil || snapshot.FetchedAt.IsZero() || snapshot.LastFailure == nil || len(snapshot.Nodes) != 1 {
-		t.Fatalf("failed refresh destroyed successful snapshot: %#v %v", snapshot, err)
+	snapshot, err := subscription.ReadSnapshot(paths.state, "public")
+	if err != nil || snapshot.FetchedAt.IsZero() || snapshot.LastFailure == nil || len(paths.storedNodes(t)) != 1 {
+		t.Fatalf("failed refresh destroyed successful facts: %#v %v", snapshot, err)
 	}
 }
 
-func TestUpdateSubscriptionSkipsControlCharactersBeforeUCI(t *testing.T) {
+func TestUpdateSubscriptionSkipsControlCharacters(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		_, _ = response.Write([]byte("trojan://secret@example.com:443?sni=example.com#bad%0Aname\n" +
 			"socks://user:password@example.com:1080#safe\n"))
 	}))
 	defer server.Close()
-	configPath := filepath.Join(t.TempDir(), "steer")
-	if err := os.WriteFile(configPath, []byte(validSubscriptionConfig(server.URL)), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	var batch string
-	result, err := UpdateConfiguredSubscriptionsWithWriter(context.Background(), server.Client(), configPath, t.TempDir(), "public", func(_ context.Context, value string) error {
-		batch = value
-		return nil
-	})
+	paths := writeSubscriptionFixture(t, validSubscriptionConfig(server.URL))
+	result, err := UpdateConfiguredSubscriptions(context.Background(), server.Client(), paths.config, paths.state, paths.nodes, "public")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 1 || result[0].Skipped != 1 || strings.Contains(batch, "bad\nname") {
-		t.Fatalf("control-character node reached UCI: result=%#v batch=%q", result, batch)
+	if nodes := paths.storedNodes(t); len(result) != 1 || result[0].Skipped != 1 || len(nodes) != 1 || strings.Contains(nodes[0].Name, "\n") {
+		t.Fatalf("control-character node was stored: result=%#v nodes=%#v", result, nodes)
 	}
 }
 
@@ -376,24 +352,17 @@ func TestUpdateSubscriptionStillRejectsGlobalCandidateConflicts(t *testing.T) {
 		_, _ = response.Write([]byte("socks://example.com:1080\n"))
 	}))
 	defer server.Close()
-	configPath := filepath.Join(t.TempDir(), "steer")
 	config := strings.Replace(validSubscriptionConfig(server.URL), "config route 'block'", "config route '"+collisionID+"'\n\toption kind 'block'\n\nconfig route 'block'", 1)
-	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	committed := false
-	_, err := UpdateConfiguredSubscriptionsWithWriter(context.Background(), server.Client(), configPath, t.TempDir(), "public", func(context.Context, string) error {
-		committed = true
-		return nil
-	})
-	if err == nil || committed || !strings.Contains(err.Error(), "invalid candidate") {
-		t.Fatalf("global candidate conflict was not rejected atomically: committed=%v err=%v", committed, err)
+	paths := writeSubscriptionFixture(t, config)
+	_, err := UpdateConfiguredSubscriptions(context.Background(), server.Client(), paths.config, paths.state, paths.nodes, "public")
+	if err == nil || !strings.Contains(err.Error(), "invalid candidate") || len(paths.storedNodes(t)) != 0 {
+		t.Fatalf("global candidate conflict was not rejected atomically: %v", err)
 	}
 }
 
 func validSubscriptionConfig(subscriptionURL string) string {
 	return `config steer 'main'
-	option schema_version '9'
+	option schema_version '10'
 	option enabled '1'
 	option log_level 'warn'
 	option probe_direct 'https://www.baidu.com/'

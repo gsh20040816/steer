@@ -4,6 +4,7 @@ package subscription
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,33 +16,12 @@ import (
 	model "github.com/gsh20040816/steer/go/internal/intent"
 )
 
-// Store is the only mutable configuration boundary required by shared
-// subscription logic. UCI and future JSON adapters implement it differently.
-type Store interface {
-	ReplaceNodes(context.Context, string, []model.Node, []model.Node) error
-	RemoveNode(context.Context, string, string) error
-}
-
-type Change struct {
-	SubscriptionID string
-	Existing       []model.Node
-	Replacement    []model.Node
-}
-
-func Persist(ctx context.Context, store Store, changes []Change) error {
-	for _, change := range changes {
-		if err := store.ReplaceNodes(ctx, change.SubscriptionID, change.Existing, change.Replacement); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
+// Snapshot is the persistent fetch status of one subscription. It never holds
+// nodes: they live only in the node store, so credentials are not copied.
 type Snapshot struct {
 	SubscriptionID string          `json:"subscription_id"`
 	URL            string          `json:"url"`
 	FetchedAt      time.Time       `json:"fetched_at"`
-	Nodes          []model.Node    `json:"nodes"`
 	Skipped        int             `json:"skipped"`
 	SkippedReasons []SkippedReason `json:"skipped_reasons,omitempty"`
 	Added          int             `json:"added,omitempty"`
@@ -96,6 +76,76 @@ func Fetch(ctx context.Context, client *http.Client, configured model.Subscripti
 		return ParseResult{}, fmt.Errorf("subscription contains no valid nodes")
 	}
 	return parsed, nil
+}
+
+// Update refreshes the enabled subscriptions of the complete Saved Intent that
+// are due, or only the named one. Nodes are merged with the stored nodes (route
+// references come from the Saved configuration) and the complete Intent with
+// every merged subscription must pass the platform validation. Only the node
+// store and status snapshots are written: the Saved configuration is never
+// written and nothing is applied. One failing subscription does not hold back
+// the others; their failures are joined into the returned error.
+func Update(ctx context.Context, client *http.Client, saved model.Intent, store NodeStore, stateDirectory, id string, validate func(model.Intent) model.Validation) ([]Snapshot, error) {
+	scheduleTime := time.Now()
+	var result []Snapshot
+	var failures []error
+	merged := map[string][]model.Node{}
+	candidate := saved
+	for _, configured := range saved.Subscriptions {
+		if !configured.Enabled || (id != "" && configured.ID != id) {
+			continue
+		}
+		var previous *Snapshot
+		if snapshot, err := ReadSnapshot(stateDirectory, configured.ID); err == nil {
+			previous = &snapshot
+		}
+		if id == "" {
+			var fetchedAt time.Time
+			if previous != nil {
+				fetchedAt = previous.FetchedAt
+			}
+			due, err := AutomaticUpdateDue(configured.UpdateInterval, fetchedAt, scheduleTime)
+			if err != nil {
+				return nil, fmt.Errorf("subscription %s has invalid update interval: %w", configured.ID, err)
+			}
+			if !due {
+				continue
+			}
+		}
+		fetched, err := Fetch(ctx, client, configured)
+		if err != nil {
+			if saveErr := SaveSnapshot(stateDirectory, FailedSnapshot(configured, previous, err, time.Now())); saveErr != nil {
+				err = saveErr
+			}
+			failures = append(failures, NewUpdateError(configured.ID, err))
+			continue
+		}
+		old := SubscriptionNodes(saved, configured.ID)
+		merged[configured.ID] = Merge(configured.ID, old, fetched.Nodes, saved.Routes)
+		candidate.Nodes = Replace(candidate.Nodes, configured.ID, merged[configured.ID])
+		result = append(result, SuccessfulSnapshot(configured, previous, old, merged[configured.ID], fetched, time.Now()))
+	}
+	if id != "" && len(result) == 0 && len(failures) == 0 {
+		return nil, fmt.Errorf("enabled subscription %q was not found", id)
+	}
+	if len(result) > 0 {
+		if validation := validate(candidate); !validation.OK {
+			issue := validation.Errors[0]
+			return nil, fmt.Errorf("subscription update produced invalid candidate: %s %q option %q: %s", issue.ObjectType, issue.ObjectID, issue.Option, issue.Message)
+		}
+		for _, snapshot := range result {
+			if err := store.Save(snapshot.SubscriptionID, merged[snapshot.SubscriptionID]); err != nil {
+				return nil, err
+			}
+			if err := SaveSnapshot(stateDirectory, snapshot); err != nil {
+				return nil, err
+			}
+		}
+	}
+	// Orphans are harmless (never attached); a failed removal is retried by
+	// the next update, save or Apply.
+	_ = store.RemoveOrphans(saved.Subscriptions)
+	return result, errors.Join(failures...)
 }
 
 func Merge(subscriptionID string, old, fresh []model.Node, routes []model.Route) []model.Node {

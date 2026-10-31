@@ -9,12 +9,12 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/gsh20040816/steer/go/internal/geodata"
 	macosplatform "github.com/gsh20040816/steer/go/internal/platform/macos"
 	"github.com/gsh20040816/steer/go/internal/probe"
+	"github.com/gsh20040816/steer/go/internal/subscription"
 )
 
 type probeSelection struct {
@@ -126,7 +126,7 @@ func performProbe(ctx context.Context, configPath string, options macosplatform.
 		return probeResponse{}, fmt.Errorf("unsupported probe kind %q", selection.Kind)
 	}
 	if selection.NodeID == "" && selection.RouteID == "" {
-		report, err := macosplatform.ProbeOverview(ctx, configPath, options.RunDirectory, selection.Kind, nil)
+		report, err := macosplatform.ProbeOverview(ctx, configPath, options.StateDirectory, options.RunDirectory, selection.Kind, nil)
 		if err != nil {
 			return probeResponse{}, err
 		}
@@ -138,9 +138,9 @@ func performProbe(ctx context.Context, configPath string, options macosplatform.
 	var report macosplatform.TestReport
 	var err error
 	if selection.NodeID != "" {
-		report, err = macosplatform.SpeedTestNode(ctx, configPath, options.SingBoxBinary, selection.NodeID, selection.Download)
+		report, err = macosplatform.SpeedTestNode(ctx, configPath, options.StateDirectory, options.SingBoxBinary, selection.NodeID, selection.Download)
 	} else {
-		report, err = macosplatform.SpeedTestRoute(ctx, configPath, options.SingBoxBinary, selection.RouteID, selection.Download)
+		report, err = macosplatform.SpeedTestRoute(ctx, configPath, options.StateDirectory, options.SingBoxBinary, selection.RouteID, selection.Download)
 	}
 	if err != nil {
 		return probeResponse{}, err
@@ -169,83 +169,95 @@ func runGeoCatalog(args []string, stdoutWriter interface{ Write([]byte) (int, er
 }
 
 func runSubscription(args []string, stdoutWriter interface{ Write([]byte) (int, error) }) error {
-	if len(args) == 0 || (args[0] != "update" && args[0] != "status" && args[0] != "clean") {
-		return errors.New("usage: steer-macos subscription update|status|clean [flags]")
+	commands := map[string]bool{"update": true, "status": true, "clean": true, "nodes": true, "node": true}
+	if len(args) == 0 || !commands[args[0]] {
+		return errors.New("usage: steer-macos subscription update|status|nodes [--id ID] | clean --id ID --node NODE_ID | node --id ID --node NODE_ID --enabled 0|1")
 	}
 	command := args[0]
 	flags := flag.NewFlagSet("subscription", flag.ContinueOnError)
 	configPath := flags.String("config", defaultConfigPath, "canonical JSON configuration")
-	stateDirectory := flags.String("state-dir", defaultStateDirectory, "subscription state directory")
+	stateDirectory := flags.String("state-dir", defaultStateDirectory, "subscription state and node store directory")
 	runDirectory := flags.String("run-dir", defaultRunDirectory, "operation lock directory")
 	id := flags.String("id", "", "subscription ID")
-	nodeID := flags.String("node", "", "stale node ID")
+	nodeID := flags.String("node", "", "subscription node ID")
+	enabledText := flags.String("enabled", "", "node enabled state for node: 0 or 1")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
 		return errors.New("subscription subcommands accept flags only")
 	}
-	if command == "status" {
+	if (command == "clean" || command == "node") && (*id == "" || *nodeID == "") {
+		return fmt.Errorf("subscription %s requires --id and --node", command)
+	}
+	if command == "node" && *enabledText != "0" && *enabledText != "1" {
+		return errors.New("subscription node requires --enabled 0 or 1")
+	}
+	if command != "node" && *enabledText != "" {
+		return errors.New("--enabled is only accepted by subscription node")
+	}
+	fail := func(err error) error {
+		if writeErr := writeJSON(stdoutWriter, subscription.ErrorPayloadOf(err)); writeErr != nil {
+			return writeErr
+		}
+		return err
+	}
+	switch command {
+	case "status":
 		statuses, err := macosplatform.ReadSubscriptionStatus(*configPath, *stateDirectory)
 		if err != nil {
-			return err
+			return fail(err)
 		}
-		return writeJSON(stdoutWriter, struct {
-			OK            bool                               `json:"ok"`
-			Subscriptions []macosplatform.SubscriptionStatus `json:"subscriptions"`
-		}{true, statuses})
+		return writeSubscriptionStatuses(stdoutWriter, statuses)
+	case "nodes":
+		list, err := macosplatform.ListSubscriptionNodes(*configPath, *stateDirectory, *id)
+		if err != nil {
+			return fail(err)
+		}
+		return writeJSON(stdoutWriter, list)
 	}
 	lock, err := acquireLock(*runDirectory)
 	if err != nil {
-		return err
+		return fail(err)
 	}
 	defer lock.Close()
-	if command == "clean" {
-		if *id == "" || *nodeID == "" {
-			return errors.New("subscription clean requires --id and --node")
-		}
-		snapshot, err := macosplatform.CleanSubscriptionNode(*configPath, *stateDirectory, *id, *nodeID)
-		if err != nil {
-			return err
-		}
-		if os.Geteuid() == 0 {
-			adminGID, lookupErr := lookupAdminGID()
-			if lookupErr != nil {
-				return lookupErr
-			}
-			if err := setControlConfigurationPermissions(*configPath, adminGID); err != nil {
-				return err
-			}
-			if err := setControlStatePermissions(filepath.Join(*stateDirectory, "subscriptions", snapshot.SubscriptionID+".json"), adminGID); err != nil {
-				return err
-			}
-		}
-		statuses, err := macosplatform.ReadSubscriptionStatus(*configPath, *stateDirectory)
-		if err != nil {
-			return err
-		}
-		return writeJSON(stdoutWriter, struct {
-			OK            bool                               `json:"ok"`
-			Subscriptions []macosplatform.SubscriptionStatus `json:"subscriptions"`
-		}{true, statuses})
+	var operationErr error
+	var snapshots []macosplatform.SubscriptionSnapshot
+	switch command {
+	case "node":
+		operationErr = macosplatform.SetSubscriptionNodeEnabled(*configPath, *stateDirectory, *id, *nodeID, *enabledText == "1")
+	case "clean":
+		operationErr = macosplatform.CleanSubscriptionNode(*configPath, *stateDirectory, *id, *nodeID)
+	default:
+		snapshots, operationErr = macosplatform.UpdateConfiguredSubscriptions(context.Background(), &http.Client{Timeout: 30 * time.Second}, *configPath, *stateDirectory, *id)
 	}
-	snapshots, updateErr := macosplatform.UpdateConfiguredSubscriptions(context.Background(), &http.Client{Timeout: 30 * time.Second}, *configPath, *stateDirectory, *id)
 	if os.Geteuid() == 0 {
 		adminGID, err := lookupAdminGID()
 		if err != nil {
-			return err
+			return fail(err)
 		}
-		if err := setSubscriptionUpdatePermissions(*configPath, *stateDirectory, adminGID, snapshots, updateErr); err != nil {
-			return err
+		if err := setSubscriptionUpdatePermissions(*stateDirectory, adminGID, snapshots, operationErr); err != nil {
+			return fail(err)
 		}
 	}
-	if updateErr != nil {
-		return updateErr
+	if operationErr != nil {
+		return fail(operationErr)
+	}
+	if command == "node" {
+		list, err := macosplatform.ListSubscriptionNodes(*configPath, *stateDirectory, "")
+		if err != nil {
+			return fail(err)
+		}
+		return writeJSON(stdoutWriter, list)
 	}
 	statuses, err := macosplatform.ReadSubscriptionStatus(*configPath, *stateDirectory)
 	if err != nil {
-		return err
+		return fail(err)
 	}
+	return writeSubscriptionStatuses(stdoutWriter, statuses)
+}
+
+func writeSubscriptionStatuses(stdoutWriter interface{ Write([]byte) (int, error) }, statuses []macosplatform.SubscriptionStatus) error {
 	return writeJSON(stdoutWriter, struct {
 		OK            bool                               `json:"ok"`
 		Subscriptions []macosplatform.SubscriptionStatus `json:"subscriptions"`

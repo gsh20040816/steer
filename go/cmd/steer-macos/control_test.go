@@ -20,6 +20,7 @@ import (
 	model "github.com/gsh20040816/steer/go/internal/intent"
 	macosplatform "github.com/gsh20040816/steer/go/internal/platform/macos"
 	"github.com/gsh20040816/steer/go/internal/probe"
+	"github.com/gsh20040816/steer/go/internal/subscription"
 )
 
 func TestAuthorizedControlPeer(t *testing.T) {
@@ -607,7 +608,7 @@ func TestControlSwitchUsesLatestSavedAndReturnsFailedApplyStatus(t *testing.T) {
 	if err := os.WriteFile(path, document, 0600); err != nil {
 		t.Fatal(err)
 	}
-	value, err := loadIntent(path)
+	value, err := loadConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -637,7 +638,7 @@ func TestControlSwitchUsesLatestSavedAndReturnsFailedApplyStatus(t *testing.T) {
 	if !response.Saved || response.Applied || response.OK || response.Status == nil || response.Status.GenerationID != "still-running" || len(response.Payload) == 0 {
 		t.Fatalf("partial success must retain actual status and saved snapshot: %+v", response)
 	}
-	saved, err := loadIntent(path)
+	saved, err := loadConfig(path)
 	if err != nil || saved.Main.Enabled || saved.Main.LogLevel != "debug" {
 		t.Fatalf("saved state: %+v %v", saved.Main, err)
 	}
@@ -661,5 +662,88 @@ func TestControlStatusReadsAuthoritativeServiceStatus(t *testing.T) {
 		if result.OK {
 			t.Fatalf("%s accepted a document", operation)
 		}
+	}
+}
+
+func TestControlSubscriptionNodeOperationsWriteOnlyTheNodeStore(t *testing.T) {
+	root := t.TempDir()
+	stateDirectory := filepath.Join(root, "state")
+	path := filepath.Join(root, "config.json")
+	used := model.Node{ID: "feed_used", Enabled: true, Type: "socks", Server: "used.example", ServerPort: 1080, NodeSource: model.NodeSource{SourceSubscription: "feed", SourceFingerprint: "fp-used"}}
+	free := model.Node{ID: "feed_free", Enabled: true, Type: "socks", Server: "free.example", ServerPort: 1080, NodeSource: model.NodeSource{SourceSubscription: "feed", SourceFingerprint: "fp-free"}}
+	nodes := subscription.NodeStore{Directory: subscription.NodeDirectory(stateDirectory)}
+	if err := nodes.Save("feed", []model.Node{used, free}); err != nil {
+		t.Fatal(err)
+	}
+	document, err := os.ReadFile(filepath.Join("..", "..", "..", "linux", "config.example.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := model.DecodeJSON(bytes.NewReader(document))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Subscriptions = []model.Subscription{{ID: "feed", Enabled: true, URL: "https://feed.example/"}}
+	config.Routes = append(config.Routes, model.Route{ID: "via_used", Enabled: true, Kind: "single", Node: used.ID})
+	var encoded bytes.Buffer
+	if err := model.EncodeJSON(&encoded, config); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, encoded.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := &controlService{
+		configPath: path, adminGID: 80,
+		options: macosplatform.BackendOptions{RunDirectory: filepath.Join(root, "run"), StateDirectory: stateDirectory},
+		write:   func(path string, content []byte, _ int) error { return os.WriteFile(path, content, 0o600) },
+	}
+	enabled := false
+	response := service.handle(controlRequest{SchemaVersion: controlSchemaVersion, Operation: "subscription-node-set", ID: "feed", NodeID: used.ID, Enabled: &enabled})
+	if response.OK || response.ErrorCode != subscription.ErrorNodeStillReferenced || response.Validation == nil {
+		t.Fatalf("disabling a referenced node was not rejected: %+v", response)
+	}
+	response = service.handle(controlRequest{SchemaVersion: controlSchemaVersion, Operation: "subscription-node-set", ID: "feed", NodeID: free.ID})
+	if response.OK || response.Error != "unexpected operation arguments" {
+		t.Fatalf("node-set without enabled was accepted: %+v", response)
+	}
+	response = service.handle(controlRequest{SchemaVersion: controlSchemaVersion, Operation: "subscription-node-set", ID: "feed", NodeID: free.ID, Enabled: &enabled})
+	if !response.OK || !strings.Contains(string(response.Payload), `"manual_copy"`) {
+		t.Fatalf("node-set failed: %+v", response)
+	}
+	if stored, _ := nodes.Load("feed"); stored[1].Enabled {
+		t.Fatal("node-set did not reach the node store")
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(after, encoded.Bytes()) {
+		t.Fatal("node-set changed config.json")
+	}
+	response = service.handle(controlRequest{SchemaVersion: controlSchemaVersion, Operation: "subscription-nodes", ID: "missing"})
+	if response.OK || response.ErrorCode != subscription.ErrorSubscriptionNotFound {
+		t.Fatalf("unknown subscription was listed: %+v", response)
+	}
+	response = service.handle(controlRequest{SchemaVersion: controlSchemaVersion, Operation: "subscription-nodes"})
+	var list subscription.NodeList
+	if !response.OK || json.Unmarshal(response.Payload, &list) != nil || len(list.Subscriptions) != 1 || len(list.Subscriptions[0].Nodes) != 2 {
+		t.Fatalf("unexpected node list: %+v", response)
+	}
+
+	// Documents with subscription nodes are rejected; deleting the
+	// subscription removes its stored nodes after the save.
+	withNodes := config
+	withNodes.Nodes = []model.Node{used}
+	var draft bytes.Buffer
+	_ = model.EncodeJSON(&draft, withNodes)
+	response = service.handle(controlRequest{SchemaVersion: controlSchemaVersion, Operation: "save", Document: draft.String(), ExpectedRevision: controlRevision(encoded.Bytes())})
+	if response.Saved || response.Validation == nil || response.Validation.Errors[0].Code != "SUBSCRIPTION_NODE_IN_CONFIG" {
+		t.Fatalf("a document with subscription nodes was saved: %+v", response)
+	}
+	removed, _ := model.DecodeJSON(bytes.NewReader(document))
+	draft.Reset()
+	_ = model.EncodeJSON(&draft, removed)
+	response = service.handle(controlRequest{SchemaVersion: controlSchemaVersion, Operation: "save", Document: draft.String(), ExpectedRevision: controlRevision(encoded.Bytes())})
+	if !response.OK || !response.Saved {
+		t.Fatalf("save failed: %+v", response)
+	}
+	if _, err := os.Stat(nodes.Path("feed")); !os.IsNotExist(err) {
+		t.Fatalf("deleted subscription kept its node store file: %v", err)
 	}
 }

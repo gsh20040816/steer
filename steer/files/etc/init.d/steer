@@ -7,8 +7,8 @@ USE_PROCD=1
 
 # The OpenWrt package framework stops the old init script before running the
 # new package's post-install hook. During an upgrade, defer the automatic start
-# until the package hook has validated and explicitly applied the existing
-# schema 9 configuration.
+# until the package hook has migrated, validated and explicitly applied the
+# existing configuration as schema 10.
 [ "${PKG_UPGRADE:-0}" = 1 ] && USE_PROCD=
 
 CONTROL=/usr/sbin/steer

@@ -244,14 +244,14 @@ func TestApplyLockWaitHonorsContextDeadline(t *testing.T) {
 
 func TestSubscriptionSubcommandParsesTrailingFlags(t *testing.T) {
 	err := runSubscription([]string{"status", "--config", "/definitely/missing/steer"})
-	if err == nil || !strings.Contains(err.Error(), "read UCI for subscription status") {
+	if err == nil || !strings.Contains(err.Error(), "read UCI configuration") {
 		t.Fatalf("trailing flags were not parsed by the status subcommand: %v", err)
 	}
 }
 
 func TestProbeParsesRouteAndRejectsAmbiguousTargets(t *testing.T) {
 	err := runProbe([]string{"--kind", "speedtest", "--route", "route_a", "--config", "/definitely/missing/steer"})
-	if err == nil || !strings.Contains(err.Error(), "read UCI for route test") {
+	if err == nil || !strings.Contains(err.Error(), "read Saved Intent for route test") {
 		t.Fatalf("route test flags were not parsed: %v", err)
 	}
 	err = runProbe([]string{"--kind", "speedtest", "--node", "node_a", "--route", "route_a"})
@@ -292,5 +292,52 @@ func TestUsageExposesOnlyFrozenPublicCommands(t *testing.T) {
 		if strings.Contains(message, removed) {
 			t.Fatalf("non-public command %q leaked into usage: %s", removed, message)
 		}
+	}
+}
+
+func TestSubscriptionNodeCommandsUseTheNodeStore(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "steer")
+	nodeDirectory := filepath.Join(root, "subscription-nodes")
+	base, err := os.ReadFile(filepath.Join("..", "..", "..", "steer", "files", "etc", "config", "steer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := string(base) + "\nconfig subscription 'feed'\n\toption url 'https://feed.example/'\n\nconfig route 'via_used'\n\toption kind 'single'\n\toption node 'feed_used'\n"
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	used := model.Node{ID: "feed_used", Enabled: true, Type: "socks", Server: "used.example", ServerPort: 1080, NodeSource: model.NodeSource{SourceSubscription: "feed", SourceFingerprint: "fp-used"}}
+	free := model.Node{ID: "feed_free", Enabled: true, Type: "socks", Server: "free.example", ServerPort: 1080, NodeSource: model.NodeSource{SourceSubscription: "feed", SourceFingerprint: "fp-free"}}
+	if err := (subscription.NodeStore{Directory: nodeDirectory}).Save("feed", []model.Node{used, free}); err != nil {
+		t.Fatal(err)
+	}
+	flags := []string{"--config", configPath, "--node-dir", nodeDirectory, "--run-dir", filepath.Join(root, "run"), "--state-dir", filepath.Join(root, "state")}
+	output := captureStdout(t, func() error { return runSubscription(append([]string{"nodes", "--id", "feed"}, flags...)) })
+	var list subscription.NodeList
+	if err := json.Unmarshal(output, &list); err != nil || len(list.Subscriptions) != 1 || len(list.Subscriptions[0].Nodes) != 2 || !strings.Contains(string(output), `"manual_copy"`) {
+		t.Fatalf("unexpected nodes output: %s %v", output, err)
+	}
+	var failure subscription.ErrorPayload
+	output = captureStdout(t, func() error {
+		if err := runSubscription(append([]string{"node", "--id", "feed", "--node", "feed_used", "--enabled", "0"}, flags...)); err == nil {
+			t.Fatal("disabling a referenced node succeeded")
+		}
+		return nil
+	})
+	if err := json.Unmarshal(output, &failure); err != nil || failure.OK || failure.ErrorCode != subscription.ErrorNodeStillReferenced {
+		t.Fatalf("unexpected failure output: %s %v", output, err)
+	}
+	output = captureStdout(t, func() error {
+		return runSubscription(append([]string{"node", "--id", "feed", "--node", "feed_free", "--enabled", "0"}, flags...))
+	})
+	if err := json.Unmarshal(output, &list); err != nil || list.Subscriptions[0].Nodes[1].Enabled {
+		t.Fatalf("node toggle did not report the stored state: %s %v", output, err)
+	}
+	if after, _ := os.ReadFile(configPath); string(after) != config {
+		t.Fatal("subscription node commands changed UCI")
+	}
+	if err := runSubscription(append([]string{"node", "--id", "feed", "--node", "feed_free", "--enabled", "yes"}, flags...)); err == nil {
+		t.Fatal("an invalid --enabled value was accepted")
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	model "github.com/gsh20040816/steer/go/internal/intent"
 	macosplatform "github.com/gsh20040816/steer/go/internal/platform/macos"
 	"github.com/gsh20040816/steer/go/internal/probe"
+	"github.com/gsh20040816/steer/go/internal/subscription"
 )
 
 const (
@@ -90,7 +92,8 @@ func runControlClient(args []string, stdout io.Writer) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	allowed := *operation == "status" || *operation == "state" || *operation == "set-enabled" || *operation == "save" || *operation == "apply" || *operation == "subscription-update" || *operation == "subscription-clean"
+	allowed := *operation == "status" || *operation == "state" || *operation == "set-enabled" || *operation == "save" || *operation == "apply" ||
+		*operation == "subscription-update" || *operation == "subscription-clean" || *operation == "subscription-nodes" || *operation == "subscription-node-set"
 	if flags.NArg() != 0 || !allowed {
 		return errors.New("control requires a supported restricted operation")
 	}
@@ -104,16 +107,17 @@ func runControlClient(args []string, stdout io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("read control input: %w", err)
 		}
-	} else if (*operation == "subscription-update" || *operation == "subscription-clean") && (*id == "" || (*operation == "subscription-clean" && *nodeID == "")) {
-		return errors.New("control subscription operation requires --id and clean also requires --node")
+	} else if (*operation == "subscription-update" || *operation == "subscription-clean" || *operation == "subscription-node-set") &&
+		(*id == "" || (*operation != "subscription-update" && *nodeID == "")) {
+		return errors.New("control subscription operation requires --id; clean and node-set also require --node")
 	}
 	request := controlRequest{
 		SchemaVersion: controlSchemaVersion, Operation: *operation, Document: string(document),
 		ExpectedRevision: *expectedRevision, ID: *id, NodeID: *nodeID,
 	}
-	if *operation == "set-enabled" {
+	if *operation == "set-enabled" || *operation == "subscription-node-set" {
 		if *enabledText != "true" && *enabledText != "false" {
-			return errors.New("set-enabled requires --enabled true or false")
+			return fmt.Errorf("%s requires --enabled true or false", *operation)
 		}
 		enabled := *enabledText == "true"
 		request.Enabled = &enabled
@@ -190,6 +194,11 @@ func runControlService(args []string) error {
 	if os.Geteuid() != 0 {
 		return errors.New("Steer control service must run as root")
 	}
+	// A failed migration leaves schema 9 in place; the GUI still needs the
+	// control service to show the validation errors.
+	if err := migrateLocked(*configPath, options.value()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
 	adminGID, err := lookupAdminGID()
 	if err != nil {
 		return err
@@ -260,7 +269,10 @@ func (service *controlService) handle(request controlRequest) controlResponse {
 		response.Error = fmt.Sprintf("unsupported control request schema %d", request.SchemaVersion)
 		return response
 	}
-	if request.Operation != "status" && request.Operation != "state" && request.Operation != "set-enabled" && request.Operation != "save" && request.Operation != "apply" && request.Operation != "subscription-update" && request.Operation != "subscription-clean" && request.Operation != "probe" && request.Operation != "diagnostics" && request.Operation != "probe-results" {
+	switch request.Operation {
+	case "status", "state", "set-enabled", "save", "apply", "probe", "diagnostics", "probe-results",
+		"subscription-update", "subscription-clean", "subscription-nodes", "subscription-node-set":
+	default:
 		response.Error = "unsupported control operation"
 		return response
 	}
@@ -275,8 +287,8 @@ func (service *controlService) handle(request controlRequest) controlResponse {
 		}
 		defer lock.Close()
 	}
-	if request.Operation != "set-enabled" && request.Enabled != nil {
-		response.Error = "enabled is only accepted by set-enabled"
+	if request.Operation != "set-enabled" && request.Operation != "subscription-node-set" && request.Enabled != nil {
+		response.Error = "enabled is only accepted by set-enabled and subscription-node-set"
 		return response
 	}
 	if request.Operation == "status" || request.Operation == "state" || request.Operation == "set-enabled" {
@@ -301,7 +313,7 @@ func (service *controlService) handle(request controlRequest) controlResponse {
 		}
 		// Read and change only the desired state while holding the same lock as
 		// subscription inventory updates. Never accept a client's stale document.
-		value, err := loadIntent(service.configPath)
+		value, err := loadConfig(service.configPath)
 		if err != nil {
 			response.Error = err.Error()
 			return response
@@ -391,51 +403,8 @@ func (service *controlService) handle(request controlRequest) controlResponse {
 		response.OK = true
 		return response
 	}
-	if request.Operation == "subscription-update" {
-		snapshots, updateErr := macosplatform.UpdateConfiguredSubscriptions(context.Background(), &http.Client{Timeout: 30 * time.Second}, service.configPath, service.options.StateDirectory, request.ID)
-		if err := setSubscriptionUpdatePermissions(service.configPath, service.options.StateDirectory, service.adminGID, snapshots, updateErr); err != nil {
-			response.Error = err.Error()
-			return response
-		}
-		if updateErr != nil {
-			response.Error = updateErr.Error()
-			return response
-		}
-		statuses, err := macosplatform.ReadSubscriptionStatus(service.configPath, service.options.StateDirectory)
-		if err != nil {
-			response.Error = err.Error()
-			return response
-		}
-		response.Payload, _ = json.Marshal(struct {
-			Subscriptions []macosplatform.SubscriptionStatus `json:"subscriptions"`
-		}{statuses})
-		response.OK = true
-		return response
-	}
-	if request.Operation == "subscription-clean" {
-		snapshot, err := macosplatform.CleanSubscriptionNode(service.configPath, service.options.StateDirectory, request.ID, request.NodeID)
-		if err != nil {
-			response.Error = err.Error()
-			return response
-		}
-		if err := setControlConfigurationPermissions(service.configPath, service.adminGID); err != nil {
-			response.Error = err.Error()
-			return response
-		}
-		if err := setControlStatePermissions(filepath.Join(service.options.StateDirectory, "subscriptions", snapshot.SubscriptionID+".json"), service.adminGID); err != nil {
-			response.Error = err.Error()
-			return response
-		}
-		statuses, err := macosplatform.ReadSubscriptionStatus(service.configPath, service.options.StateDirectory)
-		if err != nil {
-			response.Error = err.Error()
-			return response
-		}
-		response.Payload, _ = json.Marshal(struct {
-			Subscriptions []macosplatform.SubscriptionStatus `json:"subscriptions"`
-		}{statuses})
-		response.OK = true
-		return response
+	if strings.HasPrefix(request.Operation, "subscription-") {
+		return service.handleSubscription(request)
 	}
 	if len(request.Document) == 0 || len(request.Document) > maxControlDocument {
 		response.Error = "canonical configuration is empty or exceeds the size limit"
@@ -458,9 +427,23 @@ func (service *controlService) handle(request controlRequest) controlResponse {
 		return response
 	}
 	document := normalizedControlDocument([]byte(request.Document))
-	value, err := model.DecodeJSON(bytes.NewReader(document))
+	config, err := model.DecodeJSON(bytes.NewReader(document))
 	if err != nil {
 		response.Error = "decode canonical configuration: " + err.Error()
+		return response
+	}
+	// The document never contains subscription nodes; the stored ones are
+	// attached so validation and Apply see the complete Saved Intent.
+	store := macosplatform.SavedStore(service.configPath, service.options.StateDirectory)
+	value, err := store.Complete(config)
+	var validationErr macosplatform.ValidationError
+	if errors.As(err, &validationErr) {
+		response.Validation = &validationErr.Validation
+		response.Error = fmt.Sprintf("canonical configuration has %d validation error(s)", len(validationErr.Validation.Errors))
+		return response
+	}
+	if err != nil {
+		response.Error = err.Error()
 		return response
 	}
 	validation := macosplatform.ValidateWithGeoDataDirectory(value, service.options.GeoDataDirectory)
@@ -473,6 +456,9 @@ func (service *controlService) handle(request controlRequest) controlResponse {
 		response.Error = err.Error()
 		return response
 	}
+	// A deleted subscription takes its stored nodes with it. Orphans are
+	// never attached, so a failed removal is only retried later.
+	_ = store.RemoveOrphanNodes(config)
 	response.Saved = true
 	response.Revision = controlRevision(document)
 	if request.Operation == "apply" {
@@ -488,6 +474,69 @@ func (service *controlService) handle(request controlRequest) controlResponse {
 		status := service.readRuntimeStatus()
 		response.Status = &status
 	}
+	response.OK = true
+	return response
+}
+
+// handleSubscription runs the subscription operations. They write only the
+// node store and status snapshots, never config.json, and never apply.
+func (service *controlService) handleSubscription(request controlRequest) controlResponse {
+	response := controlResponse{SchemaVersion: controlSchemaVersion}
+	nodeOperation := request.Operation == "subscription-clean" || request.Operation == "subscription-node-set"
+	if request.Document != "" || request.ExpectedRevision != "" || request.Kind != "" || request.RouteID != "" || request.Download ||
+		(nodeOperation && (request.ID == "" || request.NodeID == "")) ||
+		(!nodeOperation && request.NodeID != "") || ((request.Operation == "subscription-node-set") != (request.Enabled != nil)) {
+		response.Error = "unexpected operation arguments"
+		return response
+	}
+	fail := func(err error) controlResponse {
+		payload := subscription.ErrorPayloadOf(err)
+		response.ErrorCode, response.Error, response.Validation = payload.ErrorCode, payload.Error, payload.Validation
+		return response
+	}
+	stateDirectory := service.options.StateDirectory
+	var snapshots []macosplatform.SubscriptionSnapshot
+	var err error
+	switch request.Operation {
+	case "subscription-nodes":
+		list, err := macosplatform.ListSubscriptionNodes(service.configPath, stateDirectory, request.ID)
+		if err != nil {
+			return fail(err)
+		}
+		response.Payload, _ = json.Marshal(list)
+		response.OK = true
+		return response
+	case "subscription-node-set":
+		err = macosplatform.SetSubscriptionNodeEnabled(service.configPath, stateDirectory, request.ID, request.NodeID, *request.Enabled)
+	case "subscription-clean":
+		err = macosplatform.CleanSubscriptionNode(service.configPath, stateDirectory, request.ID, request.NodeID)
+	default:
+		snapshots, err = macosplatform.UpdateConfiguredSubscriptions(context.Background(), &http.Client{Timeout: 30 * time.Second}, service.configPath, stateDirectory, request.ID)
+	}
+	if os.Geteuid() == 0 {
+		if permissionErr := setSubscriptionUpdatePermissions(stateDirectory, service.adminGID, snapshots, err); permissionErr != nil {
+			return fail(permissionErr)
+		}
+	}
+	if err != nil {
+		return fail(err)
+	}
+	if request.Operation == "subscription-node-set" {
+		list, err := macosplatform.ListSubscriptionNodes(service.configPath, stateDirectory, "")
+		if err != nil {
+			return fail(err)
+		}
+		response.Payload, _ = json.Marshal(list)
+		response.OK = true
+		return response
+	}
+	statuses, err := macosplatform.ReadSubscriptionStatus(service.configPath, stateDirectory)
+	if err != nil {
+		return fail(err)
+	}
+	response.Payload, _ = json.Marshal(struct {
+		Subscriptions []macosplatform.SubscriptionStatus `json:"subscriptions"`
+	}{statuses})
 	response.OK = true
 	return response
 }
@@ -535,7 +584,9 @@ func (service *controlService) setDefaults() {
 		service.revision = currentControlRevision
 	}
 	if service.apply == nil {
-		service.apply = applyControlConfiguration
+		service.apply = func(value model.Intent, options macosplatform.BackendOptions) (coreapply.Result, error) {
+			return applyControlConfiguration(service.configPath, value, options)
+		}
 	}
 	if service.status == nil {
 		service.status = func(options macosplatform.BackendOptions) macosplatform.Status {
@@ -593,13 +644,12 @@ func setControlStatePermissions(path string, adminGID int) error {
 	return nil
 }
 
-// setSubscriptionUpdatePermissions hands every file a subscription update
-// wrote back to the admin group, including snapshots of failed fetches.
-func setSubscriptionUpdatePermissions(configPath, stateDirectory string, adminGID int, snapshots []macosplatform.SubscriptionSnapshot, updateErr error) error {
-	if len(snapshots) > 0 {
-		if err := setControlConfigurationPermissions(configPath, adminGID); err != nil {
-			return err
-		}
+// setSubscriptionUpdatePermissions hands every file a subscription operation
+// wrote back to the admin group: the node store and the status snapshots,
+// including those of failed fetches.
+func setSubscriptionUpdatePermissions(stateDirectory string, adminGID int, snapshots []macosplatform.SubscriptionSnapshot, updateErr error) error {
+	if err := setNodeStorePermissions(stateDirectory, adminGID); err != nil {
+		return err
 	}
 	ids := make([]string, 0, len(snapshots))
 	for _, snapshot := range snapshots {
@@ -627,10 +677,41 @@ func setSubscriptionUpdatePermissions(configPath, stateDirectory string, adminGI
 	return nil
 }
 
-func applyControlConfiguration(value model.Intent, options macosplatform.BackendOptions) (coreapply.Result, error) {
+// setNodeStorePermissions makes the subscription node store readable by the
+// admin group, like config.json, so the unprivileged GUI can read status.
+func setNodeStorePermissions(stateDirectory string, adminGID int) error {
+	directory := subscription.NodeDirectory(stateDirectory)
+	entries, err := os.ReadDir(directory)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list subscription node store: %w", err)
+	}
+	if err := os.Chown(directory, 0, adminGID); err != nil {
+		return fmt.Errorf("set subscription node store owner: %w", err)
+	}
+	if err := os.Chmod(directory, 0o750); err != nil {
+		return fmt.Errorf("set subscription node store mode: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		path := filepath.Join(directory, entry.Name())
+		if err := os.Chown(path, 0, adminGID); err != nil {
+			return fmt.Errorf("set subscription node file owner: %w", err)
+		}
+		if err := os.Chmod(path, 0o640); err != nil {
+			return fmt.Errorf("set subscription node file mode: %w", err)
+		}
+	}
+	return nil
+}
+
+func applyControlConfiguration(configPath string, value model.Intent, options macosplatform.BackendOptions) (coreapply.Result, error) {
 	return recordApplyOperation(options.RunDirectory, func() (coreapply.Result, error) {
-		backend := macosplatform.NewBackend(macosplatform.ExecRunner{}, value, options)
-		return coreapply.Run(context.Background(), value, backend.CompilerOptions(), backend)
+		return applyAndPrune(value, configPath, options)
 	})
 }
 

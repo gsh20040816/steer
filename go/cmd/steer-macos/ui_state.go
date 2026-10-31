@@ -36,11 +36,14 @@ func runUIState(args []string, stdout io.Writer) error {
 }
 
 func readUIState(configPath string, options macosplatform.BackendOptions) macUILifecycleState {
-	value, loadErr := loadIntent(configPath)
+	value, loadErr := loadSaved(configPath, options.StateDirectory)
 	validation := model.Validation{OK: false, Errors: []model.Issue{}, Warnings: []model.Issue{}, WarningGroups: []model.WarningGroup{}}
 	saved := uistate.IntentState{Counts: uistate.Counts{}, Validation: validation}
 	backend := macosplatform.NewBackend(macosplatform.ExecRunner{}, value, options)
-	if loadErr == nil {
+	var validationErr macosplatform.ValidationError
+	if errors.As(loadErr, &validationErr) {
+		saved.Validation = validationErr.Validation
+	} else if loadErr == nil {
 		validation = macosplatform.ValidateWithGeoDataDirectory(value, options.GeoDataDirectory)
 		saved = uistate.FromIntent(value, validation, compiler.Options{
 			StateDirectory: options.StateDirectory, GeoDataDirectory: options.GeoDataDirectory,

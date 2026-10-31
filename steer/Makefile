@@ -54,7 +54,14 @@ mkdir -p /etc/crontabs
 grep -Fqx "$$cron_line" "$$cron_file" 2>/dev/null || echo "$$cron_line" >> "$$cron_file"
 /etc/init.d/cron restart
 
-# Switch the schema 9 intent through Steer's verified generation transaction.
+# The uci-defaults script normally migrated schema 9 already; running the
+# idempotent migration here keeps Apply safe whichever hook runs first.
+migrate_output="$$(/usr/sbin/steer _migrate 2>&1)" || {
+	echo "$$migrate_output" >&2
+	exit 1
+}
+
+# Switch the schema 10 intent through Steer's verified generation transaction.
 # PKG_UPGRADE must not leak into the init calls made by Apply.
 apply_output="$$(PKG_UPGRADE=0 /usr/sbin/steer apply 2>&1)" || {
 	echo "$$apply_output" >&2
@@ -94,6 +101,9 @@ define Package/steer/install
 
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/etc/init.d/steer $(1)/etc/init.d/steer
+
+	$(INSTALL_DIR) $(1)/etc/uci-defaults
+	$(INSTALL_BIN) ./files/etc/uci-defaults/90-steer-schema-10 $(1)/etc/uci-defaults/90-steer-schema-10
 
 	$(INSTALL_DIR) $(1)/lib/upgrade/keep.d
 	$(INSTALL_DATA) ./files/lib/upgrade/keep.d/steer $(1)/lib/upgrade/keep.d/steer

@@ -1,0 +1,7 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Move schema 9 subscription nodes from UCI into /etc/steer/subscription-nodes.
+# The migration is idempotent; a failure keeps this script for the next boot.
+
+[ -f /etc/config/steer ] || exit 0
+/usr/sbin/steer _migrate >/dev/null

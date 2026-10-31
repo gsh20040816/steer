@@ -26,11 +26,13 @@ func (app webApplication) handleOverview(writer http.ResponseWriter, request *ht
 		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	store := linuxplatform.IntentStore{Path: app.ConfigPath, GeoDataDirectory: app.seedDirectory()}
-	value, revision, loadErr := store.Load()
+	value, revision, loadErr := app.store().LoadSaved()
 	validation := model.Validation{OK: false}
+	var validationErr linuxplatform.ValidationError
 	if loadErr == nil {
 		validation = linuxplatform.ValidateWithGeoDataDirectory(value, app.seedDirectory())
+	} else if errors.As(loadErr, &validationErr) {
+		validation = validationErr.Validation
 	}
 	runner := app.runner()
 	options := linuxplatform.BackendOptions{
@@ -58,6 +60,18 @@ func (app webApplication) handleValidate(writer http.ResponseWriter, request *ht
 	value, _, err := decodeIntentPayload(body)
 	if err != nil {
 		writeWebError(writer, err, http.StatusBadRequest)
+		return
+	}
+	// Drafts never contain subscription nodes; the stored ones are attached
+	// here so validation sees the complete Saved Intent.
+	value, err = app.store().Complete(value)
+	var validationErr linuxplatform.ValidationError
+	if errors.As(err, &validationErr) {
+		writeWebJSON(writer, validationErr.Validation)
+		return
+	}
+	if err != nil {
+		writeWebError(writer, err, http.StatusInternalServerError)
 		return
 	}
 	validation := linuxplatform.ValidateWithGeoDataDirectory(value, app.seedDirectory())
@@ -210,7 +224,7 @@ func (app webApplication) handleSubscriptions(writer http.ResponseWriter, reques
 			return err
 		})
 		if err != nil {
-			writeWebError(writer, err, http.StatusUnprocessableEntity)
+			writeSubscriptionError(writer, err)
 			return
 		}
 		statuses, err := linuxplatform.ReadSubscriptionStatus(app.ConfigPath, app.StateDirectory)
@@ -221,14 +235,32 @@ func (app webApplication) handleSubscriptions(writer http.ResponseWriter, reques
 		writeWebJSON(writer, map[string]any{"subscriptions": statuses})
 		return
 	}
-	if len(parts) == 3 && parts[1] == "nodes" && request.Method == http.MethodDelete {
+	if len(parts) == 3 && parts[1] == "nodes" && request.Method == http.MethodPut {
+		var input struct {
+			Enabled *bool `json:"enabled"`
+		}
+		decoder := json.NewDecoder(io.LimitReader(request.Body, 1024))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input); err != nil || input.Enabled == nil || decoder.Decode(new(any)) != io.EOF {
+			writeWebError(writer, errors.New("request body must be {\"enabled\": true|false}"), http.StatusBadRequest)
+			return
+		}
 		err := withOperationLock(app.RunDirectory, func() error {
-			var err error
-			_, err = linuxplatform.CleanSubscriptionNode(app.ConfigPath, app.StateDirectory, parts[0], parts[2])
-			return err
+			return linuxplatform.SetSubscriptionNodeEnabled(app.ConfigPath, app.StateDirectory, parts[0], parts[2], *input.Enabled)
 		})
 		if err != nil {
-			writeWebError(writer, err, http.StatusUnprocessableEntity)
+			writeSubscriptionError(writer, err)
+			return
+		}
+		app.writeSubscriptionNodes(writer, "")
+		return
+	}
+	if len(parts) == 3 && parts[1] == "nodes" && request.Method == http.MethodDelete {
+		err := withOperationLock(app.RunDirectory, func() error {
+			return linuxplatform.CleanSubscriptionNode(app.ConfigPath, app.StateDirectory, parts[0], parts[2])
+		})
+		if err != nil {
+			writeSubscriptionError(writer, err)
 			return
 		}
 		statuses, err := linuxplatform.ReadSubscriptionStatus(app.ConfigPath, app.StateDirectory)
@@ -240,6 +272,40 @@ func (app webApplication) handleSubscriptions(writer http.ResponseWriter, reques
 		return
 	}
 	http.NotFound(writer, request)
+}
+
+// handleSubscriptionNodes returns the stored nodes of the subscriptions in
+// the Saved configuration, each with its shared manual copy.
+func (app webApplication) handleSubscriptionNodes(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		writer.Header().Set("Allow", http.MethodGet)
+		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	app.writeSubscriptionNodes(writer, request.URL.Query().Get("id"))
+}
+
+func (app webApplication) writeSubscriptionNodes(writer http.ResponseWriter, id string) {
+	list, err := linuxplatform.ListSubscriptionNodes(app.ConfigPath, app.StateDirectory, id)
+	if err != nil {
+		writeSubscriptionError(writer, err)
+		return
+	}
+	writer.Header().Set("Cache-Control", "no-store")
+	writeWebJSON(writer, list)
+}
+
+// writeSubscriptionError writes the shared subscription error payload.
+func writeSubscriptionError(writer http.ResponseWriter, err error) {
+	payload := subscription.ErrorPayloadOf(err)
+	status := http.StatusUnprocessableEntity
+	switch payload.ErrorCode {
+	case subscription.ErrorSubscriptionNotFound, subscription.ErrorNodeNotFound:
+		status = http.StatusNotFound
+	case subscription.ErrorNodeStoreFailed:
+		status = http.StatusInternalServerError
+	}
+	writeWebJSONStatus(writer, payload, status)
 }
 
 func (app webApplication) handleGeoData(writer http.ResponseWriter, request *http.Request) {
@@ -278,7 +344,11 @@ func (app webApplication) geoDataStatus(_ context.Context, kind string) geoDataS
 
 func (app webApplication) applySaved() (coreapply.Result, error) {
 	return runLockedApplyResult(app.RunDirectory, func() (coreapply.Result, error) {
-		value, _, err := (linuxplatform.IntentStore{Path: app.ConfigPath, GeoDataDirectory: app.seedDirectory()}).Load()
+		value, _, err := app.store().LoadSaved()
+		var validationErr linuxplatform.ValidationError
+		if errors.As(err, &validationErr) {
+			return coreapply.Result{Validation: &validationErr.Validation}, err
+		}
 		if err != nil {
 			validation := model.Validation{Errors: []model.Issue{{Code: "DECODE_FAILED", ObjectType: "json", Message: err.Error()}}, Warnings: []model.Issue{}}
 			return coreapply.Result{Validation: &validation}, err
@@ -287,6 +357,8 @@ func (app webApplication) applySaved() (coreapply.Result, error) {
 	})
 }
 
+// applyValue applies a complete Saved Intent (configuration plus stored
+// subscription nodes); the caller holds the operation lock.
 func (app webApplication) applyValue(value model.Intent) (coreapply.Result, error) {
 	validation := linuxplatform.ValidateWithGeoDataDirectory(value, app.seedDirectory())
 	if !validation.OK {
@@ -296,7 +368,7 @@ func (app webApplication) applyValue(value model.Intent) (coreapply.Result, erro
 	backend := linuxplatform.NewBackend(runner, value, linuxplatform.BackendOptions{
 		RunDirectory: app.RunDirectory, StateDirectory: app.StateDirectory, GeoDataDirectory: app.seedDirectory(),
 	})
-	return coreapply.Run(context.Background(), value, backend.CompilerOptions(), backend)
+	return applyAndPrune(value, backend, app.ConfigPath, app.StateDirectory)
 }
 
 func decodeIntentPayload(body []byte) (model.Intent, bool, error) {

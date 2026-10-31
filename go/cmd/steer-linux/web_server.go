@@ -85,12 +85,21 @@ func webHandler(app webApplication) http.Handler {
 	mux.HandleFunc("/api/v1/probes/", app.auth(app.handleProbes))
 	mux.HandleFunc("/api/v1/subscriptions", app.auth(app.handleSubscriptions))
 	mux.HandleFunc("/api/v1/subscriptions/", app.auth(app.handleSubscriptions))
+	mux.HandleFunc("/api/v1/subscription-nodes", app.auth(app.handleSubscriptionNodes))
 	mux.HandleFunc("/api/v1/geodata/", app.auth(app.handleGeoData))
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'")
 		writer.Header().Set("X-Content-Type-Options", "nosniff")
 		mux.ServeHTTP(writer, request)
 	})
+}
+
+// store is the Saved state: config.json plus the subscription node store in
+// the state directory.
+func (app webApplication) store() linuxplatform.IntentStore {
+	store := linuxplatform.SavedStore(app.ConfigPath, app.StateDirectory)
+	store.GeoDataDirectory = app.seedDirectory()
+	return store
 }
 
 func (app webApplication) seedDirectory() string {

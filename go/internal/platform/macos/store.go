@@ -15,6 +15,7 @@ import (
 
 	coreapply "github.com/gsh20040816/steer/go/internal/apply"
 	model "github.com/gsh20040816/steer/go/internal/intent"
+	"github.com/gsh20040816/steer/go/internal/subscription"
 )
 
 const RuntimeSchemaVersion = 1
@@ -44,11 +45,57 @@ func (paths Paths) Ensure() error {
 	return nil
 }
 
+// IntentStore is the macOS Saved state: Paths.ConfigPath holds the
+// configuration and Paths.StateDirectory the subscription node store.
 type IntentStore struct {
 	Paths            Paths
 	GeoDataDirectory string
 }
 
+// SavedStore is the macOS Saved state for one config file and state directory.
+func SavedStore(configPath, stateDirectory string) IntentStore {
+	return IntentStore{Paths: Paths{ConfigPath: configPath, StateDirectory: stateDirectory}}
+}
+
+func (store IntentStore) nodes() subscription.NodeStore {
+	if store.Paths.StateDirectory == "" {
+		return subscription.NodeStore{}
+	}
+	return subscription.NodeStore{Directory: subscription.NodeDirectory(store.Paths.StateDirectory)}
+}
+
+// LoadSaved returns the complete Saved Intent: the configuration plus the
+// stored nodes of every configured subscription.
+func (store IntentStore) LoadSaved() (model.Intent, string, error) {
+	config, revision, err := store.Load()
+	if err != nil {
+		return model.Intent{}, "", err
+	}
+	value, err := store.Complete(config)
+	if err != nil {
+		return model.Intent{}, "", err
+	}
+	return value, revision, nil
+}
+
+// Complete attaches the stored subscription nodes to a configuration, such as
+// a document the GUI is about to save.
+func (store IntentStore) Complete(config model.Intent) (model.Intent, error) {
+	value, err := subscription.Attach(config, store.nodes())
+	var configErr subscription.ConfigError
+	if errors.As(err, &configErr) {
+		return model.Intent{}, ValidationError{Validation: configErr.Validation}
+	}
+	return value, err
+}
+
+// RemoveOrphanNodes drops store files of subscriptions that the configuration
+// no longer has. It runs after a successful save, Apply or update.
+func (store IntentStore) RemoveOrphanNodes(config model.Intent) error {
+	return store.nodes().RemoveOrphans(config.Subscriptions)
+}
+
+// Load reads only the configuration file, which has no subscription nodes.
 func (store IntentStore) Load() (model.Intent, string, error) {
 	content, err := os.ReadFile(store.Paths.ConfigPath)
 	if err != nil {
@@ -61,7 +108,13 @@ func (store IntentStore) Load() (model.Intent, string, error) {
 	return value, contentRevision(content), nil
 }
 
-func (store IntentStore) Save(value model.Intent, expectedRevision string) (string, error) {
+// Save writes only the configuration after validating it with the stored
+// subscription nodes attached.
+func (store IntentStore) Save(config model.Intent, expectedRevision string) (string, error) {
+	value, err := store.Complete(config)
+	if err != nil {
+		return "", err
+	}
 	validation := ValidateWithGeoDataDirectory(value, store.geoDataDirectory())
 	if !validation.OK {
 		return "", ValidationError{Validation: validation}
@@ -76,12 +129,14 @@ func (store IntentStore) Save(value model.Intent, expectedRevision string) (stri
 		}
 	}
 	var encoded bytes.Buffer
-	if err := model.EncodeJSON(&encoded, value); err != nil {
+	if err := model.EncodeJSON(&encoded, config); err != nil {
 		return "", err
 	}
 	if err := atomicWrite(store.Paths.ConfigPath, encoded.Bytes()); err != nil {
 		return "", fmt.Errorf("write macOS canonical intent: %w", err)
 	}
+	// Orphans are never attached; a failed removal is retried later.
+	_ = store.RemoveOrphanNodes(config)
 	return contentRevision(encoded.Bytes()), nil
 }
 

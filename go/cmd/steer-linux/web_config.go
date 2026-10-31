@@ -11,13 +11,16 @@ import (
 
 	coreapply "github.com/gsh20040816/steer/go/internal/apply"
 	"github.com/gsh20040816/steer/go/internal/geodata"
+	model "github.com/gsh20040816/steer/go/internal/intent"
 	linuxplatform "github.com/gsh20040816/steer/go/internal/platform/linux"
 )
 
 func (app webApplication) handleConfig(writer http.ResponseWriter, request *http.Request) {
-	store := linuxplatform.IntentStore{Path: app.ConfigPath, GeoDataDirectory: app.seedDirectory()}
+	store := app.store()
 	switch request.Method {
 	case http.MethodGet:
+		// The configuration never contains subscription nodes; they are
+		// read with /api/v1/subscription-nodes.
 		value, revision, err := store.Load()
 		if err != nil {
 			writeWebError(writer, err, http.StatusInternalServerError)
@@ -39,6 +42,7 @@ func (app webApplication) handleConfig(writer http.ResponseWriter, request *http
 		expectedRevision := request.Header.Get("If-Match")
 		var revision string
 		var saveErr error
+		var saved model.Intent
 		var applyResult coreapply.Result
 		var applyErr error
 		lockErr := withOperationLock(app.RunDirectory, func() error {
@@ -48,11 +52,17 @@ func (app webApplication) handleConfig(writer http.ResponseWriter, request *http
 					return nil
 				}
 			}
+			// Save rejects drafts that contain subscription nodes and validates
+			// the draft with the stored nodes attached.
 			revision, saveErr = store.Save(value, expectedRevision)
+			if saveErr != nil {
+				return nil
+			}
+			saved, saveErr = store.Complete(value)
 			if saveErr != nil || !apply {
 				return nil
 			}
-			applyResult, applyErr = app.applyValue(value)
+			applyResult, applyErr = app.applyValue(saved)
 			applyResult, applyErr = recordApplyResult(app.RunDirectory, applyResult, applyErr)
 			return nil
 		})
@@ -80,7 +90,7 @@ func (app webApplication) handleConfig(writer http.ResponseWriter, request *http
 			return
 		}
 		writer.Header().Set("ETag", revision)
-		validation := linuxplatform.ValidateWithGeoDataDirectory(value, app.seedDirectory())
+		validation := linuxplatform.ValidateWithGeoDataDirectory(saved, app.seedDirectory())
 		response := map[string]any{"saved": true, "applied": false, "revision": revision, "validation": validation}
 		if apply {
 			response["apply_result"] = applyResult

@@ -6,8 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-
-	linuxplatform "github.com/gsh20040816/steer/go/internal/platform/linux"
 )
 
 // The switch updates only main.enabled in the latest saved configuration, under
@@ -33,7 +31,7 @@ func (app webApplication) handleEnabled(writer http.ResponseWriter, request *htt
 	}
 	response := map[string]any{"saved": false, "applied": false}
 	err := withOperationLock(app.RunDirectory, func() error {
-		store := linuxplatform.IntentStore{Path: app.ConfigPath, GeoDataDirectory: app.seedDirectory()}
+		store := app.store()
 		value, revision, err := store.Load()
 		if err != nil {
 			return err
@@ -44,7 +42,11 @@ func (app webApplication) handleEnabled(writer http.ResponseWriter, request *htt
 			return err
 		}
 		response["saved"], response["revision"], response["intent"] = true, revision, value
-		result, applyErr := app.applyValue(value)
+		saved, err := store.Complete(value)
+		if err != nil {
+			return err
+		}
+		result, applyErr := app.applyValue(saved)
 		result, applyErr = recordApplyResult(app.RunDirectory, result, applyErr)
 		response["apply_result"] = result
 		response["applied"] = applyErr == nil

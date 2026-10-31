@@ -24,8 +24,8 @@ import (
 
 type TestReport = probe.Report
 
-func ProbeOverview(ctx context.Context, configPath, runDirectory, kind string, client *http.Client) (TestReport, error) {
-	value, err := readProbeIntent(configPath)
+func ProbeOverview(ctx context.Context, configPath, stateDirectory, runDirectory, kind string, client *http.Client) (TestReport, error) {
+	value, err := readProbeIntent(configPath, stateDirectory)
 	if err != nil {
 		return TestReport{}, fmt.Errorf("load saved macOS configuration for probe: %w", err)
 	}
@@ -56,8 +56,8 @@ func ProbeOverview(ctx context.Context, configPath, runDirectory, kind string, c
 	return report, nil
 }
 
-func SpeedTestNode(ctx context.Context, configPath, singBoxPath, nodeID string, download bool) (TestReport, error) {
-	value, err := readProbeIntent(configPath)
+func SpeedTestNode(ctx context.Context, configPath, stateDirectory, singBoxPath, nodeID string, download bool) (TestReport, error) {
+	value, err := readProbeIntent(configPath, stateDirectory)
 	if err != nil {
 		return TestReport{}, err
 	}
@@ -84,8 +84,8 @@ func SpeedTestNode(ctx context.Context, configPath, singBoxPath, nodeID string, 
 	return probe.SanitizeReport(report), nil
 }
 
-func SpeedTestRoute(ctx context.Context, configPath, singBoxPath, routeID string, download bool) (TestReport, error) {
-	value, err := readProbeIntent(configPath)
+func SpeedTestRoute(ctx context.Context, configPath, stateDirectory, singBoxPath, routeID string, download bool) (TestReport, error) {
+	value, err := readProbeIntent(configPath, stateDirectory)
 	if err != nil {
 		return TestReport{}, err
 	}
@@ -202,8 +202,8 @@ func waitTemporaryProbeReady(ctx context.Context, port int) error {
 	}
 }
 
-func readProbeIntent(configPath string) (model.Intent, error) {
-	value, _, err := (IntentStore{Paths: Paths{ConfigPath: configPath}}).Load()
+func readProbeIntent(configPath, stateDirectory string) (model.Intent, error) {
+	value, _, err := SavedStore(configPath, stateDirectory).LoadSaved()
 	if err != nil {
 		return model.Intent{}, err
 	}

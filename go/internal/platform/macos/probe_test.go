@@ -65,7 +65,7 @@ func TestProbeOverviewUsesSavedTargetAndRecordsCurrentEnvironment(t *testing.T) 
 	writeProbeTestIntent(t, paths.ConfigPath, saved)
 
 	transport := &recordingProbeTransport{}
-	result, err := ProbeOverview(context.Background(), paths.ConfigPath, paths.Root, "proxy", &http.Client{Transport: transport})
+	result, err := ProbeOverview(context.Background(), paths.ConfigPath, paths.StateDirectory, paths.Root, "proxy", &http.Client{Transport: transport})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestProbeOverviewRunsWithoutActiveGeneration(t *testing.T) {
 	for _, kind := range []string{"proxy", "speedtest"} {
 		t.Run(kind, func(t *testing.T) {
 			transport := &recordingProbeTransport{}
-			report, err := ProbeOverview(context.Background(), paths.ConfigPath, paths.Root, kind, &http.Client{Transport: transport})
+			report, err := ProbeOverview(context.Background(), paths.ConfigPath, paths.StateDirectory, paths.Root, kind, &http.Client{Transport: transport})
 			if err != nil {
 				t.Fatal(err)
 			}

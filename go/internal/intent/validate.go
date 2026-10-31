@@ -31,6 +31,32 @@ var (
 	validDuration = regexp.MustCompile(`^[1-9][0-9]*(ms|s|m|h)$`)
 )
 
+// ConfigNodeIssues reports nodes in the Saved configuration that carry
+// subscription source fields. Subscription nodes live in the platform's node
+// store and are attached after this check, so the complete Saved Intent may
+// contain them while the configuration itself may not.
+func ConfigNodeIssues(config Intent) []Issue {
+	issues := []Issue{}
+	for _, node := range config.Nodes {
+		option := ""
+		switch {
+		case node.SourceSubscription != "":
+			option = "source_subscription"
+		case node.SourceFingerprint != "":
+			option = "source_fingerprint"
+		case node.PinnedStale:
+			option = "pinned_stale"
+		default:
+			continue
+		}
+		issues = append(issues, Issue{
+			Code: "SUBSCRIPTION_NODE_IN_CONFIG", ObjectType: "node", ObjectID: node.ID, Option: option,
+			Message: "subscription nodes are kept by their subscription and cannot be saved in the configuration",
+		})
+	}
+	return issues
+}
+
 func Validate(intent Intent) Validation {
 	return ValidateWithOptions(intent, ValidationOptions{IPv6WildcardDualStack: true})
 }
@@ -62,7 +88,7 @@ func ValidateWithOptions(intent Intent, options ValidationOptions) Validation {
 	}
 
 	if intent.Main.SchemaVersion != SchemaVersion {
-		err("UNSUPPORTED_SCHEMA", "steer", intent.Main.ID, "schema_version", "only schema 9 is supported")
+		err("UNSUPPORTED_SCHEMA", "steer", intent.Main.ID, "schema_version", "only schema "+strconv.Itoa(SchemaVersion)+" is supported")
 	}
 	if !validID.MatchString(intent.Main.ID) {
 		err("INVALID_ID", "steer", intent.Main.ID, "id", "invalid section ID")

@@ -94,6 +94,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runControlService(args[1:])
 	case "_run":
 		return runService(args[1:])
+	case "_migrate":
+		return runMigrate(args[1:], stdout)
 	default:
 		return usage()
 	}
@@ -179,6 +181,7 @@ func runValidate(args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("validate", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	configPath := flags.String("config", defaultConfigPath, "canonical JSON configuration")
+	stateDirectory := flags.String("state-dir", defaultStateDirectory, "macOS state directory holding the subscription node store")
 	geoDataDirectory := flags.String("geodata", defaultGeoDataDir, "package-owned Geo SRS seed directory")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -186,7 +189,14 @@ func runValidate(args []string, stdout io.Writer) error {
 	if flags.NArg() != 0 {
 		return errors.New("validate accepts flags only")
 	}
-	value, err := loadIntent(*configPath)
+	value, err := loadSaved(*configPath, *stateDirectory)
+	var validationErr macosplatform.ValidationError
+	if errors.As(err, &validationErr) {
+		if writeErr := writeJSON(stdout, validationErr.Validation); writeErr != nil {
+			return writeErr
+		}
+		return errors.New("configuration validation failed")
+	}
 	if err != nil {
 		return err
 	}
@@ -212,7 +222,7 @@ func runCompile(args []string, stdout io.Writer) error {
 	if flags.NArg() != 0 {
 		return errors.New("compile accepts flags only")
 	}
-	value, err := loadIntent(*configPath)
+	value, err := loadSaved(*configPath, *stateDirectory)
 	if err != nil {
 		return err
 	}
@@ -238,7 +248,7 @@ func runPrepare(args []string, stdout io.Writer) error {
 	if flags.NArg() != 0 {
 		return errors.New("prepare accepts flags only")
 	}
-	value, err := loadIntent(*configPath)
+	value, err := loadSaved(*configPath, options.stateDirectory)
 	if err != nil {
 		return err
 	}
@@ -263,12 +273,11 @@ func runApply(args []string, stdout io.Writer) error {
 		return errors.New("apply accepts flags only")
 	}
 	return runLockedApply(options.runDirectory, func() (coreapply.Result, error) {
-		value, err := loadIntent(*configPath)
+		value, err := loadSaved(*configPath, options.stateDirectory)
 		if err != nil {
 			return coreapply.Result{}, err
 		}
-		backend := macosplatform.NewBackend(macosplatform.ExecRunner{}, value, options.value())
-		return coreapply.Run(context.Background(), value, backend.CompilerOptions(), backend)
+		return applyAndPrune(value, *configPath, options.value())
 	}, stdout)
 }
 
@@ -325,6 +334,9 @@ func runService(args []string) error {
 	if flags.NArg() != 0 {
 		return errors.New("_run accepts flags only")
 	}
+	if err := migrateLocked(*configPath, options.value()); err != nil {
+		return err
+	}
 	if _, err := os.Stat(filepath.Join(options.runDirectory, "current.json")); os.IsNotExist(err) {
 		if err := prepareColdStart(*configPath, options.value()); err != nil {
 			return err
@@ -350,7 +362,7 @@ func prepareColdStart(configPath string, options macosplatform.BackendOptions) e
 	if _, err := os.Stat(filepath.Join(options.RunDirectory, "current.json")); err == nil {
 		return nil
 	}
-	value, err := loadIntent(configPath)
+	value, err := loadSaved(configPath, options.StateDirectory)
 	if err != nil {
 		return err
 	}
@@ -397,7 +409,9 @@ func (value *backendFlags) value() macosplatform.BackendOptions {
 	}
 }
 
-func loadIntent(path string) (model.Intent, error) {
+// loadConfig reads only the configuration file, which has no subscription
+// nodes.
+func loadConfig(path string) (model.Intent, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return model.Intent{}, fmt.Errorf("open canonical config: %w", err)
@@ -408,6 +422,83 @@ func loadIntent(path string) (model.Intent, error) {
 		return model.Intent{}, err
 	}
 	return value, nil
+}
+
+// loadSaved returns the complete Saved Intent: the configuration plus the
+// stored nodes of every configured subscription.
+func loadSaved(path, stateDirectory string) (model.Intent, error) {
+	value, _, err := macosplatform.SavedStore(path, stateDirectory).LoadSaved()
+	return value, err
+}
+
+// applyAndPrune runs Apply for a complete Saved Intent and, after a success,
+// drops the node store files of subscriptions the configuration no longer has.
+func applyAndPrune(value model.Intent, configPath string, options macosplatform.BackendOptions) (coreapply.Result, error) {
+	backend := macosplatform.NewBackend(macosplatform.ExecRunner{}, value, options)
+	result, err := coreapply.Run(context.Background(), value, backend.CompilerOptions(), backend)
+	if err == nil {
+		// Orphans are never attached; a failed removal is retried later.
+		_ = macosplatform.RemoveOrphanNodes(configPath, options.StateDirectory)
+	}
+	return result, err
+}
+
+// migrateLocked moves schema 9 subscription nodes into the node store under
+// the operation lock and hands the files back to the admin group. The lock is
+// taken only for schema 9: an Apply holds it while it starts this service.
+func migrateLocked(configPath string, options macosplatform.BackendOptions) error {
+	if !macosplatform.NeedsMigration(configPath) {
+		return nil
+	}
+	_, err := runLockedMigration(configPath, options)
+	return err
+}
+
+func runLockedMigration(configPath string, options macosplatform.BackendOptions) (bool, error) {
+	lock, err := acquireLock(options.RunDirectory)
+	if err != nil {
+		return false, err
+	}
+	defer lock.Close()
+	changed, err := macosplatform.Migrate(configPath, options.StateDirectory)
+	if err != nil {
+		return false, fmt.Errorf("migrate configuration to schema %d: %w", model.SchemaVersion, err)
+	}
+	if changed && os.Geteuid() == 0 {
+		adminGID, err := lookupAdminGID()
+		if err != nil {
+			return true, err
+		}
+		if err := setControlConfigurationPermissions(configPath, adminGID); err != nil {
+			return true, err
+		}
+		if err := setNodeStorePermissions(options.StateDirectory, adminGID); err != nil {
+			return true, err
+		}
+	}
+	return changed, nil
+}
+
+// runMigrate is the internal, idempotent schema 9 to 10 migration.
+func runMigrate(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("_migrate", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	configPath := flags.String("config", defaultConfigPath, "canonical JSON configuration")
+	options := bindBackendFlags(flags)
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("_migrate accepts flags only")
+	}
+	changed, err := runLockedMigration(*configPath, options.value())
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, struct {
+		OK      bool `json:"ok"`
+		Changed bool `json:"changed"`
+	}{true, changed})
 }
 
 func writeJSON(writer io.Writer, value any) error {

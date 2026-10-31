@@ -37,6 +37,8 @@ func run(args []string) error {
 		return runWebToken(args[1:])
 	case "_run":
 		return runService(args[1:])
+	case "_migrate":
+		return runMigrate(args[1:])
 	default:
 		return usage()
 	}

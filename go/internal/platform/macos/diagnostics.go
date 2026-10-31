@@ -38,7 +38,7 @@ func ReadLatestProbeResults(configPath string, options BackendOptions) probe.Lat
 func readProbeIdentity(configPath string, options BackendOptions) (probe.Identity, []string) {
 	identity := probe.Identity{}
 	warnings := []string{}
-	if value, _, err := (IntentStore{Paths: Paths{ConfigPath: configPath}}).Load(); err == nil {
+	if value, _, err := SavedStore(configPath, options.StateDirectory).LoadSaved(); err == nil {
 		identity.SavedDigest = compiler.IntentDigest(value)
 	} else {
 		warnings = append(warnings, "the Saved configuration identity is unavailable")

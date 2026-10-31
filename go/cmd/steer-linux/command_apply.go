@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -20,6 +21,7 @@ import (
 func runValidate(args []string) error {
 	flags := flag.NewFlagSet("validate", flag.ContinueOnError)
 	configPath := flags.String("config", "/etc/steer/config.json", "canonical JSON configuration file")
+	stateDirectory := flags.String("state-dir", "/var/lib/steer", "state directory holding the subscription node store")
 	seedDirectory := flags.String("seed-dir", "/usr/share/steer/geodata-seed", "package-owned Geo seed directory")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -27,7 +29,7 @@ func runValidate(args []string) error {
 	if flags.NArg() != 0 {
 		return errors.New("validate accepts flags only")
 	}
-	value, validation, err := loadIntent(*configPath)
+	value, validation, err := loadIntent(*configPath, *stateDirectory)
 	if err != nil {
 		writeJSON(validation)
 		return err
@@ -56,7 +58,7 @@ func runApply(args []string) error {
 		return errors.New("apply accepts flags only")
 	}
 	return runLockedApply(*runDirectory, func() (coreapply.Result, error) {
-		value, validation, err := loadIntent(*configPath)
+		value, validation, err := loadIntent(*configPath, *stateDirectory)
 		if err != nil {
 			return coreapply.Result{Validation: &validation}, err
 		}
@@ -67,7 +69,7 @@ func runApply(args []string) error {
 			RunDirectory: *runDirectory, StateDirectory: *stateDirectory, SingBoxBinary: *singBoxPath,
 			NFTBinary: *nftBinary, SystemctlBinary: *systemctl, ServiceName: *serviceName,
 		})
-		return coreapply.Run(context.Background(), value, backend.CompilerOptions(), backend)
+		return applyAndPrune(value, backend, *configPath, *stateDirectory)
 	})
 }
 
@@ -85,12 +87,15 @@ func runService(args []string) error {
 		return errors.New("_run accepts flags only")
 	}
 	options := linuxplatform.BackendOptions{RunDirectory: *runDirectory, StateDirectory: *stateDirectory, SingBoxBinary: *singBoxPath, NFTBinary: *nftBinary}
+	if err := migrateLocked(*configPath, *runDirectory, *stateDirectory); err != nil {
+		return err
+	}
 	if _, err := os.Stat(filepath.Join(*runDirectory, "current", "sing-box.json")); err != nil {
 		lock, lockErr := acquireApplyLock(*runDirectory)
 		if lockErr != nil {
 			return lockErr
 		}
-		value, validation, loadErr := loadIntent(*configPath)
+		value, validation, loadErr := loadIntent(*configPath, *stateDirectory)
 		if loadErr == nil {
 			validation = linuxplatform.Validate(value)
 			if !validation.OK {
@@ -174,10 +179,72 @@ func runCleanup(args []string) error {
 	return nil
 }
 
-func loadIntent(path string) (intent.Intent, intent.Validation, error) {
-	value, _, err := (linuxplatform.IntentStore{Path: path}).Load()
+// loadIntent returns the complete Saved Intent (config.json plus stored
+// subscription nodes) and its validation. Subscription nodes written into
+// config.json are reported as validation errors.
+func loadIntent(path, stateDirectory string) (intent.Intent, intent.Validation, error) {
+	value, _, err := linuxplatform.SavedStore(path, stateDirectory).LoadSaved()
+	var validationErr linuxplatform.ValidationError
+	if errors.As(err, &validationErr) {
+		return intent.Intent{}, validationErr.Validation, err
+	}
 	if err != nil {
-		return intent.Intent{}, intent.Validation{Errors: []intent.Issue{{Code: "DECODE_FAILED", ObjectType: "json", Message: err.Error()}}}, err
+		return intent.Intent{}, intent.Validation{Errors: []intent.Issue{{Code: "DECODE_FAILED", ObjectType: "json", Message: err.Error()}}, Warnings: []intent.Issue{}}, err
 	}
 	return value, linuxplatform.Validate(value), nil
+}
+
+// applyAndPrune runs Apply and, after a success, drops the node store files
+// of subscriptions that config.json no longer has.
+func applyAndPrune(value intent.Intent, backend *linuxplatform.Backend, configPath, stateDirectory string) (coreapply.Result, error) {
+	result, err := coreapply.Run(context.Background(), value, backend.CompilerOptions(), backend)
+	if err == nil {
+		// Orphans are never attached; a failed removal is retried later.
+		_ = linuxplatform.RemoveOrphanNodes(configPath, stateDirectory)
+	}
+	return result, err
+}
+
+// migrateLocked moves schema 9 subscription nodes into the node store under
+// the operation lock. The lock is taken only for schema 9: an Apply holds it
+// while it starts this very service. Every other schema is left to validation.
+func migrateLocked(configPath, runDirectory, stateDirectory string) error {
+	if !linuxplatform.NeedsMigration(configPath) {
+		return nil
+	}
+	return withOperationLock(runDirectory, func() error {
+		if _, err := linuxplatform.Migrate(configPath, stateDirectory); err != nil {
+			return fmt.Errorf("migrate configuration to schema %d: %w", intent.SchemaVersion, err)
+		}
+		return nil
+	})
+}
+
+// runMigrate is the internal, idempotent schema 9 to 10 migration used by the
+// Arch upgrade hook.
+func runMigrate(args []string) error {
+	flags := flag.NewFlagSet("_migrate", flag.ContinueOnError)
+	configPath := flags.String("config", "/etc/steer/config.json", "canonical JSON configuration file")
+	stateDirectory := flags.String("state-dir", "/var/lib/steer", "state directory holding the subscription node store")
+	runDirectory := flags.String("run-dir", "/run/steer", "shared operation lock directory")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("_migrate accepts flags only")
+	}
+	changed := false
+	err := withOperationLock(*runDirectory, func() error {
+		var err error
+		changed, err = linuxplatform.Migrate(*configPath, *stateDirectory)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	writeJSON(struct {
+		OK      bool `json:"ok"`
+		Changed bool `json:"changed"`
+	}{true, changed})
+	return nil
 }

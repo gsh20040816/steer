@@ -3,15 +3,22 @@
 package linux
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/gsh20040816/steer/go/internal/compiler"
 	model "github.com/gsh20040816/steer/go/internal/intent"
+	"github.com/gsh20040816/steer/go/internal/subscription"
 )
 
 func TestConfiguredSubscriptionSchedule(t *testing.T) {
@@ -43,11 +50,11 @@ func TestConfiguredSubscriptionSchedule(t *testing.T) {
 			stateDirectory := filepath.Join(root, "state")
 			value := validIntent()
 			value.Subscriptions = []model.Subscription{{ID: "feed", Enabled: true, URL: server.URL, UpdateInterval: test.interval}}
-			if _, err := (IntentStore{Path: configPath}).Save(value, ""); err != nil {
+			if _, err := SavedStore(configPath, stateDirectory).Save(value, ""); err != nil {
 				t.Fatal(err)
 			}
 			if test.snapshotAge != 0 {
-				if err := saveSubscriptionSnapshot(stateDirectory, SubscriptionSnapshot{SubscriptionID: "feed", URL: server.URL, FetchedAt: time.Now().Add(-test.snapshotAge)}); err != nil {
+				if err := subscription.SaveSnapshot(stateDirectory, SubscriptionSnapshot{SubscriptionID: "feed", URL: server.URL, FetchedAt: time.Now().Add(-test.snapshotAge)}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -67,7 +74,7 @@ func TestConfiguredSubscriptionSchedule(t *testing.T) {
 	}
 }
 
-func TestConfiguredSubscriptionUpdateDropsOnlyUnreferencedDisappearedNodes(t *testing.T) {
+func TestSubscriptionUpdateWritesOnlyTheNodeStore(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_, _ = writer.Write([]byte("socks://user:pass@new.example:1080#New\n"))
 	}))
@@ -75,97 +82,139 @@ func TestConfiguredSubscriptionUpdateDropsOnlyUnreferencedDisappearedNodes(t *te
 	root := t.TempDir()
 	configPath := filepath.Join(root, "config.json")
 	stateDirectory := filepath.Join(root, "state")
+	store := SavedStore(configPath, stateDirectory)
+	referenced := model.Node{ID: "feed_referenced", Enabled: true, Type: "socks", Server: "referenced.example", ServerPort: 1080, NodeSource: model.NodeSource{SourceSubscription: "feed"}}
+	if err := (subscription.NodeStore{Directory: filepath.Join(stateDirectory, "subscription-nodes")}).Save("feed", []model.Node{referenced}); err != nil {
+		t.Fatal(err)
+	}
 	value := validIntent()
 	value.Subscriptions = []model.Subscription{{ID: "feed", Enabled: true, URL: server.URL}}
-	referenced := model.Node{ID: "feed_referenced", Enabled: true, Type: "socks", Server: "referenced.example", ServerPort: 1080, NodeSource: model.NodeSource{SourceSubscription: "feed"}}
-	unreferenced := model.Node{ID: "feed_unreferenced", Enabled: true, Type: "socks", Server: "unreferenced.example", ServerPort: 1080, NodeSource: model.NodeSource{SourceSubscription: "feed"}}
-	value.Nodes = append(value.Nodes, referenced, unreferenced)
 	value.Routes = append(value.Routes, model.Route{ID: "subscription_route", Enabled: true, Kind: "single", Node: referenced.ID})
-	if _, err := (IntentStore{Path: configPath}).Save(value, ""); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := UpdateConfiguredSubscriptions(context.Background(), server.Client(), configPath, stateDirectory, "feed"); err != nil {
-		t.Fatal(err)
-	}
-	loaded, _, err := (IntentStore{Path: configPath}).Load()
+	revision, err := store.Save(value, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	byID := make(map[string]model.Node, len(loaded.Nodes))
-	for _, node := range loaded.Nodes {
-		byID[node.ID] = node
-	}
-	if !byID[referenced.ID].PinnedStale || byID[unreferenced.ID].ID != "" {
-		t.Fatalf("subscription disappearance lifecycle drifted: %#v", loaded.Nodes)
-	}
-	statuses, err := ReadSubscriptionStatus(configPath, stateDirectory)
-	if err != nil || len(statuses) != 1 || len(statuses[0].Stale) != 1 || len(statuses[0].Stale[0].ReferencedBy) != 1 {
-		t.Fatalf("referenced stale status drifted: %#v %v", statuses, err)
-	}
-}
-
-func TestFailedRefreshKeepsLastSuccessfulSubscriptionStatus(t *testing.T) {
-	var fail atomic.Bool
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		if fail.Load() {
-			http.Error(writer, "temporary", http.StatusServiceUnavailable)
-			return
-		}
-		_, _ = writer.Write([]byte("socks://user:pass@127.0.0.1:1080#Imported\n"))
-	}))
-	defer server.Close()
-	root := t.TempDir()
-	configPath := filepath.Join(root, "config.json")
-	stateDirectory := filepath.Join(root, "state")
-	value := validIntent()
-	value.Subscriptions = []model.Subscription{{ID: "feed", Enabled: true, URL: server.URL}}
-	if _, err := (IntentStore{Path: configPath}).Save(value, ""); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := UpdateConfiguredSubscriptions(context.Background(), server.Client(), configPath, stateDirectory, "feed"); err != nil {
 		t.Fatal(err)
 	}
-	fail.Store(true)
-	if _, err := UpdateConfiguredSubscriptions(context.Background(), server.Client(), configPath, stateDirectory, "feed"); err == nil || err.Error() != "update subscription feed: subscription server returned HTTP 503" {
-		t.Fatalf("unexpected safe update failure: %v", err)
+	config, after, err := store.Load()
+	if err != nil || after != revision || len(config.Nodes) != 0 {
+		t.Fatalf("subscription update changed config.json: %#v %v", config.Nodes, err)
+	}
+	saved, _, err := store.LoadSaved()
+	if err != nil || len(saved.Nodes) != 2 {
+		t.Fatalf("stored nodes were not attached: %#v %v", saved.Nodes, err)
 	}
 	statuses, err := ReadSubscriptionStatus(configPath, stateDirectory)
-	if err != nil || len(statuses) != 1 {
-		t.Fatalf("read status: %#v %v", statuses, err)
+	if err != nil || len(statuses) != 1 || statuses[0].NodeCount != 2 || len(statuses[0].Stale) != 1 || len(statuses[0].Stale[0].ReferencedBy) != 1 {
+		t.Fatalf("referenced stale status drifted: %#v %v", statuses, err)
 	}
-	status := statuses[0]
-	if status.NeverFetched || status.LastSuccess == nil || status.LastFailure == nil || status.LastFailure.At == nil ||
-		status.LastFailure.Summary != "subscription server returned HTTP 503" || status.NodeCount != 1 {
-		t.Fatalf("failed refresh destroyed successful facts: %#v", status)
+
+	list, err := ListSubscriptionNodes(configPath, stateDirectory, "feed")
+	if err != nil || len(list.Subscriptions) != 1 || len(list.Subscriptions[0].Nodes) != 2 {
+		t.Fatalf("unexpected node list: %#v %v", list, err)
+	}
+	if err := SetSubscriptionNodeEnabled(configPath, stateDirectory, "feed", referenced.ID, false); subscription.ErrorPayloadOf(err).ErrorCode != subscription.ErrorNodeStillReferenced {
+		t.Fatalf("disabling a referenced node was not rejected: %v", err)
+	}
+	if err := CleanSubscriptionNode(configPath, stateDirectory, "feed", referenced.ID); subscription.ErrorPayloadOf(err).ErrorCode != subscription.ErrorNodeStillReferenced {
+		t.Fatalf("cleaning a referenced stale node was not rejected: %v", err)
+	}
+	if _, current, _ := store.Load(); current != revision {
+		t.Fatal("node operations changed config.json")
 	}
 }
 
-func TestOneFailingSubscriptionDoesNotBlockOthers(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path == "/broken" {
-			http.Error(writer, "gone", http.StatusServiceUnavailable)
-			return
-		}
-		_, _ = writer.Write([]byte("socks://user:pass@127.0.0.1:1080#Imported\n"))
-	}))
-	defer server.Close()
+func TestSaveRejectsSubscriptionNodesAndDropsDeletedSubscriptionStore(t *testing.T) {
+	root := t.TempDir()
+	stateDirectory := filepath.Join(root, "state")
+	store := SavedStore(filepath.Join(root, "config.json"), stateDirectory)
+	nodes := subscription.NodeStore{Directory: filepath.Join(stateDirectory, "subscription-nodes")}
+	if err := nodes.Save("feed", []model.Node{{ID: "feed_a", Enabled: true, Type: "socks", Server: "a.example", ServerPort: 1080, NodeSource: model.NodeSource{SourceSubscription: "feed"}}}); err != nil {
+		t.Fatal(err)
+	}
+	value := validIntent()
+	value.Subscriptions = []model.Subscription{{ID: "feed", URL: "https://feed.example/"}}
+	if _, err := store.Save(value, ""); err != nil {
+		t.Fatal(err)
+	}
+	copied := value
+	copied.Nodes = []model.Node{{ID: "feed_a", Enabled: true, Type: "socks", Server: "a.example", ServerPort: 1080, NodeSource: model.NodeSource{SourceSubscription: "feed"}}}
+	_, err := store.Save(copied, "")
+	var validationErr ValidationError
+	if !errors.As(err, &validationErr) || validationErr.Validation.Errors[0].Code != "SUBSCRIPTION_NODE_IN_CONFIG" {
+		t.Fatalf("a draft with subscription nodes was saved: %v", err)
+	}
+	value.Routes = append(value.Routes, model.Route{ID: "via_feed", Enabled: true, Kind: "single", Node: "feed_a"})
+	if _, err := store.Save(value, ""); err != nil {
+		t.Fatal(err)
+	}
+	withoutSubscription := value
+	withoutSubscription.Subscriptions = nil
+	if _, err := store.Save(withoutSubscription, ""); !errors.As(err, &validationErr) {
+		t.Fatalf("deleting a subscription whose node is still routed was accepted: %v", err)
+	}
+	value.Routes, value.Subscriptions = validIntent().Routes, nil
+	if _, err := store.Save(value, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(nodes.Path("feed")); !os.IsNotExist(err) {
+		t.Fatalf("a deleted subscription kept its node store file: %v", err)
+	}
+}
+
+func TestMigrateMovesSubscriptionNodesWithoutChangingTheRuntime(t *testing.T) {
 	root := t.TempDir()
 	configPath := filepath.Join(root, "config.json")
 	stateDirectory := filepath.Join(root, "state")
-	value := validIntent()
-	value.Subscriptions = []model.Subscription{
-		{ID: "broken", Enabled: true, URL: server.URL + "/broken", UpdateInterval: "1h"},
-		{ID: "working", Enabled: true, URL: server.URL + "/working", UpdateInterval: "1h"},
+	legacy := validIntent()
+	legacy.Main.SchemaVersion = subscription.LegacySchemaVersion
+	legacy.Main.Enabled = true
+	legacy.Nodes = []model.Node{
+		{ID: "manual", Enabled: true, Type: "socks", Server: "192.0.2.1", ServerPort: 1080},
+		{ID: "feed_b", Enabled: true, Type: "socks", Server: "b.example", ServerPort: 1080, NodeSource: model.NodeSource{SourceSubscription: "feed", SourceFingerprint: "fp-b"}},
+		{ID: "feed_a", Enabled: false, Type: "socks", Server: "a.example", ServerPort: 1080, NodeSource: model.NodeSource{SourceSubscription: "feed", SourceFingerprint: "fp-a", PinnedStale: true}},
 	}
-	if _, err := (IntentStore{Path: configPath}).Save(value, ""); err != nil {
+	legacy.Subscriptions = []model.Subscription{{ID: "feed", Enabled: true, URL: "https://feed.example/"}}
+	legacy.Routes = append(legacy.Routes, model.Route{ID: "via_b", Enabled: true, Kind: "single", Node: "feed_b"})
+	legacy.Rules = append([]model.Rule{{ID: "proxied", Enabled: true, DomainMatch: []string{"domain:example.com"}, DNSProfile: "public", Route: "via_b"}}, legacy.Rules...)
+	var encoded bytes.Buffer
+	if err := model.EncodeJSON(&encoded, legacy); err != nil {
 		t.Fatal(err)
 	}
-	snapshots, err := UpdateConfiguredSubscriptions(context.Background(), server.Client(), configPath, stateDirectory, "")
-	if err == nil || len(snapshots) != 1 || snapshots[0].SubscriptionID != "working" {
-		t.Fatalf("working subscription was held back: %#v %v", snapshots, err)
+	if err := os.WriteFile(configPath, encoded.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	loaded, _, err := (IntentStore{Path: configPath}).Load()
-	if err != nil || len(loaded.Nodes) != len(value.Nodes)+1 {
-		t.Fatalf("working subscription nodes were not saved: %#v %v", loaded.Nodes, err)
+	if !NeedsMigration(configPath) {
+		t.Fatal("schema 9 was not detected")
+	}
+	changed, err := Migrate(configPath, stateDirectory)
+	if err != nil || !changed || NeedsMigration(configPath) {
+		t.Fatalf("migration did not run: %v", err)
+	}
+	store := SavedStore(configPath, stateDirectory)
+	config, _, err := store.Load()
+	if err != nil || config.Main.SchemaVersion != model.SchemaVersion || len(config.Nodes) != 1 || config.Nodes[0].ID != "manual" {
+		t.Fatalf("migrated config.json kept subscription nodes: %#v %v", config, err)
+	}
+	saved, _, err := store.LoadSaved()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validation := Validate(saved); !validation.OK {
+		t.Fatalf("migrated Saved Intent is invalid: %#v", validation.Errors)
+	}
+	compile := func(value model.Intent) string {
+		encoded, _ := json.Marshal(compiler.Compile(value, compiler.Options{Target: NewPlan(value).CompilerTarget()}).SingBox)
+		return string(encoded)
+	}
+	if runtime := compile(saved); runtime != compile(legacy) || !strings.Contains(runtime, "b.example") {
+		t.Fatal("migration changed the compiled sing-box configuration")
+	}
+	if nodes := saved.Nodes[1:]; nodes[0].ID != "feed_b" || nodes[1].ID != "feed_a" || nodes[1].Enabled || !nodes[1].PinnedStale {
+		t.Fatalf("stored nodes lost order or state: %#v", nodes)
+	}
+	if changed, err := Migrate(configPath, stateDirectory); err != nil || changed {
+		t.Fatalf("migration is not idempotent: %v", err)
 	}
 }

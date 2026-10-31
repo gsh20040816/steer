@@ -24,7 +24,7 @@ func TestUsageUsesInstalledProductName(t *testing.T) {
 func TestRunServiceDisabledConfigurationExitsCleanly(t *testing.T) {
 	root := t.TempDir()
 	configPath := filepath.Join(root, "config.json")
-	if _, err := (linuxplatform.IntentStore{Path: configPath}).Save(webTestIntent(), ""); err != nil {
+	if _, err := linuxplatform.SavedStore(configPath, filepath.Join(filepath.Dir(configPath), "state")).Save(webTestIntent(), ""); err != nil {
 		t.Fatal(err)
 	}
 	nftPath := filepath.Join(root, "nft")

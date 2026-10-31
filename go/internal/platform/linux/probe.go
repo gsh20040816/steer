@@ -25,7 +25,7 @@ type TestReport = probe.Report
 type TestResult = probe.Result
 
 func ProbeOverviewWithState(ctx context.Context, configPath, runDirectory, stateDirectory, kind string, client *http.Client) (TestReport, error) {
-	intent, err := readProbeIntent(configPath)
+	intent, err := readProbeIntent(configPath, stateDirectory)
 	if err != nil {
 		return TestReport{}, recordProbeFailure(stateDirectory, "overview", "", kind, err, probe.Identity{})
 	}
@@ -65,7 +65,7 @@ func ProbeOverviewWithState(ctx context.Context, configPath, runDirectory, state
 }
 
 func SpeedTestNode(ctx context.Context, configPath, stateDirectory, singBoxPath, nodeID string, download bool) (TestReport, error) {
-	value, err := readProbeIntent(configPath)
+	value, err := readProbeIntent(configPath, stateDirectory)
 	if err != nil {
 		return TestReport{}, recordProbeFailure(stateDirectory, "nodes", nodeID, probeKind(download), err, probe.Identity{})
 	}
@@ -99,7 +99,7 @@ func SpeedTestNode(ctx context.Context, configPath, stateDirectory, singBoxPath,
 }
 
 func SpeedTestRoute(ctx context.Context, configPath, stateDirectory, singBoxPath, routeID string, download bool) (TestReport, error) {
-	value, err := readProbeIntent(configPath)
+	value, err := readProbeIntent(configPath, stateDirectory)
 	if err != nil {
 		return TestReport{}, recordProbeFailure(stateDirectory, "routes", routeID, probeKind(download), err, probe.Identity{})
 	}
@@ -245,8 +245,8 @@ func waitTemporaryProbeReady(ctx context.Context, port int) error {
 	}
 }
 
-func readProbeIntent(path string) (model.Intent, error) {
-	value, _, err := (IntentStore{Path: path}).Load()
+func readProbeIntent(path, stateDirectory string) (model.Intent, error) {
+	value, _, err := SavedStore(path, stateDirectory).LoadSaved()
 	if err != nil {
 		return model.Intent{}, err
 	}

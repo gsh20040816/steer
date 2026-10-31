@@ -18,7 +18,7 @@ func TestReadDiagnosticsInspectsCurrentGenerationDNSCaptureArtifacts(t *testing.
 	if err := os.WriteFile(filepath.Join(activeDirectory, "firewall.nft"), []byte(RenderFirewall(NewPlan(value))), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (IntentStore{Path: configPath}).Save(value, ""); err != nil {
+	if _, err := SavedStore(configPath, filepath.Join(filepath.Dir(configPath), "state")).Save(value, ""); err != nil {
 		t.Fatal(err)
 	}
 

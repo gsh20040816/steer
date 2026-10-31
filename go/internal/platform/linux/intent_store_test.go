@@ -23,7 +23,7 @@ func validIntent() model.Intent {
 
 func TestIntentStoreRoundTripAndRevisionConflict(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	store := IntentStore{Path: path}
+	store := SavedStore(path, filepath.Join(filepath.Dir(path), "state"))
 	value := validIntent()
 	rev, err := store.Save(value, "")
 	if err != nil {
@@ -47,7 +47,7 @@ func TestIntentStoreRoundTripAndRevisionConflict(t *testing.T) {
 
 func TestIntentStorePreservesPrivateKeyBytes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	store := IntentStore{Path: path}
+	store := SavedStore(path, filepath.Join(filepath.Dir(path), "state"))
 	value := validIntent()
 	privateKey := "-----BEGIN OPENSSH PRIVATE KEY-----\r\nline one  \r\n\r\nline two\r\n-----END OPENSSH PRIVATE KEY-----\r\n"
 	value.Nodes = []model.Node{{

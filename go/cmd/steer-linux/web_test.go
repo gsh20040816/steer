@@ -80,7 +80,7 @@ func TestWebConfigRequiresBearerAndIfMatch(t *testing.T) {
 	if err := os.WriteFile(webConfigPath, []byte(`{"schema_version":1,"token":"`+token+`"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	store := linuxplatform.IntentStore{Path: configPath}
+	store := linuxplatform.SavedStore(configPath, filepath.Join(filepath.Dir(configPath), "state"))
 	if _, err := store.Save(webTestIntent(), ""); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestWebApplySavedPersistsFailureAndClearsPendingOnSuccess(t *testing.T) {
 	root := t.TempDir()
 	configPath := filepath.Join(root, "config.json")
 	runDirectory := filepath.Join(root, "run")
-	store := linuxplatform.IntentStore{Path: configPath}
+	store := linuxplatform.SavedStore(configPath, filepath.Join(filepath.Dir(configPath), "state"))
 	if _, err := store.Save(webTestIntent(), ""); err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestWebOverviewMarksEnabledSavedConfigPendingWithoutCurrent(t *testing.T) {
 	value := webTestIntent()
 	value.Main.Enabled = true
 	configPath := filepath.Join(root, "config.json")
-	if _, err := (linuxplatform.IntentStore{Path: configPath}).Save(value, ""); err != nil {
+	if _, err := linuxplatform.SavedStore(configPath, filepath.Join(filepath.Dir(configPath), "state")).Save(value, ""); err != nil {
 		t.Fatal(err)
 	}
 	app := webApplication{ConfigPath: configPath, RunDirectory: filepath.Join(root, "run"), StateDirectory: filepath.Join(root, "state"), SeedDirectory: filepath.Join(root, "seed")}
@@ -242,7 +242,8 @@ func TestWebConfigRejectsUnknownGeoSelectorWithoutSaving(t *testing.T) {
 	root := t.TempDir()
 	seedDirectory := writeWebSeed(t, root)
 	configPath := filepath.Join(root, "config.json")
-	store := linuxplatform.IntentStore{Path: configPath, GeoDataDirectory: seedDirectory}
+	store := linuxplatform.SavedStore(configPath, filepath.Join(filepath.Dir(configPath), "state"))
+	store.GeoDataDirectory = seedDirectory
 	base := webTestIntent()
 	revision, err := store.Save(base, "")
 	if err != nil {
@@ -294,7 +295,8 @@ func TestWebConfigReturnsStructuredWarningsAfterSuccessfulSave(t *testing.T) {
 	root := t.TempDir()
 	seedDirectory := writeWebSeed(t, root)
 	configPath := filepath.Join(root, "config.json")
-	store := linuxplatform.IntentStore{Path: configPath, GeoDataDirectory: seedDirectory}
+	store := linuxplatform.SavedStore(configPath, filepath.Join(filepath.Dir(configPath), "state"))
+	store.GeoDataDirectory = seedDirectory
 	base := webTestIntent()
 	revision, err := store.Save(base, "")
 	if err != nil {
@@ -429,7 +431,7 @@ func TestWebProbeResultsReturnOnlySafeLatestDTOAndDiagnosticsAggregateLogs(t *te
 	root := t.TempDir()
 	configPath := filepath.Join(root, "config.json")
 	stateDirectory := filepath.Join(root, "state")
-	if _, err := (linuxplatform.IntentStore{Path: configPath}).Save(webTestIntent(), ""); err != nil {
+	if _, err := linuxplatform.SavedStore(configPath, filepath.Join(filepath.Dir(configPath), "state")).Save(webTestIntent(), ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := probe.SaveReport(stateDirectory, probe.Report{
@@ -480,7 +482,7 @@ func TestWebProbeResultsReturnOnlySafeLatestDTOAndDiagnosticsAggregateLogs(t *te
 func TestWebProbeFailureImmediatelyReturnsPersistedLatestDTO(t *testing.T) {
 	root := t.TempDir()
 	configPath := filepath.Join(root, "config.json")
-	if _, err := (linuxplatform.IntentStore{Path: configPath}).Save(webTestIntent(), ""); err != nil {
+	if _, err := linuxplatform.SavedStore(configPath, filepath.Join(filepath.Dir(configPath), "state")).Save(webTestIntent(), ""); err != nil {
 		t.Fatal(err)
 	}
 	app := webApplication{ConfigPath: configPath, RunDirectory: filepath.Join(root, "run"), StateDirectory: filepath.Join(root, "state")}
@@ -629,7 +631,7 @@ func writeWebSeed(t *testing.T, root string) string {
 func TestWebEnabledUsesLatestSavedAndPreservesPartialFailure(t *testing.T) {
 	for _, failStop := range []bool{false, true} {
 		root := t.TempDir()
-		store := linuxplatform.IntentStore{Path: filepath.Join(root, "config.json")}
+		store := linuxplatform.SavedStore(filepath.Join(root, "config.json"), filepath.Join(root, "state"))
 		value := webTestIntent()
 		value.Main.Enabled = true
 		oldRevision, err := store.Save(value, "")
@@ -672,4 +674,124 @@ func TestWebEnabledUsesLatestSavedAndPreservesPartialFailure(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestWebSubscriptionNodesAreReadAndToggledOutsideTheConfiguration(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "config.json")
+	stateDirectory := filepath.Join(root, "state")
+	used := model.Node{ID: "feed_used", Enabled: true, Type: "socks", Server: "used.example", ServerPort: 1080, NodeSource: model.NodeSource{SourceSubscription: "feed", SourceFingerprint: "fp-used"}}
+	free := model.Node{ID: "feed_free", Enabled: true, Type: "socks", Server: "free.example", ServerPort: 1080, NodeSource: model.NodeSource{SourceSubscription: "feed", SourceFingerprint: "fp-free"}}
+	nodes := subscription.NodeStore{Directory: subscription.NodeDirectory(stateDirectory)}
+	if err := nodes.Save("feed", []model.Node{used, free}); err != nil {
+		t.Fatal(err)
+	}
+	value := webTestIntent()
+	value.Subscriptions = []model.Subscription{{ID: "feed", Enabled: true, URL: "https://feed.example/"}}
+	value.Routes = append(value.Routes, model.Route{ID: "via_used", Enabled: true, Kind: "single", Node: used.ID})
+	store := linuxplatform.SavedStore(configPath, stateDirectory)
+	if _, err := store.Save(value, ""); err != nil {
+		t.Fatal(err)
+	}
+	app := webApplication{ConfigPath: configPath, RunDirectory: filepath.Join(root, "run"), StateDirectory: stateDirectory}
+	serve := func(method, path, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		response := httptest.NewRecorder()
+		if strings.HasPrefix(path, "/api/v1/subscriptions/") {
+			app.handleSubscriptions(response, request)
+		} else {
+			app.handleSubscriptionNodes(response, request)
+		}
+		return response
+	}
+
+	response := serve(http.MethodGet, "/api/v1/subscription-nodes", "")
+	var list struct {
+		Subscriptions []struct {
+			ID    string           `json:"id"`
+			Nodes []map[string]any `json:"nodes"`
+		} `json:"subscriptions"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &list); err != nil || response.Code != http.StatusOK ||
+		len(list.Subscriptions) != 1 || len(list.Subscriptions[0].Nodes) != 2 {
+		t.Fatalf("unexpected node list: %d %s", response.Code, response.Body.String())
+	}
+	if copy, _ := list.Subscriptions[0].Nodes[0]["manual_copy"].(map[string]any); copy == nil || copy["id"] != nil || copy["source_subscription"] != nil || copy["enabled"] != true {
+		t.Fatalf("manual_copy does not follow the shared rule: %v", list.Subscriptions[0].Nodes[0])
+	}
+
+	response = serve(http.MethodPut, "/api/v1/subscriptions/feed/nodes/feed_used", `{"enabled":false}`)
+	var failure subscription.ErrorPayload
+	if err := json.Unmarshal(response.Body.Bytes(), &failure); err != nil || response.Code != http.StatusUnprocessableEntity ||
+		failure.ErrorCode != subscription.ErrorNodeStillReferenced || failure.Validation == nil {
+		t.Fatalf("disabling a referenced node was not rejected: %d %s", response.Code, response.Body.String())
+	}
+	if response := serve(http.MethodPut, "/api/v1/subscriptions/feed/nodes/missing", `{"enabled":false}`); response.Code != http.StatusNotFound {
+		t.Fatalf("unknown node returned %d", response.Code)
+	}
+	if response := serve(http.MethodPut, "/api/v1/subscriptions/feed/nodes/feed_free", `{"enabled":"no"}`); response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid body returned %d", response.Code)
+	}
+	_, revision, _ := store.Load()
+	response = serve(http.MethodPut, "/api/v1/subscriptions/feed/nodes/feed_free", `{"enabled":false}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"manual_copy"`) {
+		t.Fatalf("toggle failed: %d %s", response.Code, response.Body.String())
+	}
+	if stored, _ := nodes.Load("feed"); stored[1].Enabled {
+		t.Fatal("toggle did not reach the node store")
+	}
+	if _, after, _ := store.Load(); after != revision {
+		t.Fatal("toggling a subscription node changed config.json")
+	}
+
+	// GET config has no subscription nodes, and drafts containing them are rejected.
+	config := httptest.NewRecorder()
+	app.handleConfig(config, httptest.NewRequest(http.MethodGet, "/api/v1/config", nil))
+	if strings.Contains(config.Body.String(), "used.example") {
+		t.Fatalf("config read returned subscription nodes: %s", config.Body.String())
+	}
+	draft := value
+	draft.Nodes = []model.Node{used}
+	encoded, _ := json.Marshal(map[string]any{"intent": draft})
+	validate := httptest.NewRecorder()
+	app.handleValidate(validate, httptest.NewRequest(http.MethodPost, "/api/v1/validate", bytes.NewReader(encoded)))
+	if !strings.Contains(validate.Body.String(), "SUBSCRIPTION_NODE_IN_CONFIG") {
+		t.Fatalf("validate accepted a draft with subscription nodes: %s", validate.Body.String())
+	}
+	encoded, _ = json.Marshal(map[string]any{"intent": value})
+	validate = httptest.NewRecorder()
+	app.handleValidate(validate, httptest.NewRequest(http.MethodPost, "/api/v1/validate", bytes.NewReader(encoded)))
+	if !strings.Contains(validate.Body.String(), `"ok":true`) {
+		t.Fatalf("validate did not attach the stored nodes: %s", validate.Body.String())
+	}
+	save := httptest.NewRecorder()
+	saveRequest := httptest.NewRequest(http.MethodPut, "/api/v1/config", bytes.NewReader(mustJSON(t, map[string]any{"intent": draft})))
+	saveRequest.Header.Set("If-Match", revision)
+	app.handleConfig(save, saveRequest)
+	if save.Code != http.StatusUnprocessableEntity || !strings.Contains(save.Body.String(), "SUBSCRIPTION_NODE_IN_CONFIG") {
+		t.Fatalf("save accepted a draft with subscription nodes: %d %s", save.Code, save.Body.String())
+	}
+
+	// Deleting the subscription (after its route) removes its stored nodes.
+	removed := webTestIntent()
+	save = httptest.NewRecorder()
+	saveRequest = httptest.NewRequest(http.MethodPut, "/api/v1/config", bytes.NewReader(mustJSON(t, map[string]any{"intent": removed})))
+	saveRequest.Header.Set("If-Match", revision)
+	app.handleConfig(save, saveRequest)
+	if save.Code != http.StatusOK {
+		t.Fatalf("save failed: %d %s", save.Code, save.Body.String())
+	}
+	if _, err := os.Stat(nodes.Path("feed")); !os.IsNotExist(err) {
+		t.Fatalf("deleted subscription kept its node store file: %v", err)
+	}
+}
+
+func mustJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
 }

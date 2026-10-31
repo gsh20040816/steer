@@ -25,8 +25,8 @@ import (
 type TestReport = probe.Report
 type TestResult = probe.Result
 
-func ProbeOverview(ctx context.Context, configPath, runDirectory, stateDirectory, kind string, client *http.Client) (TestReport, error) {
-	currentIntent, err := readTestIntent(configPath, "overview test")
+func ProbeOverview(ctx context.Context, configPath, nodeDirectory, runDirectory, stateDirectory, kind string, client *http.Client) (TestReport, error) {
+	currentIntent, err := readTestIntent(configPath, nodeDirectory, "overview test")
 	if err != nil {
 		return TestReport{}, recordTestFailure(stateDirectory, "overview", "", kind, err, probe.Identity{})
 	}
@@ -65,8 +65,8 @@ func ProbeOverview(ctx context.Context, configPath, runDirectory, stateDirectory
 	return report, nil
 }
 
-func SpeedTestNode(ctx context.Context, configPath, stateDirectory, singBoxPath, nodeID string, download bool) (TestReport, error) {
-	value, err := readTestIntent(configPath, "node test")
+func SpeedTestNode(ctx context.Context, configPath, nodeDirectory, stateDirectory, singBoxPath, nodeID string, download bool) (TestReport, error) {
+	value, err := readTestIntent(configPath, nodeDirectory, "node test")
 	if err != nil {
 		return TestReport{}, recordTestFailure(stateDirectory, "nodes", nodeID, testKind(download), err, probe.Identity{})
 	}
@@ -99,8 +99,8 @@ func SpeedTestNode(ctx context.Context, configPath, stateDirectory, singBoxPath,
 	return report, nil
 }
 
-func SpeedTestRoute(ctx context.Context, configPath, stateDirectory, singBoxPath, routeID string, download bool) (TestReport, error) {
-	value, err := readTestIntent(configPath, "route test")
+func SpeedTestRoute(ctx context.Context, configPath, nodeDirectory, stateDirectory, singBoxPath, routeID string, download bool) (TestReport, error) {
+	value, err := readTestIntent(configPath, nodeDirectory, "route test")
 	if err != nil {
 		return TestReport{}, recordTestFailure(stateDirectory, "routes", routeID, testKind(download), err, probe.Identity{})
 	}
@@ -242,14 +242,10 @@ func waitTemporaryProbeReady(ctx context.Context, port int) error {
 	}
 }
 
-func readTestIntent(configPath, operation string) (model.Intent, error) {
-	config, err := os.ReadFile(configPath)
+func readTestIntent(configPath, nodeDirectory, operation string) (model.Intent, error) {
+	value, err := LoadSaved(configPath, nodeDirectory)
 	if err != nil {
-		return model.Intent{}, fmt.Errorf("read UCI for %s: %w", operation, err)
-	}
-	value, err := DecodeBytes(config)
-	if err != nil {
-		return model.Intent{}, err
+		return model.Intent{}, fmt.Errorf("read Saved Intent for %s: %w", operation, err)
 	}
 	validation := Validate(value)
 	if !validation.OK {

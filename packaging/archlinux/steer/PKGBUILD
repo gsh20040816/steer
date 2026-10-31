@@ -23,6 +23,7 @@ backup=(
   'etc/steer/config.json'
   'etc/steer/web.json'
 )
+install=steer.install
 source=(
   "$pkgname::git+$url.git#commit=$_commit"
   'steer-geodata.tar.zst::https://gsh20040816.github.io/steer/geodata/latest/steer-geodata.tar.zst'
