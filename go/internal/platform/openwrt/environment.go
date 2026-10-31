@@ -68,9 +68,6 @@ func withCommandTimeout(ctx context.Context, timeout time.Duration) (context.Con
 }
 
 func atomicWrite(path string, content []byte) error {
-	if path == "" {
-		return fmt.Errorf("atomic write path is empty")
-	}
 	directory := filepath.Dir(path)
 	info, err := os.Stat(path)
 	mode := os.FileMode(0o600)

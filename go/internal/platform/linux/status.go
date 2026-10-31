@@ -36,14 +36,14 @@ func WaitCurrentHealthy(ctx context.Context, runner Runner, options BackendOptio
 	if timeout > 0 {
 		options.HealthTimeout = timeout
 	}
-	return waitHealthy(ctx, runner, plan, options, filepath.Join(options.RunDirectory, "current"))
+	return waitHealthy(ctx, runner, plan, options)
 }
 
-func waitHealthy(ctx context.Context, runner Runner, plan Plan, options BackendOptions, expectedDirectory string) error {
+func waitHealthy(ctx context.Context, runner Runner, plan Plan, options BackendOptions) error {
 	deadline := time.Now().Add(options.HealthTimeout)
 	var lastErr error
 	for {
-		if err := checkHealthOnce(ctx, runner, plan, options, expectedDirectory); err == nil {
+		if err := checkHealthOnce(ctx, runner, plan, options); err == nil {
 			return nil
 		} else {
 			lastErr = err
@@ -59,7 +59,7 @@ func waitHealthy(ctx context.Context, runner Runner, plan Plan, options BackendO
 	}
 }
 
-func checkHealthOnce(ctx context.Context, runner Runner, plan Plan, options BackendOptions, expectedDirectory string) error {
+func checkHealthOnce(ctx context.Context, runner Runner, plan Plan, options BackendOptions) error {
 	output, err := runner.Output(ctx, options.SystemctlBinary, "show", options.ServiceName, "--property=ActiveState", "--property=MainPID")
 	if err != nil {
 		return err
@@ -81,23 +81,7 @@ func checkHealthOnce(ctx context.Context, runner Runner, plan Plan, options Back
 	if _, err := runner.Output(ctx, options.NFTBinary, "-j", "list", "table", "inet", "steer"); err != nil {
 		return fmt.Errorf("Steer nftables DNS shim is not ready: %w", err)
 	}
-	if err := options.CheckListeners([]int{plan.Resources.DNSPort, plan.Resources.DNSPort6}); err != nil {
-		return err
-	}
-	if expectedDirectory != "" {
-		currentInfo, err := os.Stat(filepath.Join(options.RunDirectory, "current"))
-		if err != nil {
-			return fmt.Errorf("stat current generation: %w", err)
-		}
-		expectedInfo, err := os.Stat(expectedDirectory)
-		if err != nil {
-			return fmt.Errorf("stat expected generation: %w", err)
-		}
-		if !os.SameFile(currentInfo, expectedInfo) {
-			return fmt.Errorf("active generation does not match the candidate")
-		}
-	}
-	return nil
+	return options.CheckListeners([]int{plan.Resources.DNSPort, plan.Resources.DNSPort6})
 }
 
 func checkListenerPorts(ports []int) error {
@@ -140,20 +124,18 @@ func ReadStatus(ctx context.Context, runner Runner, options BackendOptions) Stat
 	status := Status{}
 	if file, err := os.Open(filepath.Join(options.RunDirectory, "last-apply.json")); err == nil {
 		var record coreapply.Record
-		if json.NewDecoder(file).Decode(&record) == nil && record.Sequence != "" {
+		if json.NewDecoder(file).Decode(&record) == nil {
 			status.LastApply = &record
 		}
 		file.Close()
 	}
-	currentDirectory := ""
-	if generationID, resolved, current, compiled, err := readCurrentIdentity(options); err == nil && current.Main.Enabled {
+	if generationID, _, current, compiled, err := readCurrentIdentity(options); err == nil && current.Main.Enabled {
 		status.Generation = generationID
 		status.IntentDigest = compiled.IntentDigest
 		status.RuntimeDigest = compiled.RuntimeDigest
-		currentDirectory = resolved
 	}
 	plan, err := readCurrentPlan(options.RunDirectory)
-	if status.Generation != "" && err == nil && checkHealthOnce(ctx, runner, plan, options, currentDirectory) == nil {
+	if status.Generation != "" && err == nil && checkHealthOnce(ctx, runner, plan, options) == nil {
 		status.Healthy = true
 	}
 	return status

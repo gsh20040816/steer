@@ -117,10 +117,6 @@ func SpeedTestRoute(ctx context.Context, configPath, stateDirectory, singBoxPath
 		return TestReport{}, recordProbeFailure(stateDirectory, "routes", routeID, probeKind(download), err, identity)
 	}
 	outbounds := compiler.CompileRouteChainOutbounds(value, route.ID)
-	if len(outbounds) == 0 {
-		err := fmt.Errorf("compiled route test has no route-chain outbounds")
-		return TestReport{}, recordProbeFailure(stateDirectory, "routes", routeID, probeKind(download), err, identity)
-	}
 	target, kind := value.Main.ProbeProxyURL, "connect"
 	if download {
 		target, kind = value.Main.SpeedtestProxyURL, "download"
@@ -151,10 +147,7 @@ func runTemporaryProbe(ctx context.Context, singBoxPath string, bootstrap model.
 		return TestReport{}, fmt.Errorf("create test directory: %w", err)
 	}
 	defer os.RemoveAll(temporary)
-	config, err := temporaryProbeConfig(bootstrap, outbounds, finalTag, port)
-	if err != nil {
-		return TestReport{}, err
-	}
+	config := temporaryProbeConfig(bootstrap, outbounds, finalTag, port)
 	configPath := filepath.Join(temporary, "sing-box.json")
 	encoded, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
@@ -195,13 +188,12 @@ func runTemporaryProbe(ctx context.Context, singBoxPath string, bootstrap model.
 	return report, nil
 }
 
-func temporaryProbeConfig(bootstrap model.Bootstrap, outbounds []any, finalTag string, port int) (map[string]any, error) {
+// temporaryProbeConfig marks every compiled outbound, which the compiler
+// always produces as map[string]any.
+func temporaryProbeConfig(bootstrap model.Bootstrap, outbounds []any, finalTag string, port int) map[string]any {
 	marked := make([]any, 0, len(outbounds))
 	for _, value := range outbounds {
-		outbound, ok := value.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("temporary probe outbound has unexpected type %T", value)
-		}
+		outbound := value.(map[string]any)
 		copy := make(map[string]any, len(outbound)+1)
 		for key, field := range outbound {
 			copy[key] = field
@@ -223,7 +215,7 @@ func temporaryProbeConfig(bootstrap model.Bootstrap, outbounds []any, finalTag s
 		"outbounds": marked,
 		"route": map[string]any{"final": finalTag, "auto_detect_interface": true,
 			"default_domain_resolver": map[string]any{"server": compiler.BootstrapDNSServerTag, "strategy": bootstrap.Strategy}},
-	}, nil
+	}
 }
 
 func waitTemporaryProbeReady(ctx context.Context, port int) error {

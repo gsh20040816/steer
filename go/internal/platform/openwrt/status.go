@@ -27,7 +27,7 @@ func ReadStatus(ctx context.Context, runner Runner, runDirectory, nftBinary stri
 	status := Status{}
 	if file, err := os.Open(filepath.Join(runDirectory, "last-apply.json")); err == nil {
 		var record coreapply.Record
-		if json.NewDecoder(file).Decode(&record) == nil && record.Sequence != "" {
+		if json.NewDecoder(file).Decode(&record) == nil {
 			status.LastApply = &record
 		}
 		file.Close()

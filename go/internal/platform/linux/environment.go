@@ -62,9 +62,6 @@ func newManagedCommand(ctx context.Context, name string, args ...string) *exec.C
 }
 
 func atomicWrite(path string, content []byte) error {
-	if path == "" {
-		return fmt.Errorf("atomic write path is empty")
-	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}

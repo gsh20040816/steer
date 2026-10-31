@@ -94,11 +94,8 @@ func Parse(r io.Reader) (Document, error) {
 		}
 		statement.WriteString(scanner.Text())
 		tokens, err := splitLine(statement.String())
-		if errors.Is(err, errUnterminatedValue) {
-			continue
-		}
 		if err != nil {
-			return Document{}, fmt.Errorf("UCI line %d: %w", statementLine, err)
+			continue // an unterminated value continues on the next line
 		}
 		if err := process(tokens, statementLine); err != nil {
 			return Document{}, err
@@ -196,11 +193,8 @@ func SetEnabled(content string, enabled bool) (string, error) {
 		statement.WriteString(line)
 		offset += len(line)
 		tokens, err := splitLine(statement.String())
-		if errors.Is(err, errUnterminatedValue) {
-			continue
-		}
 		if err != nil {
-			return "", err
+			continue // an unterminated value continues on the next line
 		}
 		if len(tokens) > 0 && tokens[0] == "config" {
 			inMain = len(tokens) == 3 && tokens[1] == "steer" && tokens[2] == "main"

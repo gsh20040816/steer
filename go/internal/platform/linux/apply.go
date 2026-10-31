@@ -18,7 +18,7 @@ var runtimeFiles = []generation.RuntimeFile{{Name: "platform.json"}, {Name: "fir
 func (backend *Backend) Activate(ctx context.Context, candidate generation.Candidate) (bool, error) {
 	current := filepath.Join(backend.options.RunDirectory, "current")
 	if generation.Unchanged(ctx, current, candidate, runtimeFiles, func(ctx context.Context) error {
-		return checkHealthOnce(ctx, backend.runner, backend.plan, backend.options, "")
+		return checkHealthOnce(ctx, backend.runner, backend.plan, backend.options)
 	}) {
 		return false, generation.PublishLink(backend.options.RunDirectory, candidate)
 	}
@@ -39,10 +39,7 @@ func (backend *Backend) ActivateForServiceStart(ctx context.Context, candidate g
 }
 
 func (backend *Backend) Healthy(ctx context.Context, candidate generation.Candidate) error {
-	if err := waitHealthy(ctx, backend.runner, backend.plan, backend.options, candidate.Directory); err != nil {
-		return err
-	}
-	return nil
+	return waitHealthy(ctx, backend.runner, backend.plan, backend.options)
 }
 
 func (backend *Backend) Finalize(_ context.Context, candidate generation.Candidate) error {

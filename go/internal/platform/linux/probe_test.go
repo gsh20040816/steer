@@ -53,10 +53,7 @@ func TestProbeOverviewUsesSavedIntentWithoutActiveGeneration(t *testing.T) {
 
 func TestTemporaryProbePreservesBootstrapAndMarksEveryDialSocket(t *testing.T) {
 	bootstrap := model.Bootstrap{Protocol: "udp", Server: "1.1.1.1", ServerPort: 53, Strategy: "prefer_ipv4"}
-	config, err := temporaryProbeConfig(bootstrap, []any{map[string]any{"type": "direct", "tag": "route"}}, "route", 12345)
-	if err != nil {
-		t.Fatal(err)
-	}
+	config := temporaryProbeConfig(bootstrap, []any{map[string]any{"type": "direct", "tag": "route"}}, "route", 12345)
 	outbound := config["outbounds"].([]any)[0].(map[string]any)
 	if outbound["routing_mark"] != AutoRedirectOutputMark {
 		t.Fatalf("temporary outbound is not bypass-marked: %#v", outbound)
@@ -90,10 +87,7 @@ func TestTemporaryProbeResolvesNodeDomainStrategyThroughBootstrap(t *testing.T) 
 		"node":  {compiler.CompileNodeOutbound(value.Nodes[1])},
 		"route": compiler.CompileRouteChainOutbounds(value, "osa"),
 	} {
-		config, err := temporaryProbeConfig(bootstrap, outbounds, "probe", 12345)
-		if err != nil {
-			t.Fatal(err)
-		}
+		config := temporaryProbeConfig(bootstrap, outbounds, "probe", 12345)
 		servers := map[string]bool{}
 		for _, raw := range config["dns"].(map[string]any)["servers"].([]any) {
 			servers[raw.(map[string]any)["tag"].(string)] = true

@@ -112,7 +112,7 @@ func (backend *Backend) ReadStatus(ctx context.Context) Status {
 	status := DefaultStatus()
 	if file, err := os.Open(filepath.Join(backend.options.RunDirectory, "last-apply.json")); err == nil {
 		var record coreapply.Record
-		if json.NewDecoder(file).Decode(&record) == nil && record.Sequence != "" {
+		if json.NewDecoder(file).Decode(&record) == nil {
 			status.LastApply = &record
 		}
 		file.Close()

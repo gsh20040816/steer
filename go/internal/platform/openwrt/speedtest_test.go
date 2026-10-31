@@ -136,10 +136,7 @@ func TestReadDiagnosticsInspectsCurrentGenerationDNSCaptureArtifacts(t *testing.
 func TestTemporaryProbeConfigPreservesBootstrapAndMarksDialSockets(t *testing.T) {
 	original := map[string]any{"type": "socks", "tag": "route-proxy", "server": "192.0.2.1", "server_port": 1080}
 	bootstrap := model.Bootstrap{Protocol: "udp", Server: "1.1.1.1", ServerPort: 53, Strategy: "prefer_ipv4"}
-	config, err := temporaryProbeConfig(bootstrap, []any{original}, "route-proxy", 12345)
-	if err != nil {
-		t.Fatal(err)
-	}
+	config := temporaryProbeConfig(bootstrap, []any{original}, "route-proxy", 12345)
 	if _, exists := original["routing_mark"]; exists {
 		t.Fatal("temporary probe mutated compiler output")
 	}
@@ -178,10 +175,7 @@ func TestTemporaryProbeResolvesNodeDomainStrategyThroughBootstrap(t *testing.T) 
 		"node":  {compiler.CompileNodeOutbound(value.Nodes[1])},
 		"route": compiler.CompileRouteChainOutbounds(value, "osa"),
 	} {
-		config, err := temporaryProbeConfig(bootstrap, outbounds, "probe", 12345)
-		if err != nil {
-			t.Fatal(err)
-		}
+		config := temporaryProbeConfig(bootstrap, outbounds, "probe", 12345)
 		servers := map[string]bool{}
 		for _, raw := range config["dns"].(map[string]any)["servers"].([]any) {
 			servers[raw.(map[string]any)["tag"].(string)] = true
