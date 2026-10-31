@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
 	model "github.com/gsh20040816/steer/go/internal/intent"
+	"github.com/gsh20040816/steer/go/internal/subscription"
 )
 
 func TestContractCoversEveryNodeType(t *testing.T) {
@@ -303,6 +305,42 @@ func TestSubscriptionNodeAndApplyResultContractsMatchTheBackend(t *testing.T) {
 	}
 	if contract.SubscriptionNodes.Actions["copy_to_manual"].ZhCN != "复制到我的节点" {
 		t.Fatal("copy action wording drifted")
+	}
+	nodes := contract.SubscriptionNodes
+	codes := append([]string(nil), nodes.ErrorCodes...)
+	texts := []string{}
+	for code := range nodes.Errors {
+		texts = append(texts, code)
+	}
+	sort.Strings(codes)
+	sort.Strings(texts)
+	if !reflect.DeepEqual(codes, texts) {
+		t.Fatalf("every subscription node error code needs exactly one shared text: codes %v, texts %v", codes, texts)
+	}
+	for owner, values := range map[string]map[string]UIText{"errors": nodes.Errors, "validation_issues": nodes.ValidationIssues, "messages": nodes.Messages} {
+		for key, text := range values {
+			if strings.TrimSpace(text.Label) == "" || text.ZhCN == "" {
+				t.Fatalf("subscription_nodes.%s.%s has no shared wording", owner, key)
+			}
+			mentionsRoutes := strings.Contains(text.Label, nodes.RoutesPlaceholder)
+			if mentionsRoutes != strings.Contains(text.ZhCN, nodes.RoutesPlaceholder) || mentionsRoutes != (key == subscription.ErrorNodeStillReferenced) {
+				t.Fatalf("subscription_nodes.%s.%s uses the routes placeholder inconsistently: %#v", owner, key, text)
+			}
+		}
+	}
+	if nodes.RoutesPlaceholder != "{routes}" || nodes.Errors[subscription.ErrorNodeStillReferenced].ZhCN != "仍有路由在使用这个节点（{routes}），请先修改这些路由" ||
+		nodes.Messages["read_only_note"].ZhCN != "订阅节点只读，复制到我的节点后可以编辑" {
+		t.Fatalf("subscription node wording drifted: %#v", nodes)
+	}
+	for _, key := range []string{"read_only_note", "load_failed", "empty_group", "stale_marker", "cleaned", "list_separator"} {
+		if _, exists := nodes.Messages[key]; !exists {
+			t.Fatalf("subscription_nodes.messages.%s is missing", key)
+		}
+	}
+	config := model.Intent{Nodes: []model.Node{{ID: "copied", NodeSource: model.NodeSource{SourceSubscription: "feed"}}}}
+	issues := model.ConfigNodeIssues(config)
+	if len(issues) != 1 || nodes.ValidationIssues[issues[0].Code].ZhCN == "" || len(nodes.ValidationIssues) != 1 {
+		t.Fatalf("validation issue texts do not match the backend: %#v / %#v", issues, nodes.ValidationIssues)
 	}
 	encoded, err := json.Marshal(map[string]any{"ok": true, "activated": true, "restarted": false})
 	if err != nil {

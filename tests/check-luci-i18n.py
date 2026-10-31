@@ -124,6 +124,29 @@ unlocalized_required = sorted(
     if translations.get(key) != expected
 )
 
+
+
+def collect_shared_texts(value) -> list[tuple[str, str]]:
+    """UI texts shared by the three frontends carry the LuCI msgid and zh_cn."""
+    texts = []
+    if isinstance(value, dict):
+        if isinstance(value.get("label"), str) and isinstance(value.get("zh_cn"), str):
+            texts.append((value["label"], value["zh_cn"]))
+        for child in value.values():
+            texts.extend(collect_shared_texts(child))
+    elif isinstance(value, list):
+        for child in value:
+            texts.extend(collect_shared_texts(child))
+    return texts
+
+
+# LuCI must show exactly the wording the Linux web console and macOS app use.
+drifted_shared = sorted(
+    f"{label!r}: {translations.get(label)!r} != {zh_cn!r}"
+    for label, zh_cn in collect_shared_texts(ui_spec)
+    if translations.get(label) != zh_cn
+)
+
 if missing:
     fail("missing translations:\n" + "\n".join(missing))
 if untranslated:
@@ -134,5 +157,7 @@ if bad_placeholders:
     fail("placeholder mismatch:\n" + "\n".join(bad_placeholders))
 if unlocalized_required:
     fail("key user-facing labels are not localized:\n" + "\n".join(unlocalized_required))
+if drifted_shared:
+    fail("shared UI text translations differ from zh_cn:\n" + "\n".join(drifted_shared))
 
 print(f"LuCI Simplified Chinese coverage: {len(source_ids)}/{len(source_ids)}")

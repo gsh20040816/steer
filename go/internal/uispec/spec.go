@@ -83,14 +83,14 @@ type CollectionReference struct {
 
 // CollectionOrderingPolicy defines the shared user-visible ordering boundary.
 // Frontends may use native controls, but every move is draft-only, identifies
-// objects by stable ID and must stay within the declared group/filter.
+// objects by stable ID and must stay within the declared filter. Configuration
+// nodes are all manual nodes; subscription nodes are not in the draft and keep
+// the order of their subscription.
 type CollectionOrderingPolicy struct {
 	StableIDField          string   `json:"stable_id_field"`
 	MoveActions            []string `json:"move_actions"`
-	GroupField             string   `json:"group_field,omitempty"`
 	MovableKinds           []string `json:"movable_kinds,omitempty"`
 	PinnedLastBooleanField string   `json:"pinned_last_boolean_field,omitempty"`
-	SourceOwnedRefresh     string   `json:"source_owned_refresh,omitempty"`
 }
 
 type NavigationItem struct {
@@ -149,11 +149,23 @@ type ApplyResultContract struct {
 // their subscription and read-only in every frontend. Each listed node carries
 // ManualCopyField, the manual node produced by the shared "copy to my nodes"
 // rule without an ID; the frontend assigns one and adds it to its draft.
+//
+// Errors holds the text of every ErrorCodes entry; a frontend shows the
+// backend message only for a code that has no entry. RoutesPlaceholder in a
+// text is replaced with the display names of the routes that still use the
+// node, joined with Messages["list_separator"]. ValidationIssues holds the
+// text of validation issue codes owned by subscription nodes. Messages holds
+// the other shared texts: read_only_note, load_failed, empty_group,
+// stale_marker, cleaned and list_separator.
 type SubscriptionNodesContract struct {
-	ReadOnly        bool              `json:"read_only"`
-	ManualCopyField string            `json:"manual_copy_field"`
-	Actions         map[string]UIText `json:"actions"`
-	ErrorCodes      []string          `json:"error_codes"`
+	ReadOnly          bool              `json:"read_only"`
+	ManualCopyField   string            `json:"manual_copy_field"`
+	Actions           map[string]UIText `json:"actions"`
+	ErrorCodes        []string          `json:"error_codes"`
+	Errors            map[string]UIText `json:"errors"`
+	RoutesPlaceholder string            `json:"routes_placeholder"`
+	ValidationIssues  map[string]UIText `json:"validation_issues"`
+	Messages          map[string]UIText `json:"messages"`
 }
 
 type NodeDisplaySortingContract struct {
@@ -267,13 +279,10 @@ func ContractValue() Contract {
 		},
 		CollectionOrdering: map[string]CollectionOrderingPolicy{
 			"wireguard_tunnels": {StableIDField: "id", MoveActions: []string{"up", "down"}},
-			"nodes": {
-				StableIDField: "id", MoveActions: []string{"up", "down"}, GroupField: "source_subscription",
-				SourceOwnedRefresh: "subscription_refresh_may_rebuild_source_order",
-			},
-			"routes":        {StableIDField: "id", MoveActions: []string{"up", "down"}, MovableKinds: []string{"single", "wireguard"}},
-			"dns_profiles":  {StableIDField: "id", MoveActions: []string{"up", "down"}},
-			"local_proxies": {StableIDField: "id", MoveActions: []string{"up", "down"}},
+			"nodes":             {StableIDField: "id", MoveActions: []string{"up", "down"}},
+			"routes":            {StableIDField: "id", MoveActions: []string{"up", "down"}, MovableKinds: []string{"single", "wireguard"}},
+			"dns_profiles":      {StableIDField: "id", MoveActions: []string{"up", "down"}},
+			"local_proxies":     {StableIDField: "id", MoveActions: []string{"up", "down"}},
 			"rules": {
 				StableIDField: "id", MoveActions: []string{"up", "down"}, PinnedLastBooleanField: "default",
 			},
@@ -373,6 +382,50 @@ func ContractValue() Contract {
 			ErrorCodes: []string{
 				subscription.ErrorSubscriptionNotFound, subscription.ErrorNodeNotFound, subscription.ErrorNodeStillReferenced,
 				subscription.ErrorNodeCurrent, subscription.ErrorValidationFailed, subscription.ErrorNodeStoreFailed,
+			},
+			Errors: map[string]UIText{
+				subscription.ErrorSubscriptionNotFound: {
+					Label: "The subscription is not in the saved configuration. Save the configuration first.",
+					ZhCN:  "订阅不在已保存的配置里，请先保存配置",
+				},
+				subscription.ErrorNodeNotFound: {
+					Label: "This subscription node no longer exists; the node list was refreshed.",
+					ZhCN:  "这个订阅节点已经不存在，节点列表已刷新",
+				},
+				subscription.ErrorNodeStillReferenced: {
+					Label: "Routes still use this node ({routes}). Change those routes first.",
+					ZhCN:  "仍有路由在使用这个节点（{routes}），请先修改这些路由",
+				},
+				subscription.ErrorNodeCurrent: {
+					Label: "Only unavailable nodes can be cleaned up.",
+					ZhCN:  "只能清理已失效的节点",
+				},
+				subscription.ErrorValidationFailed: {
+					Label: "The saved configuration is not valid. Fix it and save it first.",
+					ZhCN:  "已保存的配置没有通过校验，请先修复后保存",
+				},
+				subscription.ErrorNodeStoreFailed: {
+					Label: "The subscription node list could not be read or saved. Check the diagnostics log.",
+					ZhCN:  "订阅节点列表读写失败，请查看诊断日志",
+				},
+			},
+			RoutesPlaceholder: "{routes}",
+			ValidationIssues: map[string]UIText{
+				"SUBSCRIPTION_NODE_IN_CONFIG": {
+					Label: "Subscription nodes cannot be saved in the configuration; they are managed by their subscription.",
+					ZhCN:  "配置里不能包含订阅节点；订阅节点由订阅管理",
+				},
+			},
+			Messages: map[string]UIText{
+				"read_only_note": {Label: "Subscription nodes are read-only. Copy one to my nodes to edit it.", ZhCN: "订阅节点只读，复制到我的节点后可以编辑"},
+				"load_failed":    {Label: "Subscription nodes could not be loaded.", ZhCN: "订阅节点读取失败"},
+				"empty_group": {
+					Label: "This subscription has no nodes yet. They appear here after the configuration is saved and the subscription is updated.",
+					ZhCN:  "这个订阅还没有节点；保存配置并更新订阅后，节点会显示在这里",
+				},
+				"stale_marker":   {Label: "Unavailable", ZhCN: "已失效"},
+				"cleaned":        {Label: "Unavailable node cleaned up; the running configuration was not changed.", ZhCN: "已清理失效节点；当前运行配置未改变"},
+				"list_separator": {Label: ", ", ZhCN: "、"},
 			},
 		},
 		ApplyResult: ApplyResultContract{

@@ -1347,9 +1347,7 @@
       "move_actions": [
         "up",
         "down"
-      ],
-      "group_field": "source_subscription",
-      "source_owned_refresh": "subscription_refresh_may_rebuild_source_order"
+      ]
     },
     "routes": {
       "stable_id_field": "id",
@@ -1556,7 +1554,66 @@
       "SUBSCRIPTION_NODE_CURRENT",
       "VALIDATION_FAILED",
       "SUBSCRIPTION_NODE_STORE_FAILED"
-    ]
+    ],
+    "errors": {
+      "NODE_STILL_REFERENCED": {
+        "label": "Routes still use this node ({routes}). Change those routes first.",
+        "zh_cn": "仍有路由在使用这个节点（{routes}），请先修改这些路由"
+      },
+      "SUBSCRIPTION_NODE_CURRENT": {
+        "label": "Only unavailable nodes can be cleaned up.",
+        "zh_cn": "只能清理已失效的节点"
+      },
+      "SUBSCRIPTION_NODE_NOT_FOUND": {
+        "label": "This subscription node no longer exists; the node list was refreshed.",
+        "zh_cn": "这个订阅节点已经不存在，节点列表已刷新"
+      },
+      "SUBSCRIPTION_NODE_STORE_FAILED": {
+        "label": "The subscription node list could not be read or saved. Check the diagnostics log.",
+        "zh_cn": "订阅节点列表读写失败，请查看诊断日志"
+      },
+      "SUBSCRIPTION_NOT_FOUND": {
+        "label": "The subscription is not in the saved configuration. Save the configuration first.",
+        "zh_cn": "订阅不在已保存的配置里，请先保存配置"
+      },
+      "VALIDATION_FAILED": {
+        "label": "The saved configuration is not valid. Fix it and save it first.",
+        "zh_cn": "已保存的配置没有通过校验，请先修复后保存"
+      }
+    },
+    "routes_placeholder": "{routes}",
+    "validation_issues": {
+      "SUBSCRIPTION_NODE_IN_CONFIG": {
+        "label": "Subscription nodes cannot be saved in the configuration; they are managed by their subscription.",
+        "zh_cn": "配置里不能包含订阅节点；订阅节点由订阅管理"
+      }
+    },
+    "messages": {
+      "cleaned": {
+        "label": "Unavailable node cleaned up; the running configuration was not changed.",
+        "zh_cn": "已清理失效节点；当前运行配置未改变"
+      },
+      "empty_group": {
+        "label": "This subscription has no nodes yet. They appear here after the configuration is saved and the subscription is updated.",
+        "zh_cn": "这个订阅还没有节点；保存配置并更新订阅后，节点会显示在这里"
+      },
+      "list_separator": {
+        "label": ", ",
+        "zh_cn": "、"
+      },
+      "load_failed": {
+        "label": "Subscription nodes could not be loaded.",
+        "zh_cn": "订阅节点读取失败"
+      },
+      "read_only_note": {
+        "label": "Subscription nodes are read-only. Copy one to my nodes to edit it.",
+        "zh_cn": "订阅节点只读，复制到我的节点后可以编辑"
+      },
+      "stale_marker": {
+        "label": "Unavailable",
+        "zh_cn": "已失效"
+      }
+    }
   },
   "apply_result": {
     "restarted_field": "restarted",
