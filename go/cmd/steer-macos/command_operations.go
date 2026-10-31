@@ -24,6 +24,21 @@ type probeSelection struct {
 	Download bool
 }
 
+// validate rejects a selection before anything runs or is saved, as the
+// Linux web and OpenWrt probe entry points do.
+func (selection probeSelection) validate() error {
+	if selection.NodeID != "" && selection.RouteID != "" {
+		return errors.New("probe node and route are mutually exclusive")
+	}
+	if selection.Kind != "direct" && selection.Kind != "proxy" && selection.Kind != "speedtest" {
+		return fmt.Errorf("unsupported probe kind %q", selection.Kind)
+	}
+	if (selection.NodeID != "" || selection.RouteID != "") && selection.Kind != "speedtest" {
+		return errors.New("node and route probes require kind speedtest")
+	}
+	return nil
+}
+
 // probeResponse is the stable helper-to-GUI payload.
 type probeResponse struct {
 	macosplatform.TestReport
@@ -118,22 +133,14 @@ func runProbe(args []string, stdoutWriter interface{ Write([]byte) (int, error) 
 	return nil
 }
 
+// performProbe runs a selection that validate accepted.
 func performProbe(ctx context.Context, configPath string, options macosplatform.BackendOptions, selection probeSelection) (probeResponse, error) {
-	if selection.NodeID != "" && selection.RouteID != "" {
-		return probeResponse{}, errors.New("probe node and route are mutually exclusive")
-	}
-	if selection.Kind != "direct" && selection.Kind != "proxy" && selection.Kind != "speedtest" {
-		return probeResponse{}, fmt.Errorf("unsupported probe kind %q", selection.Kind)
-	}
 	if selection.NodeID == "" && selection.RouteID == "" {
 		report, err := macosplatform.ProbeOverview(ctx, configPath, options.StateDirectory, options.RunDirectory, selection.Kind, nil)
 		if err != nil {
 			return probeResponse{}, err
 		}
 		return probeResponse{TestReport: report}, nil
-	}
-	if selection.Kind != "speedtest" {
-		return probeResponse{}, errors.New("node and route probes require kind speedtest")
 	}
 	var report macosplatform.TestReport
 	var err error

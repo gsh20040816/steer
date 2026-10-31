@@ -358,13 +358,16 @@ func (service *controlService) handle(request controlRequest) controlResponse {
 			response.Error = "probe accepts only kind, node_id, route_id and download"
 			return response
 		}
-		run := service.probe
-		ctx, cancel := context.WithTimeout(context.Background(), controlDeadline)
-		defer cancel()
 		selection := probeSelection{
 			Kind: request.Kind, NodeID: request.NodeID, RouteID: request.RouteID, Download: request.Download,
 		}
-		report, probeErr := run(ctx, service.configPath, service.options, selection)
+		if err := selection.validate(); err != nil {
+			response.Error = err.Error()
+			return response
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), controlDeadline)
+		defer cancel()
+		report, probeErr := service.probe(ctx, service.configPath, service.options, selection)
 		if probeErr != nil {
 			_ = macosplatform.SaveTestFailure(
 				service.configPath, service.options,
@@ -556,10 +559,7 @@ func probeObjectID(selection probeSelection) string {
 
 func probeReportKind(selection probeSelection) string {
 	if selection.NodeID == "" && selection.RouteID == "" {
-		if selection.Kind == "direct" || selection.Kind == "proxy" || selection.Kind == "speedtest" {
-			return selection.Kind
-		}
-		return "direct"
+		return selection.Kind
 	}
 	if selection.Download {
 		return "download"

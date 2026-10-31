@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -263,6 +264,50 @@ func TestControlServiceProbeRejectsConfigurationAndPathFields(t *testing.T) {
 	var request controlRequest
 	if err := decodeStrictJSON([]byte(`{"schema_version":1,"operation":"probe","kind":"proxy","url":"https://attacker.example/"}`), &request); err == nil {
 		t.Fatal("control probe accepted an arbitrary URL field")
+	}
+}
+
+func TestControlServiceProbeRejectsInvalidSelectionWithoutSavingResult(t *testing.T) {
+	document, err := os.ReadFile(filepath.Join("..", "..", "..", "linux", "config.example.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	configPath := filepath.Join(root, "config.json")
+	if err := os.WriteFile(configPath, document, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	options := macosplatform.BackendOptions{StateDirectory: filepath.Join(root, "state")}
+	for _, report := range []probe.Report{
+		{Scope: "overview", Kind: "direct", OK: true, TestedAt: time.Now()},
+		{Scope: "nodes", ObjectID: "node-a", Kind: "connect", OK: true, TestedAt: time.Now()},
+	} {
+		if err := macosplatform.SaveTestReport(options, report); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := macosplatform.ReadLatestProbeResults(configPath, options)
+	service := &controlService{
+		configPath: configPath,
+		options:    options,
+		probe: func(_ context.Context, _ string, _ macosplatform.BackendOptions, selection probeSelection) (probeResponse, error) {
+			t.Errorf("invalid probe reached backend: %#v", selection)
+			return probeResponse{}, errors.New("invalid probe")
+		},
+	}
+	for _, request := range []controlRequest{
+		{Kind: ""},
+		{Kind: "ftp"},
+		{Kind: "direct", NodeID: "node-a"},
+		{Kind: "speedtest", NodeID: "node-a", RouteID: "route-a"},
+	} {
+		request.SchemaVersion, request.Operation = controlSchemaVersion, "probe"
+		if response := service.handle(request); response.OK || response.Error == "" || len(response.Payload) != 0 {
+			t.Fatalf("invalid probe was not rejected: %+v -> %+v", request, response)
+		}
+	}
+	if after := macosplatform.ReadLatestProbeResults(configPath, options); !reflect.DeepEqual(after, before) {
+		t.Fatalf("invalid probes replaced the latest results:\nbefore %#v\nafter  %#v", before, after)
 	}
 }
 
