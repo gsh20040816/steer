@@ -17,4 +17,10 @@ extension BackendClient {
     func exportNode(node: JSONValue) async throws -> String {
         throw BackendClientError.helperUnavailable
     }
+    func subscriptionNodes() async throws -> SubscriptionNodeInventory { .empty }
+    func setSubscriptionNodeEnabled(
+        subscriptionID: String, nodeID: String, enabled: Bool
+    ) async throws -> SubscriptionNodeInventory {
+        throw BackendClientError.helperUnavailable
+    }
 }

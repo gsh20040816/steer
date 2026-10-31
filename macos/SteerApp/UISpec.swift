@@ -251,6 +251,42 @@ struct UISubscriptionInventoryContract: Decodable {
     }
 }
 
+struct UILocalizedText: Decodable {
+    let label: String
+    let zhCN: String
+
+    enum CodingKeys: String, CodingKey {
+        case label
+        case zhCN = "zh_cn"
+    }
+}
+
+struct UISubscriptionNodesContract: Decodable {
+    let readOnly: Bool
+    let manualCopyField: String
+    let actions: [String: UILocalizedText]
+    let errorCodes: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case actions
+        case readOnly = "read_only"
+        case manualCopyField = "manual_copy_field"
+        case errorCodes = "error_codes"
+    }
+}
+
+struct UIApplyResultContract: Decodable {
+    let restartedField: String
+    let unchangedNoticeWhen: [String: Bool]
+    let unchangedNotice: UILocalizedText
+
+    enum CodingKeys: String, CodingKey {
+        case restartedField = "restarted_field"
+        case unchangedNoticeWhen = "unchanged_notice_when"
+        case unchangedNotice = "unchanged_notice"
+    }
+}
+
 struct UIContract: Decodable {
     let schemaVersion: Int
     let canonicalSchema: Int
@@ -281,6 +317,8 @@ struct UIContract: Decodable {
     let navigation: [UINavigationGroup]
     let dnsBoundaries: [String: UIDNSBoundary]
     let subscriptionInventory: UISubscriptionInventoryContract
+    let subscriptionNodes: UISubscriptionNodesContract
+    let applyResult: UIApplyResultContract
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -312,6 +350,8 @@ struct UIContract: Decodable {
         case navigation
         case dnsBoundaries = "dns_boundaries"
         case subscriptionInventory = "subscription_inventory"
+        case subscriptionNodes = "subscription_nodes"
+        case applyResult = "apply_result"
     }
 }
 
@@ -324,6 +364,35 @@ enum SteerUISpec {
         }
         return contract
     }()
+
+    /// The shared automatic ID rule: the collection prefix and a short random suffix.
+    static func generatedID(for collection: String) -> String {
+        let prefix = contract.idPolicy.collectionPrefixes[collection] ?? "item"
+        return "\(prefix)-\(UUID().uuidString.lowercased().prefix(8))"
+    }
+
+    /// The shared wording of a subscription node action (enable, disable, clean, copy_to_manual).
+    static func subscriptionNodeActionLabel(_ action: String) -> String {
+        contract.subscriptionNodes.actions[action]?.zhCN ?? action
+    }
+
+    static var unchangedRuntimeNotice: String { contract.applyResult.unchangedNotice.zhCN }
+
+    /// Whether an Apply result matches the shared condition for the
+    /// "runtime unchanged, not restarted" notice. A result without the
+    /// restarted field (an older helper) never shows it.
+    static func showsUnchangedRuntimeNotice(_ result: RuntimeApplyResult?) -> Bool {
+        guard let result else { return false }
+        let facts: [String: Bool?] = [
+            "ok": result.ok,
+            "activated": result.activated,
+            contract.applyResult.restartedField: result.restarted,
+        ]
+        let conditions = contract.applyResult.unchangedNoticeWhen
+        return !conditions.isEmpty && conditions.allSatisfy { field, expected in
+            (facts[field] ?? nil) == expected
+        }
+    }
 
     static func orderingPolicy(for collection: String) -> UICollectionOrderingPolicy? {
         contract.collectionOrdering[collection]
@@ -436,6 +505,10 @@ enum SteerUISpec {
         return !populated.isEmpty && populated.allSatisfy(contract.ruleConnectionOnlyFields.contains)
     }
 
+    /// References into one object of the complete Intent. Subscription nodes
+    /// are not part of the configuration document; callers attach them (with
+    /// their source_subscription) so a subscription is guarded by the routes
+    /// that use its nodes.
     static func inboundReferences(
         root: [String: JSONValue], targetCollection: String, targetID: String
     ) -> [UIObjectReference] {

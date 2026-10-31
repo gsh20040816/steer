@@ -200,8 +200,9 @@ struct DraftItemEditor: View {
         if identifier.isEmpty || identifier.contains(where: { $0.isWhitespace }) {
             return "标识无效；请取消后重新创建"
         }
-        if model.draftItems(for: target.key).contains(where: {
-            $0.identifier == identifier && $0.index != target.index
+        let existingItems = target.key == "nodes" ? model.nodeItems : model.draftItems(for: target.key)
+        if existingItems.contains(where: {
+            $0.identifier == identifier && ($0.subscriptionOwned || $0.index != target.index)
         }) {
             return "标识冲突；请取消后重新创建"
         }
@@ -640,11 +641,13 @@ private struct RouteDraftForm: View {
     private var routeID: String { draftString(object, "id") }
     private var selectedNodeID: String { draftString(object, "node") }
     private var selectedDetourID: String { draftString(object, "detour") }
-    private var selectableNodes: [DraftItem] { model.draftItems(for: "nodes").filter(\.enabled) }
+    private var selectableNodeGroups: [(id: String, title: String, items: [DraftItem])] {
+        model.routeNodeCandidateGroups
+    }
     private var selectableDetours: [DraftItem] { model.routeDetourCandidates(editingRouteID: routeID) }
 
     private func nodeLabel(_ identifier: String) -> String {
-        guard let item = model.draftItems(for: "nodes").first(where: { $0.identifier == identifier }) else {
+        guard let item = model.nodeItems.first(where: { $0.identifier == identifier }) else {
             return identifier
         }
         return model.draftReferenceLabel(item, in: "nodes")
@@ -696,11 +699,17 @@ private struct RouteDraftForm: View {
             Section("出口关系") {
                 Picker("节点", selection: stringBinding($object, "node", required: true)) {
                     Text("请选择节点").tag("")
-                    ForEach(selectableNodes) { item in
-                        Text(model.draftReferenceLabel(item, in: "nodes")).tag(item.identifier)
+                    ForEach(selectableNodeGroups, id: \.id) { group in
+                        Section(group.title) {
+                            ForEach(group.items) { item in
+                                Text(model.draftReferenceLabel(item, in: "nodes")).tag(item.identifier)
+                            }
+                        }
                     }
                     if !selectedNodeID.isEmpty,
-                       !selectableNodes.contains(where: { $0.identifier == selectedNodeID }) {
+                       !selectableNodeGroups.contains(where: { group in
+                           group.items.contains { $0.identifier == selectedNodeID }
+                       }) {
                         Text("\(nodeLabel(selectedNodeID)) · \(model.nodeReferenceProblem(selectedNodeID) ?? "无效")")
                             .foregroundStyle(.red)
                             .tag(selectedNodeID)

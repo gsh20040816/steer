@@ -133,6 +133,7 @@ struct RuntimeApplyResult: Decodable, Sendable {
     let ok: Bool
     let generation: String?
     let activated: Bool?
+    let restarted: Bool?
     let error: String?
 }
 
@@ -243,6 +244,7 @@ struct ApplyOutcome: Sendable {
     let revision: String
     let error: String
     let validation: ValidationResult?
+    var applyResult: RuntimeApplyResult? = nil
 }
 
 struct SaveOutcome: Sendable {
@@ -515,6 +517,67 @@ struct SubscriptionRuntimeStatus: Decodable, Identifiable, Sendable {
     }
 }
 
+/// One stored subscription node as returned by the subscription node read
+/// interface. Subscription nodes are not part of the configuration document:
+/// they are shown read-only and never written into a draft. `manualCopy` is
+/// the shared "Copy to my nodes" result without an ID.
+struct SubscriptionNode: Decodable, Identifiable, Sendable {
+    let id: String
+    let object: [String: JSONValue]
+    let manualCopy: [String: JSONValue]?
+
+    var enabled: Bool { object["enabled"]?.boolValue ?? true }
+    var pinnedStale: Bool { object["pinned_stale"]?.boolValue ?? false }
+
+    init(from decoder: Decoder) throws {
+        var object = try [String: JSONValue](from: decoder)
+        let copy = object.removeValue(forKey: SteerUISpec.contract.subscriptionNodes.manualCopyField)
+        guard let id = object["id"]?.stringValue, !id.isEmpty else {
+            throw DecodingError.dataCorrupted(DecodingError.Context(
+                codingPath: decoder.codingPath, debugDescription: "subscription node without an ID"
+            ))
+        }
+        self.id = id
+        self.object = object
+        manualCopy = copy?.objectValue
+    }
+}
+
+struct SubscriptionNodeGroup: Decodable, Identifiable, Sendable {
+    let id: String
+    let nodes: [SubscriptionNode]
+}
+
+struct SubscriptionNodeInventory: Decodable, Sendable {
+    let subscriptions: [SubscriptionNodeGroup]
+
+    static let empty = SubscriptionNodeInventory(subscriptions: [])
+
+    func node(subscriptionID: String, nodeID: String) -> SubscriptionNode? {
+        subscriptions.first { $0.id == subscriptionID }?.nodes.first { $0.id == nodeID }
+    }
+}
+
+/// User-facing reasons for the shared subscription node error codes, worded
+/// as in the Linux web interface. The raw "CODE: detail" text is not shown.
+enum SubscriptionNodeErrorText {
+    static func message(code: String) -> String? {
+        switch code {
+        case "SUBSCRIPTION_NOT_FOUND": return "订阅不在已保存的配置里，请先保存配置"
+        case "SUBSCRIPTION_NODE_NOT_FOUND": return "这个订阅节点已经不存在，节点列表已刷新"
+        case "NODE_STILL_REFERENCED": return stillReferenced(routes: [])
+        case "SUBSCRIPTION_NODE_CURRENT": return "只能清理已失效的节点"
+        case "VALIDATION_FAILED": return "已保存的配置没有通过校验，请先修复后保存"
+        case "SUBSCRIPTION_NODE_STORE_FAILED": return "订阅节点存储读写失败，请查看诊断日志"
+        default: return nil
+        }
+    }
+
+    static func stillReferenced(routes: [String]) -> String {
+        "仍有路由在使用这个节点\(routes.isEmpty ? "" : "（\(routes.joined(separator: "、"))）")，请先修改这些路由"
+    }
+}
+
 private struct SubscriptionStatusResponse: Decodable {
     let ok: Bool
     let subscriptions: [SubscriptionRuntimeStatus]
@@ -616,11 +679,13 @@ private struct ControlResponse: Decodable {
     let revision: String?
     let payload: JSONValue?
     let validation: ValidationResult?
+    let applyResult: RuntimeApplyResult?
     let errorCode: String?
     let error: String?
 
     enum CodingKeys: String, CodingKey {
         case ok, status, saved, applied, revision, payload, validation, error
+        case applyResult = "apply_result"
         case errorCode = "error_code"
     }
 }
@@ -775,11 +840,7 @@ struct NodeImportPreviewItem: Identifiable {
         } else {
             object["name"] = .string(trimmedName)
         }
-        let prefix = SteerUISpec.contract.idPolicy.collectionPrefixes["nodes"] ?? "node"
-        object["id"] = .string("\(prefix)-\(UUID().uuidString.lowercased().prefix(8))")
-        object.removeValue(forKey: "source_subscription")
-        object.removeValue(forKey: "source_fingerprint")
-        object.removeValue(forKey: "pinned_stale")
+        object["id"] = .string(SteerUISpec.generatedID(for: "nodes"))
         return object
     }
 }
@@ -806,6 +867,7 @@ enum BackendClientError: LocalizedError {
     case validationFailed(ValidationResult)
     case revisionConflict(currentRevision: String)
     case processFailed(String)
+    case subscriptionOperationFailed(code: String, detail: String, validation: ValidationResult?)
 
     var errorDescription: String? {
         switch self {
@@ -819,6 +881,8 @@ enum BackendClientError: LocalizedError {
             return "服务器配置已在其他操作中更新；请先处理配置冲突。"
         case let .processFailed(message):
             return message
+        case let .subscriptionOperationFailed(code, detail, _):
+            return SubscriptionNodeErrorText.message(code: code) ?? detail
         }
     }
 }
@@ -845,6 +909,8 @@ protocol BackendClient: Sendable {
     func subscriptionStatuses() async throws -> [SubscriptionRuntimeStatus]
     func updateSubscription(id: String) async throws
     func cleanSubscription(id: String, nodeID: String) async throws
+    func subscriptionNodes() async throws -> SubscriptionNodeInventory
+    func setSubscriptionNodeEnabled(subscriptionID: String, nodeID: String, enabled: Bool) async throws -> SubscriptionNodeInventory
     func geoCatalog(kind: String) async throws -> [String]
 }
 
@@ -1043,7 +1109,8 @@ struct HelperBackendClient: BackendClient {
             return ApplyOutcome(
                 status: status, applied: response.applied == true,
                 revision: revision, error: response.error ?? "",
-                validation: response.validation ?? validation
+                validation: response.validation ?? validation,
+                applyResult: response.applyResult
             )
         }
     }
@@ -1056,7 +1123,8 @@ struct HelperBackendClient: BackendClient {
         }
         let document = String(decoding: try JSONEncoder.pretty.encode(payload), as: UTF8.self)
         return (ApplyOutcome(status: status, applied: response.applied == true,
-                             revision: revision, error: response.error ?? "", validation: response.validation),
+                             revision: revision, error: response.error ?? "", validation: response.validation,
+                             applyResult: response.applyResult),
                 ConfigurationSnapshot(document: document, revision: revision))
     }
 
@@ -1226,19 +1294,51 @@ struct HelperBackendClient: BackendClient {
     }
 
     func updateSubscription(id: String) async throws {
-        let helper = URL(fileURLWithPath: Self.installedHelperPath)
-        try requireExecutable(helper)
-        let result = try await Self.execute(helper, ["control", "--operation", "subscription-update", "--id", id])
-        let response = try Self.decodeControlResponse(result)
-        guard response.ok else { throw BackendClientError.processFailed(response.error ?? "订阅更新失败。") }
+        let response = try await controlOperation(["subscription-update", "--id", id])
+        try Self.requireSubscriptionSuccess(response, fallback: "订阅更新失败。")
     }
 
     func cleanSubscription(id: String, nodeID: String) async throws {
-        let helper = URL(fileURLWithPath: Self.installedHelperPath)
-        try requireExecutable(helper)
-        let result = try await Self.execute(helper, ["control", "--operation", "subscription-clean", "--id", id, "--node", nodeID])
-        let response = try Self.decodeControlResponse(result)
-        guard response.ok else { throw BackendClientError.processFailed(response.error ?? "失效节点清理失败。") }
+        let response = try await controlOperation(["subscription-clean", "--id", id, "--node", nodeID])
+        try Self.requireSubscriptionSuccess(response, fallback: "失效节点清理失败。")
+    }
+
+    func subscriptionNodes() async throws -> SubscriptionNodeInventory {
+        let response = try await controlOperation(["subscription-nodes"])
+        return try Self.decodeSubscriptionNodes(response, fallback: "订阅节点读取失败。")
+    }
+
+    func setSubscriptionNodeEnabled(
+        subscriptionID: String, nodeID: String, enabled: Bool
+    ) async throws -> SubscriptionNodeInventory {
+        let response = try await controlOperation([
+            "subscription-node-set", "--id", subscriptionID, "--node", nodeID,
+            "--enabled", enabled ? "true" : "false",
+        ])
+        return try Self.decodeSubscriptionNodes(response, fallback: "订阅节点状态未更新。")
+    }
+
+    private static func requireSubscriptionSuccess(_ response: ControlResponse, fallback: String) throws {
+        guard !response.ok else { return }
+        if let code = response.errorCode, !code.isEmpty {
+            throw BackendClientError.subscriptionOperationFailed(
+                code: code, detail: response.error ?? fallback, validation: response.validation
+            )
+        }
+        throw BackendClientError.processFailed(response.error ?? fallback)
+    }
+
+    private static func decodeSubscriptionNodes(
+        _ response: ControlResponse, fallback: String
+    ) throws -> SubscriptionNodeInventory {
+        try requireSubscriptionSuccess(response, fallback: fallback)
+        guard let payload = response.payload,
+              let inventory = try? JSONDecoder().decode(
+                  SubscriptionNodeInventory.self, from: JSONEncoder().encode(payload)
+              ) else {
+            throw BackendClientError.invalidResponse
+        }
+        return inventory
     }
 
     func geoCatalog(kind: String) async throws -> [String] {
@@ -1482,6 +1582,18 @@ final class AppModel: ObservableObject {
     @Published var systemComponentsHaveArtifacts = false
     @Published var systemComponentFacts: [SystemComponentFact] = []
     @Published var subscriptionRuntime: [SubscriptionRuntimeStatus] = []
+    /// Stored subscription nodes of the Saved configuration. They are shown
+    /// next to the draft's manual nodes but never written into the draft.
+    @Published private(set) var subscriptionNodeInventory = SubscriptionNodeInventory.empty {
+        didSet {
+            // Route details name their subscription nodes, so every derived
+            // item list is rebuilt.
+            cachedSubscriptionNodeItems = nil
+            cachedNodeItems = nil
+            cachedDraftItems.removeAll(keepingCapacity: true)
+        }
+    }
+    @Published private(set) var subscriptionNodeError = ""
     @Published private(set) var latestProbeResults: [String: ProbeLatestResult] = [:]
     @Published private(set) var diagnosticsWarnings: [String] = []
     @Published private(set) var diagnosticsDNSCapture: DNSCaptureDiagnostic?
@@ -1501,6 +1613,9 @@ final class AppModel: ObservableObject {
     private var cachedDraftValue: JSONValue?
     private var cachedDraftError: String?
     private var cachedDraftItems: [String: [DraftItem]] = [:]
+    private var cachedSubscriptionNodeItems: [DraftItem]?
+    private var cachedNodeItems: [DraftItem]?
+    private var subscriptionNodeInventorySequence: UInt64 = 0
     private(set) var draftDecodeCount = 0
     private var initialStateLoadInProgress = false
     private var terminationReply: ((Bool) -> Void)?
@@ -1663,6 +1778,7 @@ final class AppModel: ObservableObject {
                 self.hasInitializedDraft = true
                 let lifecycle = try await self.backend.overviewState()
                 self.installOverviewLifecycle(lifecycle)
+                await self.refreshSubscriptionNodesIfAvailable()
                 if !preservedConcurrentDraft {
                     self.validation = lifecycle.saved.validation
                 } else {
@@ -1716,6 +1832,7 @@ final class AppModel: ObservableObject {
             self.overviewLifecycle = OverviewLifecycleState()
             self.versions = RuntimeVersions()
             self.subscriptionRuntime = []
+            self.subscriptionNodeInventory = .empty
             self.geositeNames = []
             self.geoipNames = []
             if removeUserData {
@@ -1739,6 +1856,7 @@ final class AppModel: ObservableObject {
                 self.runtime.error = "状态获取失败：\(error.localizedDescription)"
                 throw error
             }
+            if components.installed { await self.refreshSubscriptionNodesIfAvailable() }
             self.message = self.runtimeStatusText
         }
     }
@@ -1788,7 +1906,7 @@ final class AppModel: ObservableObject {
 
     func exportNode(_ item: DraftItem) async -> String? {
         guard !isBusy, pendingDraftAction == nil,
-              let object = draftItemObject(for: "nodes", at: item.index) else { return nil }
+              let object = nodeObject(for: item) else { return nil }
         isBusy = true
         message = "正在导出节点分享链接…"
         defer { isBusy = false }
@@ -1929,6 +2047,7 @@ final class AppModel: ObservableObject {
                 self.message = self.runtime.healthy
                     ? "已保存配置已应用，Steer 运行正常"
                     : "已保存配置已应用，Steer 已停用"
+                self.appendUnchangedRuntimeNotice(outcome)
             } else {
                 self.message = "已保存配置应用失败：\(outcome.error.isEmpty ? "运行配置未改变" : outcome.error)"
             }
@@ -1955,6 +2074,7 @@ final class AppModel: ObservableObject {
             self.message = outcome.applied
                 ? (enabled ? "Steer 已启用" : "Steer 已停用并清理运行资源")
                 : "启用状态已保存，但应用失败：\(outcome.error)"
+            if outcome.applied { self.appendUnchangedRuntimeNotice(outcome) }
             if self.isDirty { self.message += "；未保存修改已保留" }
         }
     }
@@ -2054,6 +2174,7 @@ final class AppModel: ObservableObject {
                 return
             }
             self.replaceDraft(with: snapshot)
+            await self.refreshSubscriptionNodesIfAvailable()
             self.message = discardedLocalChanges
                 ? "已丢弃本地修改并重新载入已保存配置"
                 : "已读取已保存配置"
@@ -2154,6 +2275,7 @@ final class AppModel: ObservableObject {
             self.installOverviewLifecycle(try await self.backend.overviewState())
             self.versions = try await self.backend.versions()
             self.subscriptionRuntime = try await self.backend.subscriptionStatuses()
+            await self.refreshSubscriptionNodesIfAvailable()
             self.geositeNames = try await self.backend.geoCatalog(kind: "geosite")
             self.geoipNames = try await self.backend.geoCatalog(kind: "geoip")
             if self.isDirty {
@@ -2251,6 +2373,7 @@ final class AppModel: ObservableObject {
             }
             self.replaceDraft(with: snapshot)
             self.subscriptionRuntime = try await self.backend.subscriptionStatuses()
+            await self.refreshSubscriptionNodesIfAvailable()
             self.message = "已重新载入服务器配置；本地修改已丢弃"
         }
     }
@@ -2301,7 +2424,7 @@ final class AppModel: ObservableObject {
             message = "请先保存或丢弃工作副本中的修改，再测试节点或路由"
             return
         }
-        if let nodeID, draftItems(for: "nodes").first(where: { $0.identifier == nodeID })?.enabled == false {
+        if let nodeID, nodeItems.first(where: { $0.identifier == nodeID })?.enabled == false {
             message = "已停用节点不能测试；请先启用并保存"
             return
         }
@@ -2341,7 +2464,7 @@ final class AppModel: ObservableObject {
     }
 
     func runAllNodeProbes(download: Bool, nodeIDs: [String]) {
-        let enabledIDs = Set(draftItems(for: "nodes").filter(\.enabled).map(\.identifier))
+        let enabledIDs = Set(nodeItems.filter(\.enabled).map(\.identifier))
         let eligibleNodeIDs = nodeIDs.filter { enabledIDs.contains($0) }
         guard pendingDraftAction == nil,
               !isDirty, !isBatchNodeProbeRunning, !eligibleNodeIDs.isEmpty else { return }
@@ -2448,23 +2571,45 @@ final class AppModel: ObservableObject {
             defer { activeSubscriptionOperationIDs.remove(operationID) }
             do {
                 try await backend.updateSubscription(id: id)
-                let snapshot = try await backend.loadConfiguration()
                 subscriptionRuntime = try await backend.subscriptionStatuses()
                 let updateSummary = subscriptionStatus(id)?.inventorySummary ?? "节点库存已更新"
-                if !startingWasDirty && draftMutationSequence == startingDraftSequence {
-                    replaceDraft(with: snapshot)
-                    message = "订阅节点已更新，当前运行配置未改变；无引用的消失节点已自动删除，仍被路由使用的节点已自动保留并应尽快解除引用。\(updateSummary)"
-                } else {
-                    presentSubscriptionInventoryConflict(snapshot)
-                }
+                guard try await finishSubscriptionStoreChange(
+                    startingWasDirty: startingWasDirty, startingDraftSequence: startingDraftSequence
+                ) else { return }
+                message = "订阅节点已更新，当前运行配置未改变；无引用的消失节点已自动删除，仍被路由使用的节点已自动保留并应尽快解除引用。\(updateSummary)"
             } catch {
                 if let refreshed = try? await backend.subscriptionStatuses() {
                     subscriptionRuntime = refreshed
                 }
+                await refreshSubscriptionNodesIfAvailable()
                 let summary = subscriptionStatus(id)?.lastFailure?.summary ?? error.localizedDescription
                 message = "订阅更新失败：\(summary)"
             }
         }
+    }
+
+    /// Subscription update, cleanup and node enable/disable write only the
+    /// subscription node store, so the draft stays as it is. The Saved
+    /// configuration is still re-read: if something else changed it in the
+    /// meantime, a clean draft is reloaded and an edited one goes through the
+    /// usual conflict choice. Returns false when the conflict was presented.
+    private func finishSubscriptionStoreChange(
+        startingWasDirty: Bool, startingDraftSequence: UInt64, refreshNodes: Bool = true
+    ) async throws -> Bool {
+        if refreshNodes { await refreshSubscriptionNodesIfAvailable() }
+        let snapshot = try await backend.loadConfiguration()
+        if snapshot.revision != savedRevision {
+            guard !startingWasDirty && draftMutationSequence == startingDraftSequence else {
+                presentSubscriptionInventoryConflict(snapshot)
+                return false
+            }
+            replaceDraft(with: snapshot)
+        }
+        await refreshOverviewLifecycleIfAvailable()
+        if !isDirty, overviewLifecycle.saved.available {
+            validation = overviewLifecycle.saved.validation
+        }
+        return true
     }
 
     func cleanSubscriptionNode(subscriptionID: String, nodeID: String) {
@@ -2478,25 +2623,122 @@ final class AppModel: ObservableObject {
             defer { activeSubscriptionOperationIDs.remove(operationID) }
             do {
                 try await backend.cleanSubscription(id: subscriptionID, nodeID: nodeID)
-                let snapshot = try await backend.loadConfiguration()
                 subscriptionRuntime = try await backend.subscriptionStatuses()
-                if !startingWasDirty && draftMutationSequence == startingDraftSequence {
-                    replaceDraft(with: snapshot)
-                    message = "已清理失效节点；当前运行配置未改变"
-                } else {
-                    presentSubscriptionInventoryConflict(snapshot)
-                }
+                guard try await finishSubscriptionStoreChange(
+                    startingWasDirty: startingWasDirty, startingDraftSequence: startingDraftSequence
+                ) else { return }
+                message = "已清理失效节点；当前运行配置未改变"
             } catch {
                 if let refreshed = try? await backend.subscriptionStatuses() {
                     subscriptionRuntime = refreshed
                 }
+                await refreshSubscriptionNodesIfAvailable()
                 message = "失效节点清理失败：\(error.localizedDescription)"
+                subscriptionNodeError = message
             }
         }
     }
 
     func subscriptionOperationInProgress(_ id: String) -> Bool {
         activeSubscriptionOperationIDs.contains { $0.hasPrefix("update:\(id)") || $0.hasPrefix("clean:\(id):") }
+    }
+
+    func subscriptionNodeOperationInProgress(_ item: DraftItem) -> Bool {
+        guard let source = item.sourceSubscription else { return false }
+        return activeSubscriptionOperationIDs.contains("node:\(source):\(item.identifier)")
+            || activeSubscriptionOperationIDs.contains("clean:\(source):\(item.identifier)")
+    }
+
+    /// Enables or disables one stored subscription node. Only the node store is
+    /// written; the draft and the Saved configuration document stay as they are.
+    func setSubscriptionNodeEnabled(_ item: DraftItem, enabled: Bool) {
+        guard pendingDraftAction == nil, item.subscriptionOwned,
+              let subscriptionID = item.sourceSubscription else { return }
+        let operationID = "node:\(subscriptionID):\(item.identifier)"
+        guard activeSubscriptionOperationIDs.insert(operationID).inserted else { return }
+        let action = SteerUISpec.subscriptionNodeActionLabel(enabled ? "enable" : "disable")
+        let startingWasDirty = isDirty
+        let startingDraftSequence = draftMutationSequence
+        subscriptionNodeError = ""
+        message = "正在\(action)订阅节点 \(item.title)…"
+        Task {
+            defer { activeSubscriptionOperationIDs.remove(operationID) }
+            do {
+                installSubscriptionNodeInventory(try await backend.setSubscriptionNodeEnabled(
+                    subscriptionID: subscriptionID, nodeID: item.identifier, enabled: enabled
+                ))
+                guard try await finishSubscriptionStoreChange(
+                    startingWasDirty: startingWasDirty, startingDraftSequence: startingDraftSequence,
+                    refreshNodes: false
+                ) else { return }
+                message = "已\(action)订阅节点 \(item.title)"
+            } catch {
+                await refreshSubscriptionNodesIfAvailable()
+                message = "\(action)订阅节点失败：\(subscriptionNodeFailureText(error))"
+                subscriptionNodeError = message
+            }
+        }
+    }
+
+    /// "Copy to my nodes": adds the shared manual copy of a subscription node
+    /// to the draft as a new manual node with an automatically generated ID.
+    /// The subscription node and routes are not changed. Returns the new item.
+    @discardableResult
+    func copySubscriptionNodeToManual(_ item: DraftItem) -> DraftItem? {
+        guard canEditDraft, item.subscriptionOwned,
+              let subscriptionID = item.sourceSubscription,
+              var copy = subscriptionNodeInventory.node(
+                  subscriptionID: subscriptionID, nodeID: item.identifier
+              )?.manualCopy else { return nil }
+        let existing = Set(nodeItems.map(\.identifier))
+        var identifier = SteerUISpec.generatedID(for: "nodes")
+        while existing.contains(identifier) { identifier = SteerUISpec.generatedID(for: "nodes") }
+        copy["id"] = .string(identifier)
+        guard appendDraftItem(to: "nodes", object: copy),
+              let copied = draftItems(for: "nodes").first(where: { $0.identifier == identifier }) else { return nil }
+        message = "已将 \(item.title) \(SteerUISpec.subscriptionNodeActionLabel("copy_to_manual"))；保存后生效"
+        return copied
+    }
+
+    private func subscriptionNodeFailureText(_ error: Error) -> String {
+        guard let backendError = error as? BackendClientError,
+              case let .subscriptionOperationFailed(code, _, validation) = backendError,
+              code == "NODE_STILL_REFERENCED" else { return error.localizedDescription }
+        var routes: [String] = []
+        for issue in validation?.errors ?? [] where issue.objectType == "route" {
+            guard let routeID = issue.objectID,
+                  let route = draftItems(for: "routes").first(where: { $0.identifier == routeID }),
+                  !routes.contains(route.title) else { continue }
+            routes.append(route.title)
+        }
+        return SubscriptionNodeErrorText.stillReferenced(routes: routes)
+    }
+
+    /// Re-reads the stored subscription nodes, which the subscription timer
+    /// may change at any time. Does nothing before the first load.
+    func refreshSubscriptionNodes() {
+        guard hasInitializedDraft, systemComponentsInstalled, pendingDraftAction == nil else { return }
+        Task { await refreshSubscriptionNodesIfAvailable() }
+    }
+
+    private func refreshSubscriptionNodesIfAvailable() async {
+        subscriptionNodeInventorySequence &+= 1
+        let sequence = subscriptionNodeInventorySequence
+        do {
+            let inventory = try await backend.subscriptionNodes()
+            // A newer read or a node operation result already replaced it.
+            guard sequence == subscriptionNodeInventorySequence else { return }
+            subscriptionNodeInventory = inventory
+            subscriptionNodeError = ""
+        } catch {
+            guard sequence == subscriptionNodeInventorySequence else { return }
+            subscriptionNodeError = "订阅节点读取失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func installSubscriptionNodeInventory(_ inventory: SubscriptionNodeInventory) {
+        subscriptionNodeInventorySequence &+= 1
+        subscriptionNodeInventory = inventory
     }
 
     func subscriptionStatus(_ id: String) -> SubscriptionRuntimeStatus? {
@@ -2518,19 +2760,78 @@ final class AppModel: ObservableObject {
                 ?? object["protocol"]?.stringValue
                 ?? (object["default"]?.boolValue == true ? "default" : "")
             let detail = draftItemDetail(key: key, object: object)
-            let sourceSubscription = object["source_subscription"]?.stringValue
-            let pinnedStale = object["pinned_stale"]?.boolValue ?? false
             return DraftItem(
                 id: "\(key):\(identifier)", index: index, identifier: identifier,
                 title: name.isEmpty ? draftItemFallbackTitle(key: key, kind: kind) : name, kind: kind,
                 detail: detail, enabled: enabled,
-                subscriptionOwned: sourceSubscription?.isEmpty == false,
-                sourceSubscription: sourceSubscription?.isEmpty == false ? sourceSubscription : nil,
-                pinnedStale: pinnedStale
+                subscriptionOwned: false, sourceSubscription: nil, pinnedStale: false
             )
         }
         cachedDraftItems[key] = items
         return items
+    }
+
+    /// Read-only items for the stored nodes of the subscriptions in the draft,
+    /// in subscription order. `index` is the position within the subscription.
+    /// Nodes of a subscription removed from the draft are left out: saving
+    /// the draft deletes them.
+    var subscriptionNodeItems: [DraftItem] {
+        guard parseDraft() != nil else { return [] }
+        if let cached = cachedSubscriptionNodeItems { return cached }
+        let configured = Set(draftItems(for: "subscriptions").map(\.identifier))
+        let items = subscriptionNodeInventory.subscriptions
+            .filter { configured.contains($0.id) }
+            .flatMap { group in
+                group.nodes.enumerated().map { index, node in
+                    let name = node.object["name"]?.stringValue ?? ""
+                    let kind = node.object["type"]?.stringValue ?? ""
+                    return DraftItem(
+                        id: "subscription-nodes:\(group.id):\(node.id)", index: index, identifier: node.id,
+                        title: name.isEmpty ? draftItemFallbackTitle(key: "nodes", kind: kind) : name,
+                        kind: kind, detail: draftItemDetail(key: "nodes", object: node.object),
+                        enabled: node.enabled, subscriptionOwned: true,
+                        sourceSubscription: group.id, pinnedStale: node.pinnedStale
+                    )
+                }
+            }
+        cachedSubscriptionNodeItems = items
+        return items
+    }
+
+    /// Every node a route can use: the draft's manual nodes followed by the
+    /// stored subscription nodes.
+    var nodeItems: [DraftItem] {
+        let manual = draftItems(for: "nodes")
+        if let cached = cachedNodeItems { return cached }
+        let items = manual + subscriptionNodeItems
+        cachedNodeItems = items
+        return items
+    }
+
+    var nodeCount: Int { nodeItems.count }
+
+    /// Enabled nodes a single route can select, grouped as on the Nodes page.
+    var routeNodeCandidateGroups: [(id: String, title: String, items: [DraftItem])] {
+        let enabled = nodeItems.filter(\.enabled)
+        var groups = [(id: "_manual", title: "手动节点", items: enabled.filter { !$0.subscriptionOwned })]
+        for subscription in draftItems(for: "subscriptions") {
+            let items = enabled.filter { $0.sourceSubscription == subscription.identifier }
+            groups.append((id: subscription.identifier, title: subscription.title, items: items))
+        }
+        return groups.filter { !$0.items.isEmpty }
+    }
+
+    /// The full node object for a manual or subscription node item.
+    func nodeObject(for item: DraftItem) -> [String: JSONValue]? {
+        guard item.subscriptionOwned else { return draftItemObject(for: "nodes", at: item.index) }
+        guard let source = item.sourceSubscription else { return nil }
+        return subscriptionNodeInventory.node(subscriptionID: source, nodeID: item.identifier)?.object
+    }
+
+    /// Routes in the draft that use a node, manual or from a subscription.
+    func nodeReferences(_ identifier: String) -> [UIObjectReference] {
+        guard let root = parseDraft()?.objectValue else { return [] }
+        return SteerUISpec.inboundReferences(root: root, targetCollection: "nodes", targetID: identifier)
     }
 
     func draftItemObject(for key: String, at index: Int) -> [String: JSONValue]? {
@@ -2540,7 +2841,7 @@ final class AppModel: ObservableObject {
     }
 
     func draftReferenceLabel(_ item: DraftItem, in collection: String) -> String {
-        let items = draftItems(for: collection)
+        let items = collection == "nodes" ? nodeItems : draftItems(for: collection)
         let sameTitle = items.filter { $0.title == item.title }
         guard sameTitle.count > 1 else { return item.title }
         var qualifiers: [String] = []
@@ -2555,7 +2856,7 @@ final class AppModel: ObservableObject {
 
     func nodeReferenceProblem(_ identifier: String) -> String? {
         guard !identifier.isEmpty else { return "未选择节点" }
-        guard let node = draftItems(for: "nodes").first(where: { $0.identifier == identifier }) else {
+        guard let node = nodeItems.first(where: { $0.identifier == identifier }) else {
             return "节点不存在"
         }
         return node.enabled ? nil : "节点已停用"
@@ -2607,7 +2908,7 @@ final class AppModel: ObservableObject {
             guard let object = value.objectValue, let id = object["id"]?.stringValue else { continue }
             routes[id] = object
         }
-        let nodes = Set(draftItems(for: "nodes").filter(\.enabled).map(\.identifier))
+        let nodes = Set(nodeItems.filter(\.enabled).map(\.identifier))
         var visited = Set<String>()
         var current = identifier
         while !current.isEmpty {
@@ -2823,20 +3124,9 @@ final class AppModel: ObservableObject {
             message = "Default 规则必须保留"
             return
         }
-        if key == "subscriptions",
-           var root = parseDraft()?.objectValue,
-           case var .array(subscriptions)? = root[key], subscriptions.indices.contains(index),
-           let identifier = subscriptions[index].objectValue?["id"]?.stringValue {
-            subscriptions.remove(at: index)
-            root[key] = .array(subscriptions)
-            if case let .array(nodes)? = root["nodes"] {
-                root["nodes"] = .array(nodes.filter {
-                    $0.objectValue?["source_subscription"]?.stringValue != identifier
-                })
-            }
-            writeDraft(.object(root), context: key)
-            return
-        }
+        // Deleting a subscription only removes it from the draft. Its stored
+        // nodes are not part of the draft; the backend deletes them after the
+        // next successful save.
         mutateCollection(key) { values in
             guard values.indices.contains(index) else { return }
             values.remove(at: index)
@@ -2858,7 +3148,9 @@ final class AppModel: ObservableObject {
         default:
             break
         }
-        let references = SteerUISpec.inboundReferences(root: root, targetCollection: key, targetID: identifier)
+        let references = SteerUISpec.inboundReferences(
+            root: referenceRoot(root), targetCollection: key, targetID: identifier
+        )
         if !references.isEmpty {
             return "仍被其他配置使用，请先修改相关引用"
         }
@@ -2869,7 +3161,19 @@ final class AppModel: ObservableObject {
         guard let root = parseDraft()?.objectValue,
               case let .array(values)? = root[key], values.indices.contains(index),
               let identifier = values[index].objectValue?["id"]?.stringValue else { return [] }
-        return SteerUISpec.inboundReferences(root: root, targetCollection: key, targetID: identifier)
+        return SteerUISpec.inboundReferences(
+            root: referenceRoot(root), targetCollection: key, targetID: identifier
+        )
+    }
+
+    /// The draft joined with the stored subscription nodes, as the backend sees
+    /// the complete Intent. Only used for reference checks; it is never saved.
+    private func referenceRoot(_ root: [String: JSONValue]) -> [String: JSONValue] {
+        let stored = subscriptionNodeInventory.subscriptions.flatMap(\.nodes).map { JSONValue.object($0.object) }
+        guard !stored.isEmpty else { return root }
+        var complete = root
+        complete["nodes"] = .array((root["nodes"]?.arrayValue ?? []) + stored)
+        return complete
     }
 
     func moveDraftItem(in key: String, from source: IndexSet, to destination: Int) {
@@ -2950,6 +3254,7 @@ final class AppModel: ObservableObject {
         )
         await refreshOverviewLifecycleIfAvailable()
         await refreshProbeResultsIfAvailable()
+        await refreshSubscriptionNodesIfAvailable()
         if draftStayedAtSavedVersion { validation = outcome.validation }
         message = draftStayedAtSavedVersion
             ? "配置已保存；运行配置未改变"
@@ -2967,6 +3272,7 @@ final class AppModel: ObservableObject {
         runtime = outcome.status
         await refreshOverviewLifecycleIfAvailable()
         await refreshProbeResultsIfAvailable()
+        await refreshSubscriptionNodesIfAvailable()
         updateComponentStatus(await backend.componentStatus())
         let draftStayedAtSavedVersion = adoptSavedRevision(
             outcome.revision,
@@ -2984,8 +3290,14 @@ final class AppModel: ObservableObject {
             message = draftStayedAtSavedVersion
                 ? (runtime.healthy ? "配置已应用，Steer 运行正常" : "配置已保存，Steer 已停用")
                 : "操作开始时的工作副本已应用；期间产生的新修改仍未保存"
+            appendUnchangedRuntimeNotice(outcome)
         }
         return draftStayedAtSavedVersion
+    }
+
+    private func appendUnchangedRuntimeNotice(_ outcome: ApplyOutcome) {
+        guard SteerUISpec.showsUnchangedRuntimeNotice(outcome.applyResult) else { return }
+        message += "；" + SteerUISpec.unchangedRuntimeNotice
     }
 
     private func refreshProbeResultsIfAvailable() async {
@@ -3050,6 +3362,8 @@ final class AppModel: ObservableObject {
         guard cachedDraftDocument != rawJSON else { return }
         cachedDraftDocument = rawJSON
         cachedDraftItems.removeAll(keepingCapacity: true)
+        cachedSubscriptionNodeItems = nil
+        cachedNodeItems = nil
         draftDecodeCount += 1
         let data = Data(rawJSON.utf8)
         do {
@@ -3086,9 +3400,8 @@ final class AppModel: ObservableObject {
     }
 
     private func defaultItem(for key: String) -> JSONValue {
-        let prefix = SteerUISpec.contract.idPolicy.collectionPrefixes[key] ?? "item"
-        let id = "\(prefix)-\(UUID().uuidString.lowercased().prefix(8))"
-        let firstNode = draftItems(for: "nodes").first(where: \.enabled)?.identifier ?? ""
+        let id = SteerUISpec.generatedID(for: key)
+        let firstNode = nodeItems.first(where: \.enabled)?.identifier ?? ""
         let routes = draftItems(for: "routes")
         let firstRoute = routes.first(where: { $0.enabled && $0.kind == "direct" })?.identifier
             ?? routes.first(where: \.enabled)?.identifier ?? ""
@@ -3164,7 +3477,12 @@ final class AppModel: ObservableObject {
               case let .array(values)? = root[key],
               let object = values.compactMap(\.objectValue).first(where: {
                   $0["id"]?.stringValue == identifier
-              }) else { return "未命名项目" }
+              }) else {
+            if key == "nodes", let node = subscriptionNodeItems.first(where: { $0.identifier == identifier }) {
+                return node.title
+            }
+            return "未命名项目"
+        }
         let name = object["name"]?.stringValue ?? ""
         if !name.isEmpty { return name }
         let kind = object["type"]?.stringValue

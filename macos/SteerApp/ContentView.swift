@@ -173,7 +173,7 @@ private struct SidebarView: View {
 
     private func count(for page: AppPage) -> Int? {
         switch page {
-        case .nodes: return model.itemCount(for: "nodes")
+        case .nodes: return model.nodeCount
         case .wireguard: return model.itemCount(for:"wireguard_tunnels")
         case .routes: return model.itemCount(for: "routes")
         case .dns: return model.itemCount(for: "dns_profiles")
@@ -335,7 +335,7 @@ struct OverviewView: View {
     private var metricGrid: some View {
         Grid(horizontalSpacing: 12, verticalSpacing: 12) {
             GridRow {
-                metric(value: model.itemCount(for: "nodes"), label: "节点", footnote: "当前工作副本", symbol: "point.3.connected.trianglepath.dotted")
+                metric(value: model.nodeCount, label: "节点", footnote: "手动节点与订阅节点", symbol: "point.3.connected.trianglepath.dotted")
                 metric(value: model.itemCount(for: "routes"), label: "路由", footnote: "当前工作副本", symbol: "arrow.triangle.branch")
                 metric(value: model.itemCount(for: "dns_profiles"), label: "DNS Profile", footnote: "当前工作副本", symbol: "network")
             }
@@ -378,6 +378,10 @@ struct OverviewView: View {
             }
             Text(safeLastApplySummary)
                 .foregroundStyle(model.runtime.lastApply?.result.ok == false ? Color.orange : Color.secondary)
+            if SteerUISpec.showsUnchangedRuntimeNotice(model.runtime.lastApply?.result) {
+                Label(SteerUISpec.unchangedRuntimeNotice, systemImage: "checkmark.circle")
+                    .foregroundStyle(.secondary)
+            }
             ControlGroup {
                 Button("刷新") { model.refreshStatus() }
                 Button("打开诊断") { model.selectedPage = .diagnostics }
@@ -680,7 +684,10 @@ struct DraftCollectionView: View {
     @State private var draggedItemID: DraftItem.ID?
     @State private var dragPreviewIDs: [DraftItem.ID] = []
 
-    private var allItems: [DraftItem] { model.draftItems(for: descriptor.key) }
+    private var allItems: [DraftItem] {
+        descriptor.key == "nodes" ? model.nodeItems : model.draftItems(for: descriptor.key)
+    }
+    private var isSubscriptionNodeGroup: Bool { descriptor.key == "nodes" && activeNodeGroup != "_manual" }
     private var activeNodeGroup: String {
         nodeGroups.contains(where: { $0.id == selectedNodeGroup }) ? selectedNodeGroup : "_manual"
     }
@@ -708,21 +715,12 @@ struct DraftCollectionView: View {
         guard descriptor.key == "nodes" else { return [] }
         var groups = [NodeCollectionGroup(
             id: "_manual", label: "手动节点",
-            count: allItems.filter { $0.sourceSubscription == nil }.count
+            count: allItems.filter { !$0.subscriptionOwned }.count
         )]
-        var known = Set(["_manual"])
         for subscription in model.draftItems(for: "subscriptions") {
-            known.insert(subscription.identifier)
             groups.append(NodeCollectionGroup(
                 id: subscription.identifier, label: subscription.title,
                 count: allItems.filter { $0.sourceSubscription == subscription.identifier }.count
-            ))
-        }
-        for source in allItems.compactMap(\.sourceSubscription) where !known.contains(source) {
-            known.insert(source)
-            groups.append(NodeCollectionGroup(
-                id: source, label: "已删除的订阅",
-                count: allItems.filter { $0.sourceSubscription == source }.count
             ))
         }
         return groups
@@ -749,19 +747,23 @@ struct DraftCollectionView: View {
                     .onChange(of: selectedNodeGroup) { _ in selection = nil }
                 }
                 Spacer()
-                Button { editSelected() } label: {
-                    Label("编辑", systemImage: "square.and.pencil")
+                if isSubscriptionNodeGroup {
+                    subscriptionNodeHeaderActions
+                } else {
+                    Button { editSelected() } label: {
+                        Label("编辑", systemImage: "square.and.pencil")
+                    }
+                    .disabled(model.isBusy || model.draftSyntaxError != nil
+                              || selectedItem == nil || selectedItem?.subscriptionOwned == true)
+                    Button { moveSelected(offset: -1) } label: {
+                        Label("上移", systemImage: "arrow.up")
+                    }
+                    .disabled(model.isBusy || model.draftSyntaxError != nil || !canMoveSelected(offset: -1))
+                    Button { moveSelected(offset: 1) } label: {
+                        Label("下移", systemImage: "arrow.down")
+                    }
+                    .disabled(model.isBusy || model.draftSyntaxError != nil || !canMoveSelected(offset: 1))
                 }
-                .disabled(model.isBusy || model.draftSyntaxError != nil
-                          || selectedItem == nil || selectedItem?.subscriptionOwned == true)
-                Button { moveSelected(offset: -1) } label: {
-                    Label("上移", systemImage: "arrow.up")
-                }
-                .disabled(model.isBusy || model.draftSyntaxError != nil || !canMoveSelected(offset: -1))
-                Button { moveSelected(offset: 1) } label: {
-                    Label("下移", systemImage: "arrow.down")
-                }
-                .disabled(model.isBusy || model.draftSyntaxError != nil || !canMoveSelected(offset: 1))
                 if descriptor.key == "nodes" {
                     Button {
                         selectedNodeGroup = "_manual"
@@ -838,9 +840,11 @@ struct DraftCollectionView: View {
                         Image(systemName: descriptor.symbol)
                             .font(.largeTitle)
                             .foregroundStyle(.tertiary)
-                        Text(descriptor.emptyMessage)
+                        Text(isSubscriptionNodeGroup ? "这个订阅还没有节点" : descriptor.emptyMessage)
                             .font(.headline)
-                        Text("使用右上角的“\(descriptor.addLabel)”创建工作副本条目。")
+                        Text(isSubscriptionNodeGroup
+                             ? "保存配置并在“订阅”页更新后，节点会显示在这里。"
+                             : "使用右上角的“\(descriptor.addLabel)”创建工作副本条目。")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
@@ -860,13 +864,15 @@ struct DraftCollectionView: View {
                             .disabled(model.isBusy)
                         Divider()
                     }
-                    Button("编辑") { edit(item) }
-                        .disabled(item.subscriptionOwned)
-                    if !isSystemRoute(item) && !isDefaultRule(item) {
-                        Button("删除", role: .destructive) {
-                            requestDeletion(item)
+                    if item.subscriptionOwned {
+                        subscriptionNodeMenuItems(item)
+                    } else {
+                        Button("编辑") { edit(item) }
+                        if !isSystemRoute(item) && !isDefaultRule(item) {
+                            Button("删除", role: .destructive) {
+                                requestDeletion(item)
+                            }
                         }
-                        .disabled(item.subscriptionOwned)
                     }
                 }
             } primaryAction: { selected in
@@ -893,6 +899,9 @@ struct DraftCollectionView: View {
             HStack {
                 if !actionError.isEmpty {
                     Label(actionError, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                } else if descriptor.key == "nodes", !model.subscriptionNodeError.isEmpty {
+                    Label(model.subscriptionNodeError, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.red)
                 } else if descriptor.key == "rules" {
                     Label("从上到下严格匹配；Default 必须位于最后。", systemImage: "info.circle")
@@ -935,7 +944,10 @@ struct DraftCollectionView: View {
         .sheet(item: $nodeExportTarget) { item in
             NodeExportSheet(model: model, item: item)
         }
-        .onAppear { openValidationFocus() }
+        .onAppear {
+            openValidationFocus()
+            if descriptor.key == "nodes" { model.refreshSubscriptionNodes() }
+        }
         .onChange(of: model.validationFocus?.id) { _ in openValidationFocus() }
         .alert(
             "删除“\(pendingDeletion?.title ?? "项目")”？",
@@ -954,7 +966,7 @@ struct DraftCollectionView: View {
             }
         } message: {
             Text(descriptor.key == "subscriptions"
-                 ? "相关订阅节点也会从工作副本移除。"
+                 ? "此操作只修改工作副本；保存后，这个订阅的节点也会一并删除。"
                  : "此操作只修改工作副本，应用前仍可重新载入系统配置。")
         }
     }
@@ -1083,7 +1095,8 @@ struct DraftCollectionView: View {
     private var movableItems: [DraftItem] { items.filter(isMovable) }
 
     private func isMovable(_ item: DraftItem) -> Bool {
-        guard let object = model.draftItemObject(for: descriptor.key, at: item.index) else { return false }
+        guard !item.subscriptionOwned,
+              let object = model.draftItemObject(for: descriptor.key, at: item.index) else { return false }
         return SteerUISpec.isMovable(collection: descriptor.key, object: object)
     }
 
@@ -1116,6 +1129,7 @@ struct DraftCollectionView: View {
     }
 
     private func orderingRestriction(_ item: DraftItem) -> String {
+        if item.subscriptionOwned { return "订阅节点按订阅中的顺序显示" }
         if descriptor.key == "nodes", !orderingEnabled { return "点击“顺序”列后可调整工作副本顺序" }
         if isDefaultRule(item) { return "Default 固定在最后" }
         if isSystemRoute(item) { return "系统路由顺序固定" }
@@ -1237,6 +1251,90 @@ struct DraftCollectionView: View {
         edit(selectedItem)
     }
 
+    private func enableActionLabel(_ item: DraftItem) -> String {
+        SteerUISpec.subscriptionNodeActionLabel(item.enabled ? "disable" : "enable")
+    }
+
+    private func canToggleSubscriptionNode(_ item: DraftItem) -> Bool {
+        !model.isBusy && model.pendingDraftAction == nil && !model.subscriptionNodeOperationInProgress(item)
+    }
+
+    private var canCopySubscriptionNode: Bool {
+        model.canEditDraft && model.draftSyntaxError == nil
+    }
+
+    private func canCleanSubscriptionNode(_ item: DraftItem) -> Bool {
+        guard item.pinnedStale, let source = item.sourceSubscription else { return false }
+        return !model.isBusy && !model.isDirty && !model.subscriptionNodeOperationInProgress(item)
+            && !model.subscriptionOperationInProgress(source) && model.nodeReferences(item.identifier).isEmpty
+    }
+
+    @ViewBuilder
+    private var subscriptionNodeHeaderActions: some View {
+        let item = selectedItem?.subscriptionOwned == true ? selectedItem : nil
+        Button {
+            if let item { model.setSubscriptionNodeEnabled(item, enabled: !item.enabled) }
+        } label: {
+            if item?.enabled == false {
+                Label(SteerUISpec.subscriptionNodeActionLabel("enable"), systemImage: "checkmark.circle")
+            } else {
+                Label(SteerUISpec.subscriptionNodeActionLabel("disable"), systemImage: "pause.circle")
+            }
+        }
+        .disabled(item.map { !canToggleSubscriptionNode($0) } ?? true)
+        Button {
+            if let item { copyToManual(item) }
+        } label: {
+            Label(SteerUISpec.subscriptionNodeActionLabel("copy_to_manual"), systemImage: "doc.on.doc")
+        }
+        .disabled(item == nil || !canCopySubscriptionNode)
+        if let item, item.pinnedStale {
+            Button(role: .destructive) {
+                cleanSubscriptionNode(item)
+            } label: {
+                Label(SteerUISpec.subscriptionNodeActionLabel("clean"), systemImage: "trash")
+            }
+            .disabled(!canCleanSubscriptionNode(item))
+            .help(model.nodeReferences(item.identifier).isEmpty
+                  ? "只移除这个已失效节点；不会改变当前运行配置"
+                  : "仍被路由使用，不能清理")
+        }
+    }
+
+    @ViewBuilder
+    private func subscriptionNodeMenuItems(_ item: DraftItem) -> some View {
+        Button(enableActionLabel(item)) {
+            model.setSubscriptionNodeEnabled(item, enabled: !item.enabled)
+        }
+        .disabled(!canToggleSubscriptionNode(item))
+        Button(SteerUISpec.subscriptionNodeActionLabel("copy_to_manual")) { copyToManual(item) }
+            .disabled(!canCopySubscriptionNode)
+        if item.pinnedStale {
+            Button(SteerUISpec.subscriptionNodeActionLabel("clean"), role: .destructive) {
+                cleanSubscriptionNode(item)
+            }
+            .disabled(!canCleanSubscriptionNode(item))
+        }
+    }
+
+    private func copyToManual(_ item: DraftItem) {
+        guard let copied = model.copySubscriptionNodeToManual(item) else {
+            actionError = "无法\(SteerUISpec.subscriptionNodeActionLabel("copy_to_manual"))"
+            return
+        }
+        actionError = ""
+        blockedReferences = []
+        selectedNodeGroup = "_manual"
+        selection = copied.id
+        edit(copied)
+    }
+
+    private func cleanSubscriptionNode(_ item: DraftItem) {
+        guard let source = item.sourceSubscription else { return }
+        actionError = ""
+        model.cleanSubscriptionNode(subscriptionID: source, nodeID: item.identifier)
+    }
+
     private func edit(_ item: DraftItem) {
         guard !item.subscriptionOwned,
               let object = model.draftItemObject(for: descriptor.key, at: item.index) else { return }
@@ -1304,7 +1402,9 @@ struct DraftCollectionView: View {
                 Label(item.enabled ? "启用" : "停用", systemImage: "lock.fill")
                     .labelStyle(.iconOnly)
                     .foregroundStyle(item.enabled ? Color.green : Color.secondary)
-                    .help(item.subscriptionOwned ? "订阅节点状态由订阅管理" : "系统直连路由始终启用")
+                    .help(item.subscriptionOwned
+                          ? "订阅节点只读；可在操作菜单中\(enableActionLabel(item))"
+                          : "系统直连路由始终启用")
             )
         }
         let enabled = Binding(
@@ -1414,9 +1514,19 @@ struct DraftCollectionView: View {
                       : "更新已保存的节点列表，不改变当前运行配置")
             }
             if item.subscriptionOwned {
-                Image(systemName: "lock.fill")
-                    .foregroundStyle(.secondary)
-                    .help("订阅节点只读")
+                Menu {
+                    subscriptionNodeMenuItems(item)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .disabled(model.isBusy || model.subscriptionNodeOperationInProgress(item))
+                .help("订阅节点只读；可\(enableActionLabel(item))或\(SteerUISpec.subscriptionNodeActionLabel("copy_to_manual"))")
+                if model.subscriptionNodeOperationInProgress(item) {
+                    ProgressView().controlSize(.small)
+                }
             } else {
                 Button { edit(item) } label: {
                     Image(systemName: "square.and.pencil")
@@ -1564,6 +1674,10 @@ struct DiagnosticsView: View {
             Section("最近应用") {
                 if let apply = model.runtime.lastApply {
                     LabeledContent("结果", value: apply.result.ok ? "成功" : "失败")
+                    if SteerUISpec.showsUnchangedRuntimeNotice(apply.result) {
+                        Label(SteerUISpec.unchangedRuntimeNotice, systemImage: "checkmark.circle")
+                            .foregroundStyle(.secondary)
+                    }
                     if let error = apply.result.error, !error.isEmpty {
                         LabeledContent("错误", value: error)
                     }
@@ -1669,6 +1783,7 @@ struct DiagnosticsView: View {
         case "LOCAL_PROXY_AUTH_REQUIRED": return "该监听地址允许其他设备连接，必须设置用户名和密码"
         case "INVALID_DURATION": return "更新间隔必须是大于零的时长"
         case "DNS_PROJECTION_EMPTY": return "该规则仅含连接阶段条件，不影响 DNS 上游选择"
+        case "SUBSCRIPTION_NODE_IN_CONFIG": return "配置里不能包含订阅节点；订阅节点由订阅管理"
         default: return issue.message
         }
     }
