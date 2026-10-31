@@ -3,13 +3,13 @@
 		"description": "Grant access to Steer configuration",
 		"read": {
 			"ubus": {
-				"luci.steer": [ "status", "overview_state", "validate", "intent_preview", "runtime", "logs", "diagnostics", "probe_results", "geodata_catalog", "subscriptions", "node_export" ]
+				"luci.steer": [ "status", "overview_state", "validate", "intent_preview", "runtime", "logs", "diagnostics", "probe_results", "geodata_catalog", "subscriptions", "subscription_nodes", "node_export" ]
 			},
 			"uci": [ "steer" ]
 		},
 		"write": {
 			"ubus": {
-				"luci.steer": [ "commit_candidate", "discard_candidate", "apply_saved", "set_enabled", "subscription_update", "subscription_clean", "node_speedtest", "route_speedtest", "overview_probe", "node_import" ]
+				"luci.steer": [ "commit_candidate", "discard_candidate", "apply_saved", "set_enabled", "subscription_update", "subscription_clean", "subscription_node_set", "node_speedtest", "route_speedtest", "overview_probe", "node_import" ]
 			},
 			"uci": [ "steer" ]
 		}

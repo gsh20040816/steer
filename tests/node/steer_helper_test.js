@@ -119,7 +119,11 @@ function loadHelper(runtime) {
 			}
 			if (method == 'overview_state')
 				return Promise.resolve(runtime.lifecycleState);
-			if (method == 'set_enabled') { runtime.sequence.push('set-enabled-rpc'); runtime.enabled = args[0] ? '1' : '0'; return Promise.resolve({ ok: true }); }
+			if (method == 'set_enabled') { runtime.sequence.push('set-enabled-rpc'); runtime.enabled = args[0] ? '1' : '0'; return Promise.resolve(runtime.setEnabledResult || { ok: true }); }
+			if (method == 'subscription_nodes' || method == 'subscription_node_set') {
+				runtime.inventoryCalls.push({ method, args });
+				return Promise.resolve(runtime.inventoryResult);
+			}
 			if (method == 'apply_saved') {
 				runtime.applySavedCalls++;
 				return Promise.resolve(runtime.applySavedResult);
@@ -157,6 +161,7 @@ function loadHelper(runtime) {
 	const translate = (value) => String(value);
 	const uci = {
 		changes: () => Promise.resolve({}),
+		sections: (config, type) => config == 'steer' ? (runtime.uciSectionsByType?.[type] || []) : [],
 		save: () => { runtime.sequence.push('save-candidate'); return Promise.resolve(); },
 		unload: (config) => { runtime.unloadedConfigs.push(config); },
 		load: (config) => { runtime.loadedConfigs.push(config); return Promise.resolve(); },
@@ -205,6 +210,8 @@ async function main() {
 			previewResponse: { ok: true, source: 'committed', redacted: true, intent: {} },
 			permissions: {},
 		testCalls: [],
+		inventoryCalls: [],
+		inventoryResult: { subscriptions: [] },
 		sequence: [],
 		notifications: [],
 		revertedConfigs: [],
@@ -249,6 +256,47 @@ async function main() {
 		'RPC failures are localized by stable code before raw detail');
 	assert.equal(helper.rpcErrorText({ error_code: 'IMPORT_PROGRAM_MISSING' }), 'The Steer node parser is not installed.');
 	assert.equal(helper.rpcErrorText({ error_code: 'IMPORT_PROGRAM_NOT_EXECUTABLE' }), 'The Steer node parser is not executable.');
+	for (const code of uiSpec.subscription_nodes.error_codes) {
+		assert.notEqual(helper.rpcErrorText({ error_code: code, error: `${code}: raw backend detail` }), 'Operation failed.',
+			`${code} from the shared subscription node contract has a localized LuCI message`);
+	}
+	assert.equal(helper.rpcErrorText({ error_code: 'NODE_STILL_REFERENCED', error: 'NODE_STILL_REFERENCED: route "proxy"' }),
+		'A Route still uses this subscription node. Change the Route first.');
+	runtime.inventoryResult = { subscriptions: [ { id: 'feed', nodes: [ { id: 'feed_a', enabled: true } ] } ] };
+	assert.deepEqual(await helper.subscriptionNodes(), runtime.inventoryResult);
+	await helper.subscriptionNodes('feed');
+	await helper.setSubscriptionNodeEnabled('feed', 'feed_a', false);
+	await helper.setSubscriptionNodeEnabled('feed', 'feed_a', 1);
+	assert.deepEqual(runtime.inventoryCalls, [
+		{ method: 'subscription_nodes', args: [ '' ] },
+		{ method: 'subscription_nodes', args: [ 'feed' ] },
+		{ method: 'subscription_node_set', args: [ 'feed', 'feed_a', false ] },
+		{ method: 'subscription_node_set', args: [ 'feed', 'feed_a', false ] }
+	], 'subscription node RPCs forward IDs and only an explicit true enables a node');
+	runtime.uciSectionsByType = {
+		node: [ { '.name': 'manual' } ],
+		route: [
+			{ '.name': 'via_feed', name: 'Via feed', kind: 'single', node: 'feed_a' },
+			{ '.name': 'via_manual', kind: 'single', node: 'manual' },
+			{ '.name': 'via_other', kind: 'single', node: 'other_b' }
+		]
+	};
+	const storedNodes = { subscriptions: [
+		{ id: 'feed', nodes: [ { id: 'feed_a' }, { id: 'feed_b' } ] },
+		{ id: 'other', nodes: [ { id: 'other_b' } ] }
+	] };
+	assert.deepEqual(helper.collectionReferences('subscriptions', 'feed', storedNodes), [
+		{ objectType: 'route', id: 'via_feed', label: 'Via feed', option: 'node' }
+	], 'subscription removal is guarded by routes that use nodes from the subscription node store');
+	assert.deepEqual(helper.collectionReferences('subscriptions', 'missing', storedNodes), []);
+	assert.deepEqual(helper.collectionReferences('subscriptions', 'feed'), [],
+		'UCI node sections never define subscription ownership');
+	delete runtime.uciSectionsByType;
+	const unchangedLabel = uiSpec.apply_result.unchanged_notice.label;
+	assert.equal(helper.applyUnchangedNotice({ ok: true, activated: true, restarted: false }), unchangedLabel);
+	for (const result of [ { ok: true, activated: true, restarted: true }, { ok: true, activated: false, restarted: false },
+		{ ok: false, activated: true, restarted: false }, { ok: true, activated: true } ])
+		assert.equal(helper.applyUnchangedNotice(result), '', `no unchanged notice for ${JSON.stringify(result)}`);
 	const currentView = { handleSave: () => { runtime.sequence.push('capture-form'); return Promise.resolve(); } };
 	helper.loadStyle(currentView);
 	await new Promise((resolve) => setImmediate(resolve));
@@ -597,6 +645,33 @@ async function main() {
 	assert.deepEqual(runtime.revertedConfigs, [ 'steer' ]);
 	assert.deepEqual(runtime.unloadedConfigs, [ 'steer' ]);
 	assert.deepEqual(runtime.loadedConfigs, [ 'steer' ]);
+
+	runtime.commitCalls = 0;
+	runtime.applyResult = { ok: true, activated: true, restarted: false };
+	await helper.applyPending();
+	const unchangedApply = textContent(runtime.notifications.at(-1).content);
+	assert.equal(runtime.notifications.at(-1).level, 'info');
+	assert.ok(unchangedApply.includes('Steer configuration saved and activated.') && unchangedApply.includes(unchangedLabel),
+		'Save & Apply explains that an unchanged runtime kept running without a restart');
+	runtime.commitCalls = 0;
+	runtime.applyResult = { ok: true, activated: true, restarted: true };
+	await helper.applyPending();
+	assert.ok(!textContent(runtime.notifications.at(-1).content).includes(unchangedLabel),
+		'a restarted runtime does not show the unchanged notice');
+	runtime.applySavedResult = { ok: true, activated: true, restarted: false };
+	await helper.applySaved();
+	assert.ok(textContent(runtime.notifications.at(-1).content).includes(unchangedLabel),
+		'Apply Saved shows the shared unchanged-runtime notice');
+	const noticesBeforeRestart = runtime.notifications.length;
+	runtime.applySavedResult = { ok: true, activated: true, restarted: true };
+	await helper.applySaved();
+	assert.equal(runtime.notifications.length, noticesBeforeRestart, 'a restarting Apply Saved adds no unchanged notice');
+	runtime.setEnabledResult = { ok: true, saved: true, applied: true, activated: true, restarted: false };
+	await helper.setGlobalEnabled(true, currentView);
+	assert.ok(textContent(runtime.notifications.at(-1).content).includes(unchangedLabel),
+		'the global Enable switch shows the shared unchanged-runtime notice');
+	delete runtime.setEnabledResult;
+	runtime.applyResult = { ok: true, activated: true };
 
 	runtime.sequence = [];
 	runtime.commitCalls = 0;

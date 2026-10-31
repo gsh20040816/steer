@@ -1606,3 +1606,54 @@ msgstr "提前判定为直连时，内核直连保留客户端地址。DNS 辅�
 
 msgid "WireGuard"
 msgstr "WireGuard"
+
+msgid "Enable"
+msgstr "启用"
+
+msgid "Disable"
+msgstr "停用"
+
+msgid "Clean up"
+msgstr "清理"
+
+msgid "Copy to my nodes"
+msgstr "复制到我的节点"
+
+msgid "Runtime configuration unchanged; not restarted"
+msgstr "运行配置没有变化，未重启"
+
+msgid "Subscription nodes are read-only. To edit one, copy it to my nodes first."
+msgstr "订阅节点只读。需要修改时，先复制到我的节点。"
+
+msgid "Subscription nodes could not be loaded."
+msgstr "无法读取订阅节点。"
+
+msgid "Subscription node change failed"
+msgstr "订阅节点修改失败"
+
+msgid "Disabled Nodes cannot be tested. Enable this Node first."
+msgstr "已停用的节点不能测速。请先启用该节点。"
+
+msgid "Choose whether the subscription node is enabled."
+msgstr "请选择是否启用该订阅节点。"
+
+msgid "The subscription is not in the saved configuration."
+msgstr "已保存配置中没有这个订阅。"
+
+msgid "The subscription no longer has this node."
+msgstr "该订阅中已没有这个节点。"
+
+msgid "A Route still uses this subscription node. Change the Route first."
+msgstr "仍有路由在使用这个订阅节点，请先修改路由。"
+
+msgid "Only nodes the subscription no longer advertises can be cleaned up."
+msgstr "只能清理订阅已不再提供的节点。"
+
+msgid "The change would make the saved configuration invalid."
+msgstr "这项修改会使已保存配置无效。"
+
+msgid "The subscription node list could not be saved."
+msgstr "无法保存订阅节点列表。"
+
+msgid "Subscription nodes are managed by their subscription and cannot be saved in the configuration."
+msgstr "配置里不能包含订阅节点；订阅节点由订阅管理。"

@@ -12,11 +12,27 @@
 
 const manualNodeGroup = '_manual';
 
-function nodeGroupID(node) {
-	return node.source_subscription || manualNodeGroup;
+/* UCI holds only manual nodes. Subscription nodes come from the
+ * subscription_nodes RPC (the platform node store) and are read-only here. */
+function subscriptionInventoryAvailable(inventory) {
+	return inventory?.ok !== false && Array.isArray(inventory?.subscriptions);
 }
 
-function collectNodeGroups(nodes, subscriptions) {
+function manualNodeEntries() {
+	return uci.sections('steer', 'node').map((node) => ({
+		id: node['.name'], name: node.name, type: node.type, server: node.server, server_port: node.server_port,
+		enabled: node.enabled != '0', group: manualNodeGroup
+	}));
+}
+
+function subscriptionNodeEntries(inventory) {
+	return (inventory?.subscriptions || []).flatMap((subscription) => (subscription.nodes || []).map((node) => ({
+		id: node.id, name: node.name, type: node.type, server: node.server, server_port: node.server_port,
+		enabled: enabledFlag(node.enabled), group: subscription.id, stale: node.pinned_stale === true, node
+	})));
+}
+
+function collectNodeGroups(entries, subscriptions) {
 	const groups = [ { id: manualNodeGroup, label: _('Manual nodes'), count: 0 } ];
 	const known = { [manualNodeGroup]: groups[0] };
 	subscriptions.forEach((subscription) => {
@@ -25,8 +41,8 @@ function collectNodeGroups(nodes, subscriptions) {
 		known[id] = group;
 		groups.push(group);
 	});
-	nodes.forEach((node) => {
-		const id = nodeGroupID(node);
+	entries.forEach((entry) => {
+		const id = entry.group;
 		if (!known[id]) {
 			known[id] = { id, label: _('Missing subscription: %s').format(id), count: 0 };
 			groups.push(known[id]);
@@ -36,21 +52,22 @@ function collectNodeGroups(nodes, subscriptions) {
 	return groups;
 }
 
-function collectNodeReferences(nodes, routes, groups) {
+function collectNodeReferences(entries, routes, groups) {
 	const known = {};
 	const groupOrder = {};
 	groups.forEach((group, index) => { groupOrder[group.id] = index; });
 	const references = [];
-	nodes.slice().sort((left, right) => {
-		const group = (groupOrder[nodeGroupID(left)] ?? groups.length) - (groupOrder[nodeGroupID(right)] ?? groups.length);
-		return group || String(left.name || left['.name']).localeCompare(String(right.name || right['.name']));
-	}).forEach((node) => {
-		known[node['.name']] = true;
-		const group = groups.find((candidate) => candidate.id == nodeGroupID(node));
-		const endpoint = node.server && node.server_port ? '%s:%s'.format(node.server, node.server_port) : node.type;
+	entries.slice().sort((left, right) => {
+		const group = (groupOrder[left.group] ?? groups.length) - (groupOrder[right.group] ?? groups.length);
+		return group || String(left.name || left.id).localeCompare(String(right.name || right.id));
+	}).forEach((entry) => {
+		known[entry.id] = true;
+		const group = groups.find((candidate) => candidate.id == entry.group);
+		const endpoint = entry.server && entry.server_port ? '%s:%s'.format(entry.server, entry.server_port) : entry.type;
 		references.push({
-			id: node['.name'], label: node.name || node['.name'], group: group?.label || nodeGroupID(node),
-			detail: endpoint + (node.source_subscription ? ' · ' + _('Subscription: %s').format(node.source_subscription) : '')
+			id: entry.id, label: entry.name || entry.id, group: group?.label || entry.group,
+			detail: endpoint + (entry.group != manualNodeGroup
+				? ' · ' + _('Subscription: %s').format(group?.label || entry.group) : '')
 		});
 	});
 	routes.forEach((route) => {
@@ -74,11 +91,11 @@ function nodeReferenceLabel(references, nodeId) {
 	return reference ? reference.label : _('Missing node');
 }
 
-function collectRouteReferences(routes) {
+function collectRouteReferences(routes, nodeReferences) {
 	const references = routes.filter((route) => route.kind == 'single').map((route) => ({
 		id: route['.name'],
 		label: routeLabel(route),
-		detail: _('Node: %s').format(route.node || _('not selected'))
+		detail: _('Node: %s').format(nodeReferenceLabel(nodeReferences, route.node) || _('not selected'))
 	}));
 	const known = Object.fromEntries(references.map((reference) => [ reference.id, true ]));
 	routes.forEach((route) => {
@@ -192,15 +209,16 @@ function renderMissingRejectAction(routes, map) {
 	]);
 }
 
-function hasEnabledNode() {
-	return uci.sections('steer', 'node').some((node) => node.enabled != '0');
+function hasEnabledNode(subscriptionEntries) {
+	return manualNodeEntries().some((entry) => entry.enabled) ||
+		(subscriptionEntries || []).some((entry) => entry.enabled);
 }
 
-function configureSingleRouteCreation(section) {
+function configureSingleRouteCreation(section, subscriptionEntries) {
 	const unavailable = _('Create or enable a proxy node before adding a single-node route.');
 	const handleAdd = section.handleAdd;
 	section.handleAdd = function(ev, sectionId) {
-		if (!hasEnabledNode()) {
+		if (!hasEnabledNode(subscriptionEntries)) {
 			ui.addNotification(_('Add single-node route'), E('p', {}, unavailable), 'warning');
 			return;
 		}
@@ -216,7 +234,7 @@ function configureSingleRouteCreation(section) {
 			return row;
 		const reason = E('p', { 'class': 'cbi-section-descr alert-message warning' }, unavailable);
 		const refresh = function() {
-			const available = hasEnabledNode();
+			const available = hasEnabledNode(subscriptionEntries);
 			reason.hidden = available;
 			button.title = available ? _('Add single-node route') : unavailable;
 			if (section.map?.readonly === true || !available)
@@ -234,16 +252,34 @@ function configureSingleRouteCreation(section) {
 	};
 }
 
-function configureSubscriptionRemoval(section, nodes) {
-	section.handleRemove = function(sectionId) {
-		const owned = nodes.filter((node) => node.source_subscription == sectionId);
-		const config = this.uciconfig || this.map.config;
-		owned.forEach((node) => this.map.data.remove(config, node['.name']));
-		this.map.data.remove(config, sectionId);
-		return this.map.save(null, true);
-	};
-	steer.configureRemovalGuard(section, (sectionId) => steer.collectionReferences('subscriptions', sectionId),
+function configureSubscriptionRemoval(section, inventory) {
+	/* Removing a subscription only removes its UCI section; the backend drops
+	 * its node store after the next Apply. Routes using its nodes block it. */
+	steer.configureRemovalGuard(section,
+		(sectionId) => steer.collectionReferences('subscriptions', sectionId, inventory.current),
 		_('Subscription cannot be removed'));
+}
+
+function subscriptionInventoryHolder(initial) {
+	return {
+		current: initial,
+		refresh: function(list) {
+			return Promise.resolve(subscriptionInventoryAvailable(list) ? list : steer.subscriptionNodes())
+				.then((result) => {
+					this.current = result;
+					return result;
+				});
+		}
+	};
+}
+
+function renderSubscriptionInventoryWarning(inventory) {
+	if (subscriptionInventoryAvailable(inventory))
+		return null;
+	return E('div', { 'class': 'alert-message warning' }, [
+		E('p', {}, _('Subscription nodes could not be loaded.')),
+		E('p', {}, steer.rpcErrorText(inventory))
+	]);
 }
 
 function protocolLabel(value) {
@@ -404,9 +440,16 @@ function addGeneratedNodeField(section, field) {
 	return option;
 }
 
-function selectedNodeGroup(groups) {
-	const requested = new URLSearchParams(window.location.search || '').get('node_group');
-	return groups.some((group) => group.id == requested) ? requested : manualNodeGroup;
+function selectedNodeGroup(groups, subscriptionEntries) {
+	const query = new URLSearchParams(window.location.search || '');
+	const requested = query.get('node_group');
+	if (groups.some((group) => group.id == requested))
+		return requested;
+	/* A focus link to a subscription node opens its read-only group; it has
+	 * no UCI section for the manual editor. */
+	const [ focusType, focusId ] = String(query.get('steer-focus') || '').split(':');
+	const focused = focusType == 'node' ? (subscriptionEntries || []).find((entry) => entry.id == focusId) : null;
+	return focused && groups.some((group) => group.id == focused.group) ? focused.group : manualNodeGroup;
 }
 
 function renderNodeGroupNavigation(groups, activeGroup) {
@@ -449,8 +492,15 @@ function subscriptionOperationGate(initialChanges, formNode, permissions) {
 		version++;
 		refresh();
 	};
+	const refreshPending = function() {
+		return uci.changes().then((changes) => {
+			pending = hasPendingSteerChanges(changes);
+			refresh();
+		});
+	};
 	formNode?.addEventListener?.('input', markDirty);
 	formNode?.addEventListener?.('change', markDirty);
+	window.addEventListener?.('steer-uci-state-changed', refreshPending);
 
 	return {
 		bind: function(button, disabledReason, method) {
@@ -458,6 +508,7 @@ function subscriptionOperationGate(initialChanges, formNode, permissions) {
 			refresh();
 			return button;
 		},
+		clear: function() { buttons.length = 0; },
 		version: function() { return version; },
 		blockedReason: function(disabledReason, method) {
 			if (permissions?.[method] !== true)
@@ -509,6 +560,7 @@ function probeOperationGate(initialChanges, allowed) {
 			updateButton(entry);
 			return button;
 		},
+		clear: function() { buttons.length = 0; },
 		bindForm: function(formNode) {
 			const selector = 'output[for$="._connect_speedtest"] button, output[for$="._download_speedtest"] button, output[for$="._route_connect_test"] button, output[for$="._route_download_test"] button';
 			Array.from(formNode?.querySelectorAll?.(selector) || []).forEach((button) =>
@@ -531,7 +583,7 @@ function probeOperationGate(initialChanges, allowed) {
 	};
 }
 
-function renderSubscriptionStatus(result, gate) {
+function renderSubscriptionStatus(result, gate, inventory) {
 	const subscriptions = result?.subscriptions || [];
 	return E('section', { 'class': 'steer-subscription-status' }, [
 		E('h3', {}, _('Subscription status')),
@@ -566,9 +618,12 @@ function renderSubscriptionStatus(result, gate) {
 								status.added || 0, status.current || 0, (status.stale || []).length, status.skipped || 0);
 							ui.addNotification(null, E('p', {}, message), (status.stale || []).length ? 'warning' : 'info');
 							return gate.mayReload(startVersion).then((reload) => {
-								if (reload) window.location.reload();
-								else ui.addNotification(null, E('p', {}, _('Visible edits appeared while the update was running; they were preserved and the page was not reloaded.')), 'warning');
-								return update;
+								if (reload) {
+									window.location.reload();
+									return update;
+								}
+								ui.addNotification(null, E('p', {}, _('Visible edits appeared while the update was running; they were preserved and the page was not reloaded.')), 'warning');
+								return inventory.refresh().then(() => update);
 							});
 						});
 						});
@@ -603,9 +658,12 @@ function renderSubscriptionStatus(result, gate) {
 							}
 							ui.addNotification(null, E('p', {}, _('Unavailable node removed. The running configuration was not changed.')), 'info');
 							return gate.mayReload(startVersion).then((reload) => {
-								if (reload) window.location.reload();
-								else ui.addNotification(null, E('p', {}, _('Visible edits appeared while cleanup was running; they were preserved and the page was not reloaded.')), 'warning');
-								return clean;
+								if (reload) {
+									window.location.reload();
+									return clean;
+								}
+								ui.addNotification(null, E('p', {}, _('Visible edits appeared while cleanup was running; they were preserved and the page was not reloaded.')), 'warning');
+								return inventory.refresh().then(() => clean);
 							});
 						});
 						});
@@ -709,18 +767,17 @@ function renderImportButton(allowed) {
 	]);
 }
 
-function nodeExportDisabledReason(sectionId, allowed) {
+function nodeExportDisabledReason(node, allowed) {
 	if (!allowed)
 		return _('Your session does not have permission to export Nodes.');
-	const type = uci.get('steer', sectionId, 'type');
-	if (type == 'tor')
+	if (node?.type == 'tor')
 		return _('Tor Nodes do not have a share-link format.');
-	if (type == 'ssh' && !uci.get('steer', sectionId, 'password'))
+	if (node?.type == 'ssh' && !node?.password)
 		return _('SSH Nodes that only use a private key cannot be exported as share links.');
 	return '';
 }
 
-function showNodeExportDialog(sectionId) {
+function showNodeExportDialog(sectionId, name) {
 	const content = E('div', {}, E('p', { 'class': 'spinning' }, _('Generating the Node share link…')));
 	ui.showModal(_('Export Node link'), [
 		E('p', { 'class': 'alert-message warning' }, _('Share links contain the complete Node credentials. Store and share them only through trusted channels.')),
@@ -753,7 +810,7 @@ function showNodeExportDialog(sectionId) {
 			}
 		}, _('Copy link'));
 		content.replaceChildren(E('div', {}, [
-			E('p', {}, uci.get('steer', sectionId, 'name') || _('Unnamed')),
+			E('p', {}, name || _('Unnamed')),
 			input,
 			E('div', { 'class': 'right' }, copy)
 		]));
@@ -769,7 +826,7 @@ function decorateNodeExportOption(option, allowed) {
 			? renderWidget.call(this, sectionId, optionIndex, cfgvalue)
 			: E('button', { 'class': 'cbi-button cbi-button-action' }, this.inputtitle || _('Export link'));
 		const button = widget?.matches?.('button') ? widget : widget?.querySelector?.('button');
-		const reason = nodeExportDisabledReason(sectionId, allowed);
+		const reason = nodeExportDisabledReason(uci.get('steer', sectionId), allowed);
 		if (button && reason) {
 			button.disabled = true;
 			button.title = reason;
@@ -881,7 +938,7 @@ function navigateNodeDisplaySort(mode) {
 	window.location.href = (window.location.pathname || '') + (query.toString() ? '?' + query.toString() : '');
 }
 
-function decorateNodeSortHeaders(formNode) {
+function decorateNodeSortHeaders(formNode, options) {
 	const state = nodeDisplaySortState();
 	const table = formNode?.querySelector?.('#cbi-steer-node table') || formNode?.querySelector?.('table');
 	if (!table) return;
@@ -907,7 +964,7 @@ function decorateNodeSortHeaders(formNode) {
 			'click': (ev) => { ev.preventDefault(); ev.stopPropagation(); navigateNodeDisplaySort(mode); }
 		}, [ E('span', {}, label), active ? E('span', { 'class': 'steer-node-sort-arrow', 'aria-hidden': 'true' }, metricMode ? direction : '↑') : '' ]));
 	};
-	if (orderHeader)
+	if (orderHeader && options?.orderHeader !== false)
 		orderHeader.replaceChildren(_('Order'));
 	install(byLabel(_('Connection test'), '_connect_speedtest'), _('Connection test'), 'connect');
 	install(byLabel(_('Download test'), '_download_speedtest'), _('Download test'), 'download');
@@ -919,91 +976,253 @@ function lightweightNodeEndpoint(node) {
 	return node.server_port ? '%s:%s'.format(node.server, node.server_port) : node.server;
 }
 
-function renderLightweightNodeProbe(node, download, probeResults, gate) {
-	const sectionId = node['.name'];
+function subscriptionNodeActionLabel(action) {
+	return steer.uiSpecLabel(uiSpec.subscription_nodes?.actions?.[action]?.label);
+}
+
+function writeUCINode(sectionId, values) {
+	Object.keys(values || {}).filter((option) => option != 'id').forEach((option) => {
+		let value = values[option];
+		if (value == null || value === '' || (Array.isArray(value) && !value.length))
+			return;
+		if (typeof(value) == 'boolean')
+			value = value ? '1' : '0';
+		else if (typeof(value) == 'number')
+			value = String(value);
+		else if (Array.isArray(value))
+			value = value.map(String);
+		uci.set('steer', sectionId, option, value);
+	});
+}
+
+function notifySubscriptionNodeFailure(title, result) {
+	const errors = (result?.validation?.errors || []).slice(0, 5);
+	ui.addNotification(title, E('div', {}, [
+		E('p', {}, steer.rpcErrorText(result)),
+		errors.length ? steer.resultMessage({ validation: { errors, warnings: [] } }) : ''
+	]), 'danger');
+}
+
+function notifyInventoryLocked(reason) {
+	ui.addNotification(_('Subscription inventory is locked'), E('p', {}, reason), 'warning');
+}
+
+function setSubscriptionNodeEnabled(entry, button, context) {
+	return context.inventoryGate.blockedReason('', 'subscription_node_set').then((reason) => {
+		if (reason) {
+			notifyInventoryLocked(reason);
+			return null;
+		}
+		button.disabled = true;
+		button.classList.add('spinning');
+		return steer.setSubscriptionNodeEnabled(entry.group, entry.id, !entry.enabled).then((result) => {
+			if (subscriptionInventoryAvailable(result))
+				return context.refresh(result).then(() => result);
+			notifySubscriptionNodeFailure(_('Subscription node change failed'), result);
+			return context.refresh().then(() => result);
+		}, (error) => {
+			notifySubscriptionNodeFailure(_('Subscription node change failed'), error);
+			return context.refresh().then(() => error);
+		});
+	});
+}
+
+function cleanSubscriptionNode(entry, button, context) {
+	const references = steer.collectionReferences('nodes', entry.id);
+	if (references.length) {
+		ui.addNotification(_('Subscription node removal failed'), E('ul', {}, references.map((reference) => E('li', {}, [
+			E('span', {}, '%s %s'.format(referenceObjectLabel(reference.objectType), reference.label || reference.id)),
+			E('button', { 'class': 'btn cbi-button-action', 'click': () => steer.focusIssue({
+				object_type: reference.objectType, object_id: reference.id, option: reference.option
+			}) }, _('Go to reference'))
+		]))), 'danger');
+		return Promise.resolve(null);
+	}
+	return context.inventoryGate.blockedReason('', 'subscription_clean').then((reason) => {
+		if (reason) {
+			notifyInventoryLocked(reason);
+			return null;
+		}
+		button.disabled = true;
+		button.classList.add('spinning');
+		return steer.cleanSubscription(entry.group, entry.id).then((result) => {
+			if (result?.ok !== true) {
+				notifySubscriptionNodeFailure(_('Subscription node removal failed'), result);
+				return context.refresh().then(() => result);
+			}
+			ui.addNotification(null, E('p', {}, _('Unavailable node removed. The running configuration was not changed.')), 'info');
+			return context.refresh().then(() => result);
+		}, (error) => {
+			notifySubscriptionNodeFailure(_('Subscription node removal failed'), error);
+			return context.refresh().then(() => error);
+		});
+	});
+}
+
+function copySubscriptionNode(entry, button) {
+	const title = subscriptionNodeActionLabel('copy_to_manual');
+	const copy = entry.node?.[uiSpec.subscription_nodes?.manual_copy_field || 'manual_copy'];
+	if (copy == null || typeof(copy) != 'object' || Array.isArray(copy)) {
+		ui.addNotification(title, E('p', {}, steer.rpcErrorText(null)), 'danger');
+		return Promise.resolve(false);
+	}
+	/* The copy is the shared manual_copy rule; LuCI only assigns the UCI ID
+	 * and opens the native editor. Routes keep pointing at the original. */
+	const sectionId = steer.nextSectionID('nodes');
+	let added = false;
+	button.disabled = true;
+	return Promise.resolve().then(() => {
+		uci.add('steer', 'node', sectionId);
+		added = true;
+		writeUCINode(sectionId, copy);
+		return uci.save();
+	}).then(() => {
+		const query = new URLSearchParams({ node_group: manualNodeGroup, 'steer-focus': 'node:%s:name'.format(sectionId) });
+		window.location.href = L.url('admin/services/steer/nodes') + '?' + query.toString();
+		return true;
+	}).catch((error) => {
+		if (added)
+			uci.remove('steer', sectionId);
+		button.disabled = false;
+		ui.addNotification(title, E('p', {}, String(error)), 'danger');
+		return false;
+	});
+}
+
+function lightweightNodeEndpoint(node) {
+	if (!node?.server)
+		return node?.type == 'tor' ? _('Local') : '—';
+	return node.server_port ? '%s:%s'.format(node.server, node.server_port) : node.server;
+}
+
+function renderSubscriptionNodeProbe(entry, download, probeResults, gate) {
+	const sectionId = entry.id;
 	const kind = download ? 'download' : 'connect';
 	const option = download ? '_download_speedtest' : '_connect_speedtest';
+	const disabledReason = entry.enabled ? '' : _('Disabled Nodes cannot be tested. Enable this Node first.');
 	const output = E('small', { 'class': 'steer-probe-latest' });
 	renderLatestProbe(output, findLatestProbe(probeResults, 'nodes', sectionId, kind));
 	const button = E('button', {
 		'class': 'cbi-button cbi-button-action',
 		'type': 'button',
-		'click': function(ev) { return runSpeedtest(sectionId, download, ev.currentTarget, gate); }
+		'click': function() { return runSpeedtest(sectionId, download, button, gate, true, disabledReason); }
 	}, _('Test'));
 	button._steerProbeOutput = output;
 	button._steerProbeScope = 'nodes';
 	button._steerProbeObjectID = sectionId;
 	button._steerProbeKind = kind;
-	button._steerProbeDisabledReason = nodeProbeDisabledReason(sectionId);
-	gate.bind(button, _('Test'), button._steerProbeDisabledReason);
+	button._steerProbeDisabledReason = disabledReason;
+	gate.bind(button, _('Test'), disabledReason);
 	return E('output', { 'for': 'cbid.steer.%s.%s'.format(sectionId, option) },
 		E('div', { 'class': 'steer-probe-action' }, [ button, output ]));
 }
 
-function renderLightweightNodeTable(nodes, activeGroup, displaySort, probeResults, gate, exportAllowed) {
-	const configuredIds = nodes.map((node) => node['.name']);
-	const nodeById = Object.fromEntries(nodes.map((node) => [ node['.name'], node ]));
-	const displayedIds = sortNodeSectionIDs(configuredIds, displaySort.mode, displaySort.direction, probeResults);
-	const orderingDisabledReason = displaySort.mode == 'default' ? '' : _('Order');
-	const orderingSection = {
-		sectiontype: 'node',
-		uciconfig: 'steer',
-		map: { config: 'steer', data: uci, readonly: false },
-		cfgsections: function() {
-			return uci.sections('steer', 'node')
-				.filter((node) => nodeGroupID(node) == activeGroup.id)
-				.map((node) => node['.name']);
-		},
-		renderRowActions: function() { return E('td', {}, E('div')); }
-	};
-	steer.configureOrdering(orderingSection, 'nodes', { baseActions: false, disabledReason: orderingDisabledReason });
+function renderSubscriptionNodeRow(entry, probeResults, context) {
+	const permissions = context.permissions;
+	const exportReason = nodeExportDisabledReason(entry.node, permissions.node_export === true);
+	const exportButton = E('button', {
+		'class': 'cbi-button cbi-button-action', 'type': 'button',
+		'disabled': exportReason ? true : null, 'title': exportReason,
+		'click': function(ev) { ev?.preventDefault?.(); return showNodeExportDialog(entry.id, entry.name); }
+	}, _('Export link'));
+	const toggle = E('button', {
+		'class': 'cbi-button cbi-button-action', 'type': 'button',
+		'click': function(ev) { ev?.preventDefault?.(); return setSubscriptionNodeEnabled(entry, toggle, context); }
+	}, subscriptionNodeActionLabel(entry.enabled ? 'disable' : 'enable'));
+	context.inventoryGate.bind(toggle, '', 'subscription_node_set');
+	const copyReason = permissions.uci_write === true ? '' : _('You do not have permission to change Steer.');
+	const copy = E('button', {
+		'class': 'cbi-button cbi-button-add', 'type': 'button',
+		'disabled': copyReason ? true : null, 'title': copyReason,
+		'click': function(ev) { ev?.preventDefault?.(); return copyReason ? null : copySubscriptionNode(entry, copy); }
+	}, subscriptionNodeActionLabel('copy_to_manual'));
+	const actions = [ toggle, ' ', copy ];
+	if (entry.stale) {
+		const clean = E('button', {
+			'class': 'cbi-button cbi-button-negative', 'type': 'button',
+			'click': function(ev) { ev?.preventDefault?.(); return cleanSubscriptionNode(entry, clean, context); }
+		}, subscriptionNodeActionLabel('clean'));
+		context.inventoryGate.bind(clean, '', 'subscription_clean');
+		actions.push(' ', clean);
+	}
+	return E('tr', {
+		'id': 'cbi-steer-' + entry.id,
+		'class': 'tr cbi-section-table-row steer-lightweight-node-row',
+		'data-sid': entry.id
+	}, [
+		E('td', { 'data-title': _('Enabled') }, [
+			entry.enabled ? _('Enabled') : _('Disabled'),
+			entry.stale ? E('small', { 'class': 'steer-node-stale' }, _('Subscription node is no longer advertised')) : ''
+		]),
+		E('td', { 'data-title': _('Name') }, E('strong', {}, entry.name || _('Unnamed'))),
+		E('td', { 'data-title': _('Protocol') }, protocolLabel(entry.type) || '—'),
+		E('td', { 'data-title': _('Server'), 'class': 'steer-node-endpoint' }, lightweightNodeEndpoint(entry)),
+		E('td', { 'data-title': _('Connection test') }, renderSubscriptionNodeProbe(entry, false, probeResults, context.probeGate)),
+		E('td', { 'data-title': _('Download test') }, renderSubscriptionNodeProbe(entry, true, probeResults, context.probeGate)),
+		E('td', { 'data-title': _('Share link') }, exportButton),
+		E('td', { 'data-title': _('Action') }, actions)
+	]);
+}
 
-	const body = E('tbody', {}, displayedIds.map((sectionId) => {
-		const node = nodeById[sectionId];
-		const exportReason = nodeExportDisabledReason(sectionId, exportAllowed);
-		const exportButton = E('button', {
-			'class': 'cbi-button cbi-button-action', 'type': 'button',
-			'disabled': exportReason ? true : null, 'title': exportReason,
-			'click': function(ev) { ev.preventDefault(); return showNodeExportDialog(sectionId); }
-		}, _('Export link'));
-		return E('tr', {
-			'id': 'cbi-steer-' + sectionId,
-			'class': 'tr cbi-section-table-row steer-lightweight-node-row',
-			'data-sid': sectionId,
-			'dragenter': function(ev) { return orderingSection.handleDragEnter(ev); },
-			'dragover': function(ev) { return orderingSection.handleDragOver(ev); },
-			'dragleave': function(ev) { return orderingSection.handleDragLeave(ev); },
-			'drop': function(ev) { return orderingSection.handleDrop(ev); }
-		}, [
-			orderingSection.renderRowActions(sectionId),
-			E('td', { 'data-title': _('Enabled') }, node.enabled == '0' ? _('Disabled') : _('Enabled')),
-			E('td', { 'data-title': _('Name') }, E('strong', {}, node.name || _('Unnamed'))),
-			E('td', { 'data-title': _('Protocol') }, protocolLabel(node.type) || '—'),
-			E('td', { 'data-title': _('Server'), 'class': 'steer-node-endpoint' }, lightweightNodeEndpoint(node)),
-			E('td', { 'data-title': _('Connection test') }, renderLightweightNodeProbe(node, false, probeResults, gate)),
-			E('td', { 'data-title': _('Download test') }, renderLightweightNodeProbe(node, true, probeResults, gate)),
-			E('td', { 'data-title': _('Share link') }, exportButton)
-		]);
-	}));
+function renderSubscriptionNodeTable(entries, activeGroup, displaySort, probeResults, context) {
+	const entryById = Object.fromEntries(entries.map((entry) => [ entry.id, entry ]));
+	const displayedIds = sortNodeSectionIDs(entries.map((entry) => entry.id), displaySort.mode, displaySort.direction, probeResults);
 	const table = E('table', { 'class': 'table cbi-section-table steer-lightweight-node-table' }, [
 		E('thead', {}, E('tr', { 'class': 'tr cbi-section-table-titles' }, [
-			E('th', {}, _('Order')),
 			E('th', {}, _('Enabled')),
 			E('th', {}, _('Name')),
 			E('th', {}, _('Protocol')),
 			E('th', {}, _('Server')),
 			E('th', { 'data-widget': '_connect_speedtest' }, _('Connection test')),
 			E('th', { 'data-widget': '_download_speedtest' }, _('Download test')),
-			E('th', {}, _('Share link'))
+			E('th', {}, _('Share link')),
+			E('th', { 'class': 'cbi-section-actions' }, _('Action'))
 		])),
-		body
+		E('tbody', {}, displayedIds.map((sectionId) => renderSubscriptionNodeRow(entryById[sectionId], probeResults, context)))
 	]);
 	const section = E('section', { 'class': 'cbi-section steer-lightweight-node-section' }, [
-		E('h3', {}, _('Proxy nodes — %s (%d)').format(activeGroup.label, nodes.length)),
+		E('h3', {}, _('Proxy nodes — %s (%d)').format(activeGroup.label, entries.length)),
+		E('p', { 'class': 'cbi-section-descr' }, _('Subscription nodes are read-only. To edit one, copy it to my nodes first.')),
 		E('div', { 'class': 'table-responsive' }, table)
 	]);
-	decorateNodeSortHeaders(section);
+	decorateNodeSortHeaders(section, { orderHeader: false });
 	return section;
+}
+
+/* Subscription groups are read-only and rendered without LuCI form widgets so
+ * large subscriptions stay light. Inventory actions redraw this page in place. */
+function renderSubscriptionNodePage(state) {
+	const root = E('div', { 'class': 'steer-subscription-node-page' });
+	const context = {
+		permissions: state.permissions, probeGate: state.probeGate, inventoryGate: state.inventoryGate
+	};
+	const draw = function() {
+		state.probeGate.clear();
+		state.inventoryGate.clear();
+		const subscriptionEntries = subscriptionNodeEntries(state.inventory.current);
+		const groups = collectNodeGroups(manualNodeEntries().concat(subscriptionEntries), state.subscriptions);
+		const activeGroup = groups.find((group) => group.id == state.groupId) ||
+			{ id: state.groupId, label: _('Missing subscription: %s').format(state.groupId), count: 0 };
+		const visibleEntries = subscriptionEntries.filter((entry) => entry.group == state.groupId);
+		const contents = [ renderNodeGroupNavigation(groups, state.groupId) ];
+		const warning = renderSubscriptionInventoryWarning(state.inventory.current);
+		if (warning)
+			contents.push(warning);
+		const batchSpeedtests = renderBatchSpeedtests(
+			visibleEntries.filter((entry) => entry.enabled).map((entry) => entry.id), state.probeGate);
+		if (batchSpeedtests)
+			contents.push(batchSpeedtests);
+		contents.push(renderSubscriptionNodeTable(visibleEntries, activeGroup, state.displaySort, state.probeResults, context));
+		root.replaceChildren(...contents);
+	};
+	context.refresh = function(list) {
+		return Promise.all([ state.inventory.refresh(list), steer.probeResults() ]).then((results) => {
+			state.probeResults = results[1] || state.probeResults;
+			draw();
+		});
+	};
+	draw();
+	return root;
 }
 
 function renderLatestProbe(output, result) {
@@ -1053,8 +1272,8 @@ function nodeProbeDisabledReason(sectionId) {
 		? _('Disabled Nodes cannot be tested. Enable and apply this Node first.') : '';
 }
 
-function runSpeedtest(sectionId, download, button, gate, refreshAfter = true) {
-	return gate.allow(nodeProbeDisabledReason(sectionId)).then((allowed) => {
+function runSpeedtest(sectionId, download, button, gate, refreshAfter = true, disabledReason = nodeProbeDisabledReason(sectionId)) {
+	return gate.allow(disabledReason).then((allowed) => {
 	if (!allowed) return false;
 	setSpeedtestButton(button, 'testing', _('Testing…'));
 	return steer.speedtest(sectionId, download).then((result) => {
@@ -1170,14 +1389,7 @@ function showImportDialog() {
 				nodes.forEach((node) => {
 					const id = steer.nextSectionID('nodes');
 					uci.add('steer', 'node', id);
-					Object.keys(node).filter((option) => option != 'id' && !option.startsWith('source_') && option != 'pinned_stale').forEach((option) => {
-						let value = node[option];
-						if (typeof(value) == 'boolean')
-							value = value ? '1' : '0';
-						else if (typeof(value) == 'number')
-							value = String(value);
-						uci.set('steer', id, option, value);
-					});
+					writeUCINode(id, node);
 				});
 				saveEvent.currentTarget.disabled = true;
 				return uci.save().then(() => {
@@ -1222,23 +1434,23 @@ const nodesView = view.extend({
 	load: function() {
 		return Promise.all([
 			uci.load('steer'), steer.subscriptions(), uci.changes(), steer.probeResults(),
-			steer.permissions([ 'subscription_update', 'subscription_clean', 'node_speedtest', 'route_speedtest', 'node_import', 'node_export' ], true)
+			steer.permissions([ 'subscription_update', 'subscription_clean', 'subscription_node_set', 'node_speedtest', 'route_speedtest', 'node_import', 'node_export' ], true),
+			steer.subscriptionNodes()
 		]);
 	},
 
 	render: function(data) {
 		let m, s, o;
-		const nodes = uci.sections('steer', 'node');
 		const routes = uci.sections('steer', 'route');
 		const subscriptions = uci.sections('steer', 'subscription');
-		const nodeGroups = collectNodeGroups(nodes, subscriptions);
-		const activeNodeGroup = selectedNodeGroup(nodeGroups);
+		const inventory = subscriptionInventoryHolder(data?.[5]);
+		const manualEntries = manualNodeEntries();
+		const subscriptionEntries = subscriptionNodeEntries(inventory.current);
+		const nodeEntries = manualEntries.concat(subscriptionEntries);
+		const nodeGroups = collectNodeGroups(nodeEntries, subscriptions);
+		const activeNodeGroup = selectedNodeGroup(nodeGroups, subscriptionEntries);
 		const activeGroup = nodeGroups.find((group) => group.id == activeNodeGroup);
-		const nodeReferences = collectNodeReferences(nodes, routes, nodeGroups);
-		const routeReferences = collectRouteReferences(routes);
-		const enabledNodeIds = nodes.filter((node) => nodeGroupID(node) == activeNodeGroup && node.enabled != '0')
-			.map((node) => node['.name']);
-		const summaryOnly = activeNodeGroup != manualNodeGroup;
+		const inventoryWarning = renderSubscriptionInventoryWarning(inventory.current);
 		const page = (window.location.pathname || '').split('/').pop();
 		const probeResults = data?.[3] || { latest_results: [] };
 		const displaySort = nodeDisplaySortState();
@@ -1251,7 +1463,7 @@ const nodesView = view.extend({
 			s = m.section(form.GridSection, 'subscription', _('Node subscriptions'));
 			steer.configureNamedSection(s, steer.creationDefaults('subscriptions'));
 			steer.configureOrdering(s, 'subscriptions');
-			configureSubscriptionRemoval(s, nodes);
+			configureSubscriptionRemoval(s, inventory);
 			s.addremove = true;
 			s.nodescriptions = true;
 			s.addbtntitle = _('Add subscription');
@@ -1264,23 +1476,30 @@ const nodesView = view.extend({
 			const subscriptionSection = s;
 			return m.render().then((formNode) => steer.focusSection(subscriptionSection, 'subscription').then(() => {
 				const gate = subscriptionOperationGate(data?.[2], formNode, permissions);
-				return E([], [ renderSubscriptionStatus(data?.[1], gate), formNode ]);
+				const contents = [ renderSubscriptionStatus(data?.[1], gate, inventory) ];
+				if (inventoryWarning)
+					contents.push(inventoryWarning);
+				contents.push(formNode);
+				return E([], contents);
 			}));
 		}
 		const probeGate = probeOperationGate(data?.[2], page == 'routes'
 			? permissions.route_speedtest === true : permissions.node_speedtest === true);
 
 		if (page == 'routes') {
+			const nodeReferences = collectNodeReferences(nodeEntries, routes, nodeGroups);
+			const routeReferences = collectRouteReferences(routes, nodeReferences);
+			const defaultNode = nodeEntries.find((entry) => entry.enabled);
 			addSystemRouteSection(m, routes.find((route) => route.kind == 'direct'));
 			addSystemRouteSection(m, routes.find((route) => route.kind == 'block'));
 			const rejectRecovery = renderMissingRejectAction(routes, m);
 
 			s = m.section(form.GridSection, 'route', _('Single-node routes'));
-			steer.configureNamedSection(s, steer.creationDefaults('routes', { node: enabledNodeIds[0] || '' }));
+			steer.configureNamedSection(s, steer.creationDefaults('routes', { node: defaultNode?.id || '' }));
 			steer.configureOrdering(s, 'routes');
 			steer.configureRemovalGuard(s, (sectionId) => steer.collectionReferences('routes', sectionId),
 				_('Route is still referenced'));
-			configureSingleRouteCreation(s);
+			configureSingleRouteCreation(s, subscriptionEntries);
 			s.addremove = true;
 			s.nodescriptions = true;
 			s.addbtntitle = _('Add single-node route');
@@ -1350,37 +1569,29 @@ const nodesView = view.extend({
 			const routeSection = s;
 			return m.render().then((formNode) => steer.focusSection(routeSection, 'route').then(() => {
 				probeGate.bindForm(formNode);
-				return rejectRecovery ? E([], [ rejectRecovery, formNode ]) : formNode;
+				const contents = [ inventoryWarning, rejectRecovery ].filter(Boolean);
+				return contents.length ? E([], contents.concat([ formNode ])) : formNode;
 			}));
 		}
 
-		if (summaryOnly) {
-			const visibleNodes = nodes.filter((node) => nodeGroupID(node) == activeNodeGroup);
-			const contents = [ renderNodeGroupNavigation(nodeGroups, activeNodeGroup) ];
-			const batchSpeedtests = renderBatchSpeedtests(enabledNodeIds, probeGate);
-			if (batchSpeedtests)
-				contents.push(batchSpeedtests);
-			contents.push(renderLightweightNodeTable(visibleNodes, activeGroup, displaySort, probeResults, probeGate,
-				permissions.node_export === true));
-			return Promise.resolve(E([], contents));
+		if (activeNodeGroup != manualNodeGroup) {
+			return Promise.resolve(renderSubscriptionNodePage({
+				groupId: activeNodeGroup, subscriptions, inventory, displaySort, probeResults, permissions, probeGate,
+				inventoryGate: subscriptionOperationGate(data?.[2], null, permissions)
+			}));
 		}
 
+		/* UCI holds only manual nodes; every section here is user-editable. */
+		const enabledNodeIds = manualEntries.filter((entry) => entry.enabled).map((entry) => entry.id);
 		s = m.section(form.GridSection, 'node', _('Proxy nodes — %s (%d)').format(activeGroup.label, activeGroup.count));
 		steer.configureNamedSection(s, steer.creationDefaults('nodes'));
 		steer.configureRemovalGuard(s, (sectionId) => steer.collectionReferences('nodes', sectionId),
 			_('Node is still referenced'));
-		s.addremove = activeNodeGroup == manualNodeGroup;
-		/* Subscription nodes are generated data; avoid building editable widgets for every row. */
-		s.readonly = summaryOnly;
-		if (summaryOnly)
-			s.renderRowActions = function() { return E([]); };
+		s.addremove = true;
 		const orderingDisabledReason = displaySort.mode == 'default' ? '' : _('Order');
-		steer.configureOrdering(s, 'nodes', { baseActions: !summaryOnly, disabledReason: orderingDisabledReason });
+		steer.configureOrdering(s, 'nodes', { disabledReason: orderingDisabledReason });
 		s.nodescriptions = true;
 		s.addbtntitle = _('Add proxy node');
-		s.filter = function(sectionId) {
-			return nodeGroupID(uci.get('steer', sectionId)) == activeNodeGroup;
-		};
 		const configuredSections = s.cfgsections;
 		s.cfgsections = function() {
 			return sortNodeSectionIDs(configuredSections.call(this), displaySort.mode, displaySort.direction, probeResults);
@@ -1389,7 +1600,7 @@ const nodesView = view.extend({
 		s.handleSort = function() {};
 		o = s.option(form.Flag, 'enabled', _('Enabled'));
 		o.default = '1';
-		o.editable = !summaryOnly;
+		o.editable = true;
 
 		o = s.option(form.Button, '_connect_speedtest', _('Connection test'));
 		o.editable = true;
@@ -1416,12 +1627,12 @@ const nodesView = view.extend({
 		o.write = function() {};
 		o.remove = function() {};
 		o.onclick = function(ev, sectionId) {
-			const reason = nodeExportDisabledReason(sectionId, permissions.node_export === true);
+			const reason = nodeExportDisabledReason(uci.get('steer', sectionId), permissions.node_export === true);
 			if (reason) {
 				ui.addNotification(_('Node export is unavailable'), E('p', {}, reason), 'warning');
 				return;
 			}
-			return showNodeExportDialog(sectionId);
+			return showNodeExportDialog(sectionId, uci.get('steer', sectionId, 'name'));
 		};
 		decorateNodeExportOption(o, permissions.node_export === true);
 
@@ -1433,20 +1644,20 @@ const nodesView = view.extend({
 		o = s.option(form.ListValue, 'type', _('Protocol'));
 		uiSpec.node_types.forEach((item) => o.value(item.value, protocolLabel(item.value)));
 		o.rmempty = false;
-		o.editable = !summaryOnly;
+		o.editable = true;
 		o.textvalue = function(sectionId) {
 			return protocolLabel(uci.get('steer', sectionId, 'type'));
 		};
 
 		o = s.option(form.Value, 'server', _('Server'));
 		o.rmempty = false;
-		o.editable = !summaryOnly;
+		o.editable = true;
 		uiSpec.node_types.filter((item) => item.value != 'tor').forEach((item) => o.depends('type', item.value));
 
 		o = s.option(form.Value, 'server_port', _('Port'));
 		o.datatype = 'port';
 		o.rmempty = false;
-		o.editable = !summaryOnly;
+		o.editable = true;
 		uiSpec.node_types.filter((item) => item.value != 'tor').forEach((item) => o.depends('type', item.value));
 
 		uiSpec.node_fields
@@ -1458,11 +1669,12 @@ const nodesView = view.extend({
 			const contents = [ renderNodeGroupNavigation(nodeGroups, activeNodeGroup) ];
 			decorateNodeSortHeaders(formNode);
 			probeGate.bindForm(formNode);
+			if (inventoryWarning)
+				contents.push(inventoryWarning);
 			const batchSpeedtests = renderBatchSpeedtests(enabledNodeIds, probeGate);
 			if (batchSpeedtests)
 				contents.push(batchSpeedtests);
-			if (activeNodeGroup == manualNodeGroup)
-				contents.push(renderImportButton(permissions.node_import === true && permissions.uci_write === true));
+			contents.push(renderImportButton(permissions.node_import === true && permissions.uci_write === true));
 			contents.push(formNode);
 			return E([], contents);
 		}));

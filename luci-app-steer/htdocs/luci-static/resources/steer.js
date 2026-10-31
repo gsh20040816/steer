@@ -23,6 +23,8 @@ const callGeodataCatalog = rpc.declare({ object: 'luci.steer', method: 'geodata_
 const callSubscriptions = rpc.declare({ object: 'luci.steer', method: 'subscriptions', expect: { '': {} } });
 const callSubscriptionUpdate = rpc.declare({ object: 'luci.steer', method: 'subscription_update', params: [ 'id' ], expect: { '': {} } });
 const callSubscriptionClean = rpc.declare({ object: 'luci.steer', method: 'subscription_clean', params: [ 'id', 'node' ], expect: { '': {} } });
+const callSubscriptionNodes = rpc.declare({ object: 'luci.steer', method: 'subscription_nodes', params: [ 'id' ], expect: { '': {} } });
+const callSubscriptionNodeSet = rpc.declare({ object: 'luci.steer', method: 'subscription_node_set', params: [ 'id', 'node', 'enabled' ], expect: { '': {} } });
 const callNodeSpeedtest = rpc.declare({ object: 'luci.steer', method: 'node_speedtest', params: [ 'node', 'download' ], expect: { '': {} } });
 const callRouteSpeedtest = rpc.declare({ object: 'luci.steer', method: 'route_speedtest', params: [ 'route', 'download' ], expect: { '': {} } });
 const callOverviewProbe = rpc.declare({ object: 'luci.steer', method: 'overview_probe', params: [ 'kind' ], expect: { '': {} } });
@@ -87,6 +89,7 @@ const validationMessages = {
 	DNS_REJECT_PROJECTION_SKIPPED: _('DNS cannot evaluate this Rule’s connection-stage conditions, so DNS continues to later Rules.'),
 	INSECURE_TLS: _('TLS certificate verification is disabled.'),
 	SUBSCRIPTION_NODE_STALE: _('The subscription no longer advertises this Node; remove Route references as soon as possible.'),
+	SUBSCRIPTION_NODE_IN_CONFIG: _('Subscription nodes are managed by their subscription and cannot be saved in the configuration.'),
 	PLATFORM_UNSUPPORTED_SOURCE_MAC: _('The current platform cannot match the original source MAC address.'),
 	CANDIDATE_READ_FAILED: _('The pending Steer configuration could not be read.'),
 	CANDIDATE_VALIDATE_FAILED: _('The pending Steer configuration could not be validated.'),
@@ -136,6 +139,13 @@ const rpcErrorMessages = {
 	LOG_READ_FAILED: _('Recent Steer logs could not be read.'),
 	MISSING_SUBSCRIPTION_ID: _('A Subscription ID is required.'),
 	MISSING_SUBSCRIPTION_NODE_ID: _('A Subscription ID and Node ID are required.'),
+	INVALID_SUBSCRIPTION_NODE_ENABLED: _('Choose whether the subscription node is enabled.'),
+	SUBSCRIPTION_NOT_FOUND: _('The subscription is not in the saved configuration.'),
+	SUBSCRIPTION_NODE_NOT_FOUND: _('The subscription no longer has this node.'),
+	NODE_STILL_REFERENCED: _('A Route still uses this subscription node. Change the Route first.'),
+	SUBSCRIPTION_NODE_CURRENT: _('Only nodes the subscription no longer advertises can be cleaned up.'),
+	VALIDATION_FAILED: _('The change would make the saved configuration invalid.'),
+	SUBSCRIPTION_NODE_STORE_FAILED: _('The subscription node list could not be saved.'),
 	MISSING_NODE_ID: _('A Node ID is required.'),
 	MISSING_ROUTE_ID: _('A Route ID is required.'),
 	INVALID_PROBE_KIND: _('Choose the direct, proxy, or speed-test probe.'),
@@ -219,11 +229,14 @@ function navigateIssue(issue) {
 	return true;
 }
 
-function collectionReferences(targetCollection, targetId) {
+function collectionReferences(targetCollection, targetId, subscriptionNodes) {
 	if (targetCollection == 'subscriptions') {
-		const owned = Object.fromEntries(uci.sections('steer', 'node')
-			.filter((node) => node.source_subscription == targetId)
-			.map((node) => [ node['.name'], true ]));
+		/* Subscription nodes live in the node store, not in UCI. The guard
+		 * uses the subscription_nodes read result for ownership. */
+		const owned = Object.fromEntries((subscriptionNodes?.subscriptions || [])
+			.filter((subscription) => subscription.id == targetId)
+			.flatMap((subscription) => subscription.nodes || [])
+			.map((node) => [ node.id, true ]));
 		return uci.sections('steer', 'route').filter((route) => owned[route.node]).map((route) => ({
 			objectType: 'route', id: route['.name'], label: route.name || route['.name'], option: 'node'
 		}));
@@ -256,6 +269,23 @@ function resultMessage(result) {
 			issueDestination(entry.issue) ? E('button', { 'class': 'btn cbi-button-action', 'click': () => navigateIssue(entry.issue) }, _('Go to field')) : ''
 		])));
 	return E('p', {}, rpcErrorText(result));
+}
+
+function applyUnchanged(result) {
+	const when = uiSpec.apply_result?.unchanged_notice_when || {};
+	const conditions = Object.entries(when);
+	return conditions.length > 0 && conditions.every(([ field, expected ]) => result?.[field] === expected);
+}
+
+function applyUnchangedNotice(result) {
+	return applyUnchanged(result) ? uiSpecLabel(uiSpec.apply_result?.unchanged_notice?.label) : '';
+}
+
+function notifyApplyUnchanged(result) {
+	const notice = applyUnchangedNotice(result);
+	if (notice)
+		ui.addNotification(null, E('p', {}, notice), 'info');
+	return result;
 }
 
 function waitForApply(sequence, attempts) {
@@ -295,9 +325,13 @@ function finishCommittedApply(owner, result, status, validation, previousGenerat
 		return failed;
 	}
 	const disabled = uci.get('steer', 'main', 'enabled') != '1';
-	ui.addNotification(null, E('p', {}, disabled
-		? _('Configuration saved; Steer was disabled and its runtime resources were cleaned up.')
-		: _('Steer configuration saved and activated.')), 'info');
+	const unchangedNotice = applyUnchangedNotice(result);
+	ui.addNotification(null, E('div', {}, [
+		E('p', {}, disabled
+			? _('Configuration saved; Steer was disabled and its runtime resources were cleaned up.')
+			: _('Steer configuration saved and activated.')),
+		unchangedNotice ? E('p', {}, unchangedNotice) : ''
+	]), 'info');
 	if (validation?.warnings?.length)
 		ui.addNotification(_('Validation warnings'), resultMessage({ validation }), 'warning');
 	return { ...result, saved: true, committed: true };
@@ -418,7 +452,7 @@ return baseclass.extend({
                 }
                 throw result;
             }
-            return result;
+            return notifyApplyUnchanged(result);
         }).finally(() => { this._globalEnableBusy = false; });
 	},
 
@@ -426,6 +460,8 @@ return baseclass.extend({
 	focusIssue: function(issue) { return navigateIssue(issue); },
 	issueText: function(issue) { return issueText(issue); },
 	rpcErrorText: function(result) { return rpcErrorText(result); },
+	resultMessage: function(result) { return resultMessage(result); },
+	applyUnchangedNotice: function(result) { return applyUnchangedNotice(result); },
 	uiSpecLabel: function(label) { return uiSpecLabel(label); },
 	validateInput: function(formatName, value) { return validateInput(formatName, value); },
 	permissions: function(methods, includeUCIWrite) {
@@ -439,9 +475,13 @@ return baseclass.extend({
 			return result;
 		});
 	},
-	collectionReferences: function(targetCollection, targetId) { return collectionReferences(targetCollection, targetId); },
+	collectionReferences: function(targetCollection, targetId, subscriptionNodes) {
+		return collectionReferences(targetCollection, targetId, subscriptionNodes);
+	},
 	overviewState: function() { return L.resolveDefault(callOverviewState(), {}); },
-	applySaved: function() { return callApplySaved(); },
+	applySaved: function() {
+		return callApplySaved().then(notifyApplyUnchanged);
+	},
 	validate: function() { return L.resolveDefault(callValidate(), {}); },
 	commitCandidate: function() { return L.resolveDefault(callCommitCandidate(), {}); },
 	intentPreview: function(reveal) { return L.resolveDefault(callIntentPreview(reveal === true), {}); },
@@ -453,6 +493,10 @@ return baseclass.extend({
 	subscriptions: function() { return L.resolveDefault(callSubscriptions(), {}); },
 	updateSubscription: function(id) { return callSubscriptionUpdate(id); },
 	cleanSubscription: function(id, node) { return callSubscriptionClean(id, node); },
+	subscriptionNodes: function(id) {
+		return L.resolveDefault(callSubscriptionNodes(id || ''), { ok: false });
+	},
+	setSubscriptionNodeEnabled: function(id, node, enabled) { return callSubscriptionNodeSet(id, node, enabled === true); },
 	speedtest: function(node, download) { return callNodeSpeedtest(node, download); },
 	routeSpeedtest: function(route, download) { return callRouteSpeedtest(route, download); },
 	overviewProbe: function(kind) { return callOverviewProbe(kind); },

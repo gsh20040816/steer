@@ -569,10 +569,11 @@
 	vertical-align: middle;
 }
 
-.steer-lightweight-node-table th:first-child,
-.steer-lightweight-node-table td:first-child {
-	width: 3rem;
-	text-align: center;
+.steer-lightweight-node-table .steer-node-stale {
+	display: block;
+	color: var(--steer-warn);
+	font-size: .8rem;
+	line-height: 1.35;
 }
 
 .steer-lightweight-node-table .steer-node-endpoint {

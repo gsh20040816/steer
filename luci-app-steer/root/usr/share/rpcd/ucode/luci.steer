@@ -490,6 +490,32 @@ const methods = {
 			});
 		}
 	},
+	subscription_nodes: {
+		args: { id: '' },
+		call: function(request) {
+			const id = request?.args?.id;
+			let command = '/usr/sbin/steer subscription nodes';
+			if (id)
+				command += ' --id ' + shellquote(id);
+			return command_json(command);
+		}
+	},
+	subscription_node_set: {
+		args: { id: '', node: '', enabled: false },
+		call: function(request) {
+			const id = request?.args?.id;
+			const node = request?.args?.node;
+			const enabled = request?.args?.enabled;
+			if (!id || !node)
+				return failure('MISSING_SUBSCRIPTION_NODE_ID', 'A Subscription ID and Node ID are required.');
+			if (enabled !== true && enabled !== false)
+				return failure('INVALID_SUBSCRIPTION_NODE_ENABLED', 'The subscription node enabled state must be true or false.');
+			return with_committed_configuration(request, function() {
+				return command_json('/usr/sbin/steer subscription node --id ' + shellquote(id) + ' --node ' + shellquote(node) +
+					' --enabled ' + (enabled ? '1' : '0'));
+			});
+		}
+	},
 	node_speedtest: {
 		args: { node: '', download: false },
 		call: function(request) {

@@ -212,6 +212,7 @@ function renderLifecycleOverview(state) {
 	const pending = state?.pending === true;
 	const lastApply = active.last_apply;
 	const lastResult = lastApply?.result;
+	const unchangedNotice = steer.applyUnchangedNotice(lastResult);
 	const overviewValidation = pending ? desired.validation : saved.validation;
 	const activeEnabled = !!active.generation;
 	const lifecycleDifference = state?.pending_apply === true || saved.enabled !== activeEnabled;
@@ -258,6 +259,7 @@ function renderLifecycleOverview(state) {
 					? _('The running configuration changed but Apply did not finish. Open Diagnostics for recovery steps.')
 					: _('The running configuration did not change. The Saved configuration can be applied again.'))
 				: E('p', {}, lastApply ? _('The Saved configuration was applied successfully.') : _('No application has been recorded yet.')),
+			unchangedNotice ? E('p', {}, unchangedNotice) : '',
 			E('div', { 'class': 'steer-overview-actions' }, [
 				E('button', { 'class': 'btn cbi-button-action', 'click': () => window.location.reload() }, _('Refresh')),
 				E('a', { 'class': 'btn cbi-button-action', 'href': 'diagnostics' }, _('Open Diagnostics')),
