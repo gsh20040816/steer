@@ -5,11 +5,11 @@ Steer 分两层：共享的 Go 核心把用户配置（项目里叫 Canonical In
 ## 代码目录
 
 ```text
-go/internal/intent                 配置格式（schema 9）、校验、严格的 JSON 解析
+go/internal/intent                 配置格式（schema 10）、校验、严格的 JSON 解析
 go/internal/compiler               把配置编译成 sing-box 配置，结果是确定的
 go/internal/apply                  应用流程和结果格式
-go/internal/generation             运行配置（generation）里和平台无关的文件
-go/internal/subscription           订阅的下载、解析、合并，以及精简的 Store 接口
+go/internal/generation             运行配置（generation）里和平台无关的文件，以及「运行配置是否变化」的比较
+go/internal/subscription           订阅的下载、解析、合并，订阅节点存储和 schema 9 节点迁移
 go/internal/probe                  HTTP/TLS 测量和报告
 go/internal/capability             检查 sing-box 版本和编译选项
 go/internal/geodata                随包 Geo 数据的清单和文件完整性校验
@@ -29,13 +29,16 @@ macos/SteerApp                     macOS 图形界面
 
 ```text
 OpenWrt UCI ──严格解析──┐
-Linux JSON ──严格解析───┼→ 配置 → 校验 → 编译
-macOS 界面/JSON ─────────┘              │
+Linux JSON ──严格解析───┼→ 配置 ─┐
+macOS 界面/JSON ─────────┘        ├→ 完整的 Saved Intent → 校验 → 编译
+            订阅节点存储 ─────────┘                          │
                                         ↓
                           sing-box 配置 + 平台执行计划
                                         ↓
                     准备（Prepare）→ 启用（Activate）→ 健康检查（Healthy）→ 收尾（Finalize）
 ```
+
+订阅节点不在配置里，而在平台的订阅节点存储里（见「订阅与测速」）。`subscription.Attach` 把配置和所有已配置订阅（不论是否启用）的存储节点拼成完整的 Saved Intent，校验、编译、测速、状态和 `pending_apply` 都用它。配置里的节点带 `source_subscription`、`source_fingerprint` 或 `pinned_stale` 时直接报 `SUBSCRIPTION_NODE_IN_CONFIG`，这个检查在拼接存储节点之前做。
 
 编译结果只取决于配置、状态目录和平台提供的 sing-box 入站部分。时间、测速结果、订阅状态和系统运行信息都不会混进配置或编译结果。
 
@@ -120,9 +123,11 @@ TUN 使用默认公网路由加必要的排除。进入 TUN 的流量依次处�
 2. 共享校验拒绝非法配置；
 3. 共享编译器生成 sing-box 配置；
 4. **准备**：检查 sing-box 能力、准备 Geo 数据、生成候选配置，并执行 `sing-box check` 和 `nft -c`；
-5. **启用**：平台停掉旧服务，设置平台资源，把 `current` 指向候选配置，再启动；
+5. **启用**：当前运行配置存在且服务健康，并且候选配置里影响运行的文件和当前的逐字节相同时，只把 `current` 原子地指向候选配置，不停服务、不启动、也不重新加载 nftables；否则平台停掉旧服务，设置平台资源，把 `current` 指向候选配置，再启动；
 6. **健康检查**：检查服务进程、TUN、nftables 和必要的监听端口；
 7. **收尾**：删除其他运行配置。
+
+第 5 步用共享的 `generation.Unchanged` 判断：平台只提供运行文件列表（`sing-box.json` 之外，OpenWrt/Linux 是 `platform.json`、`firewall.nft`，macOS 是 `platform.json` 和去掉生成 ID、配置摘要后的 `generation.json`）和一次性的健康检查。`intent.json` 不参与比较，所以只改了节点名、没被引用的节点或订阅设置时不会重启。应用结果里的 `restarted` 说明这次有没有重启服务。macOS 的看护进程用 `sing-box.json` 的内容摘要标记 DNS 接管和 WireGuard 状态，切换到等价的运行配置后这些标记依然有效。
 
 第 4 步之前的失败不会改动正在运行的东西。`current` 在启动新进程之前就已更新，供 procd 读取。切换之后的失败会返回错误并保持出错时的状态；没有自动恢复、没有旧配置备份，也没有回滚接口。
 
@@ -133,6 +138,8 @@ TUN 使用默认公网路由加必要的排除。进入 TUN 的流量依次处�
 - OpenWrt 由 procd 调用内部的 `_start`，完成校验、编译、准备和启用。
 - Linux 由 systemd 调用内部的 `_run`，必要时准备启动用的运行配置，然后直接 `exec` 成 sing-box。
 - macOS 由 LaunchDaemon 调用内部的 `_run`，必要时准备运行配置，然后把 sing-box 作为子进程启动并看护，负责 DNS 接管和恢复。
+
+这几个入口（以及 Linux 的 `web`、macOS 的 control 服务）发现配置还是 schema 9 时，先在操作锁里执行一次内部的 `_migrate`，把订阅节点移进节点存储。只在发现 schema 9 时才拿锁，因为应用会在持锁期间启动服务。
 
 这些入口都不是公开命令，也不是第二套配置逻辑。macOS 图形界面和 LuCI、Linux 网页一样，只通过平台后台读写配置、触发公开的操作。
 
@@ -147,7 +154,7 @@ TUN 使用默认公网路由加必要的排除。进入 TUN 的流量依次处�
 /run/steer/last-apply.json                    最近一次应用的结果
 ```
 
-Linux 的权威配置是 `/etc/steer/config.json`，订阅快照和网页 token 在 `/var/lib/steer`。运行时只写 `/run/steer` 和 `/var/lib/steer`，不修改系统的 DNS 解析配置。
+Linux 的权威配置是 `/etc/steer/config.json`，订阅节点存储、订阅快照和网页 token 在 `/var/lib/steer`。运行时只写 `/run/steer` 和 `/var/lib/steer`，不修改系统的 DNS 解析配置。
 
 Linux 的 `status` 从 `current` 里实际的 `intent.json` 和 `sing-box.json` 得出当前运行的是什么（Active），最近一次应用的结果单独记录：
 
@@ -173,12 +180,22 @@ OpenWrt 的 `status` 也一样，从 `current` 返回当前运行配置、配置
 
 ## 订阅与测速
 
-共享的订阅逻辑只依赖一个很小的 `Store` 接口：替换某个订阅的节点，或删除一个节点。OpenWrt 的实现一次性提交一批 UCI 修改；JSON 的实现做带 revision 检查的原子写入。
+订阅节点只保存在订阅节点存储里，每个订阅一个文件：
 
-- 订阅只修改 Saved 里的节点，不会自动应用。
+```text
+OpenWrt  /etc/steer/subscription-nodes/<订阅 ID>.json      （/var 在内存里，不能用）
+Linux    /var/lib/steer/subscription-nodes/<订阅 ID>.json
+macOS    <状态目录>/subscription-nodes/<订阅 ID>.json
+```
+
+文件是 `{"schema_version": 1, "subscription_id": "…", "nodes": [...]}`，权限 0600，原子写入，内容没变时不写。读写、拼接、清理孤儿文件都在 `internal/subscription`；平台只提供目录、加锁和权限（macOS 和配置文件一样交给 admin 组只读，界面不用提权就能读订阅状态）。
+
+- 订阅更新只写节点存储和状态快照，不写配置，也不会自动应用。OpenWrt 上因此不会触发 procd 重载，Linux 和 macOS 上也不再和界面编辑抢配置的 revision。
 - 合并时，上游删掉且没有路由引用的节点直接删除；仍被引用的保留并标记为过期，同时产生警告。
+- 订阅节点在界面上只读，只能启用/停用（写存储前先用完整 Intent 校验，停用正被启用的路由引用的节点会被拒绝）、清理过期节点，或用共享规则 `subscription.CopyAsManual` 复制成手动节点。读取接口给每个节点附带 `manual_copy`，三端界面直接用它加入草稿。
+- 存储里有、但配置里已经没有对应订阅的文件不会被拼接，在下一次成功的保存（Linux、macOS）、应用或订阅更新后删除。
 - 多个订阅一起更新时，一个失败不会影响其他订阅：成功的照常保存，失败的记录失败原因，最后统一报告错误。
-- 三端的订阅状态都由 `subscription.Status` 生成：最近一次成功的快照和最近一次失败分开保存；失败摘要不包含 URL 和响应内容；过期节点会带上引用它的路由，用于阻止清理。界面上的更新结果也用这个格式，不返回含节点凭据的内部快照。
+- 三端的订阅状态都由 `subscription.Status` 生成，节点数量和过期节点来自节点存储；快照只记获取状态，不再复制节点。最近一次成功和最近一次失败分开保存；失败摘要不包含 URL 和响应内容；过期节点会带上引用它的路由，用于阻止清理。界面上的更新结果也用这个格式，不返回含节点凭据的内部快照。
 
 共享的 probe 负责 HTTP/TLS 测量、报告脱敏和保存。完整报告只给后台排错用；界面只拿到 `LatestProbeResult`，按「范围/对象 ID/测试类型」各保留一条，字段只有测试时间、成功与否、是否过期（后台计算）、一个主要指标的摘要、可选的数值 `metric_value` 和一个安全的错误摘要。
 

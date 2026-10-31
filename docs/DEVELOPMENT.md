@@ -57,8 +57,8 @@ git diff --check
 - `intent`：只定义用户能配置的内容。新增字段必须在各个平台上都有意义，并且同时加进 JSON/UCI 的解析和校验。
 - `compiler`：输出最终的 sing-box 配置，以及需要的 sing-box 能力和 Geo 规则集。不输出 nftables 规则或服务管理相关的内容。
 - `apply`：按顺序调用各平台的准备、启用、健康检查、收尾和停用。
-- `generation`：只负责 `intent.json` 和 `sing-box.json` 两个文件，平台自己的文件由适配器添加。
-- `subscription.Store`：接口要保持精简，共享代码不能依赖 UCI 命令。
+- `generation`：只负责 `intent.json` 和 `sing-box.json` 两个文件，平台自己的文件由适配器添加；`generation.Unchanged` 判断运行配置是否变化，平台只提供运行文件列表和健康检查。
+- `subscription`：订阅节点存储、拼接完整 Saved Intent、更新、启用/停用、清理、复制为手动节点和 schema 9 迁移都在这里，三端共用；平台只提供目录、加锁、权限和配置写回，共享代码不能依赖 UCI 命令。
 - `probe`：只负责测量和生成报告；测什么、怎么启动临时 sing-box、日志放哪，由各平台决定。
 - `platform/openwrt`：UCI、nftables、策略路由、procd 和 OpenWrt 的目录只由它管理。
 - `internal/geodata`：Geo 数据清单、分类查询和文件完整性校验。
@@ -71,7 +71,7 @@ git diff --check
 version validate apply health status probe subscription geo-catalog cleanup
 ```
 
-`_start` 只给 init 脚本用，不算公开接口。不要再公开 compile、plan、prepare、capabilities 或 rollback。RPC 只提供界面需要的操作。状态只包含 `healthy` 和 `last_apply`，配置是否合法由 validate 单独返回。
+`_start` 只给 init 脚本用，`_migrate` 只给安装脚本和启动入口用，都不算公开接口。不要再公开 compile、plan、prepare、capabilities 或 rollback。RPC 只提供界面需要的操作。状态只包含 `healthy` 和 `last_apply`，配置是否合法由 validate 单独返回。
 
 ## Linux 发布约定
 

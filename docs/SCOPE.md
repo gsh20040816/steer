@@ -1,12 +1,12 @@
 # 项目范围
 
-这篇说明 Steer（0.11，schema 9）里哪些事归共享核心管，哪些归各平台自己管。简单说：配置是什么意思由共享核心决定，怎么落到操作系统上由平台适配器决定。
+这篇说明 Steer（schema 10）里哪些事归共享核心管，哪些归各平台自己管。简单说：配置是什么意思由共享核心决定，怎么落到操作系统上由平台适配器决定。
 
 ## 共享核心
 
 共享核心负责：
 
-- schema 9 的配置格式（Canonical Intent）：全局设置、引导 DNS、节点、订阅、路由、DNS 配置、本地代理和规则；
+- schema 10 的配置格式（Canonical Intent）：全局设置、引导 DNS、节点、订阅、路由、DNS 配置、本地代理和规则；
 - 严格解码：UCI 里出现未知的 section/option 或者单值/列表写错，直接报错；Canonical JSON 出现未知字段或多余内容，也直接报错；
 - 语义校验：ID 是否唯一、引用的对象是否存在且启用、协议参数、端口、URL，以及「恰好一条直连路由、恰好一条默认规则」；
 - 规则匹配：按顺序命中第一条；同一个字段的多个值是「或」，不同字段之间是「且」；默认规则决定最终的 DNS 和路由；
@@ -22,7 +22,7 @@
 
 **OpenWrt**
 
-- UCI 格式的读写，订阅节点也存进 UCI；
+- UCI 格式的读写；订阅节点不进 UCI，而是存在 `/etc/steer/subscription-nodes`；
 - sing-box TUN 入站（`auto_route`/`auto_redirect`）；
 - 53 端口 DNS 接管，来源 MAC 规则用 sing-box 原生的 `source_mac_address`；
 - 一小段 nftables DNS 规则，以及固定的 TUN mark、路由表、优先级和 NFQUEUE；

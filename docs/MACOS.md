@@ -59,7 +59,7 @@ macOS utun 虚拟网卡 + auto_route
 
 ### 后台服务接受什么
 
-control 后台服务只接受这些请求：`status`、`state`、`set-enabled`、`save`、`apply`、`probe`、`diagnostics`、`probe-results`、`subscription-update`、`subscription-clean`。请求格式固定、大小有上限，不能传 shell 命令、网址、路径或可执行文件。
+control 后台服务只接受这些请求：`status`、`state`、`set-enabled`、`save`、`apply`、`probe`、`diagnostics`、`probe-results`、`subscription-update`、`subscription-clean`、`subscription-nodes`、`subscription-node-set`。请求格式固定、大小有上限，不能传 shell 命令、网址、路径或可执行文件。
 
 需要特别注意的是：任何管理员组用户都能免密码让这个 root 服务保存配置，而 Tor 节点本来允许指定 Tor 程序路径和启动参数。为了不让它变成「以 root 运行任意程序」的入口，macOS 版会拒绝带有 `executable_path`、`extra_args` 或 `data_directory` 的 Tor 节点，只能使用 sing-box 默认的 Tor 设置。
 
@@ -67,7 +67,8 @@ control 后台服务只接受这些请求：`status`、`state`、`set-enabled`�
 
 - socket 所在目录归 root 所有，普通管理员无法替换；socket 本身权限是 `root:admin 0660`。
 - 服务端会再用 `LOCAL_PEERCRED` 确认调用者是 root 或管理员组成员。
-- 写入的配置同样经过严格解码和完整校验，再以 `root:admin 0640` 原子替换。
+- 写入的配置同样经过严格解码和完整校验（拼上订阅节点存储后再校验；文档里不能包含订阅节点），再以 `root:admin 0640` 原子替换。
+- `apply` 和 `set-enabled` 的响应带 `apply_result`，其中 `restarted` 说明这次有没有重启 LaunchDaemon。运行配置没变时只切换 `current.json`，sing-box 和系统 DNS 接管都不中断。
 - 测试结果只把摘要返回给界面，原始测量数据和完整错误链不会传过去。
 
 界面不直接写运行配置，也不直接启动 sing-box。为了在表单里即时提示，界面对端口、必填项、地址等做了少量本地检查，但最终以后台服务的校验结果为准。
@@ -80,10 +81,12 @@ control 后台服务只接受这些请求：`status`、`state`、`set-enabled`�
 
 ### 订阅
 
-订阅的定时更新和手动更新都只修改 Saved 里的节点，从不自动应用。
+订阅节点不在 `config.json` 里，而在 `state/subscription-nodes/<订阅 ID>.json`。订阅的定时更新和手动更新只写这里和订阅状态，从不修改 Saved 配置，也从不自动应用，所以不会和界面的保存抢 revision。
 
-- 如果手动更新期间 Draft 没变，更新完成后会自动重新加载。
-- 如果用户在更新过程中继续编辑，界面保留 Draft 并给出上面的冲突选择，不会悄悄用更新结果覆盖编辑内容。
+- `subscription-nodes`（可选 `id`）返回 `{"subscriptions": [{"id": "…", "nodes": [...]}]}`，每个节点带共享规则生成的 `manual_copy`，界面「复制到我的节点」直接用它。
+- `subscription-node-set`（`id`、`node_id`、`enabled`）启用或停用一个订阅节点，只写节点存储；停用正被路由引用的节点返回 `NODE_STILL_REFERENCED`。成功时返回更新后的节点列表。
+- 保存时删掉的订阅，它的节点存储文件随后删除。
+- 节点存储文件和配置一样是 `root:admin 0640`，界面不用提权就能读订阅状态。
 
 订阅列表会同时显示最近一次成功和最近一次失败。上游删掉的节点，如果没有路由在用，更新时直接删除；如果有路由在用，就保留并标记为「过期（pinned-stale）」，同时给出警告，提醒尽快改掉引用。节点页会显示过期标记；订阅页会列出过期节点的名称、所属订阅和引用它的路由。被引用的节点不能单独清理。
 
@@ -149,9 +152,12 @@ DNS 配置 → 路由 / 出口
 /Library/Application Support/Steer/config/config.json
 /Library/Application Support/Steer/run/
 /Library/Application Support/Steer/state/
+/Library/Application Support/Steer/state/subscription-nodes/
 /Library/Application Support/Steer/geodata-seed/manifest.json
 /Library/Application Support/Steer/geodata-seed/rules/*.srs
 ```
+
+`_run` 和 control 服务启动时，如果配置还是 schema 9，先用内部的 `_migrate` 把订阅节点移进 `state/subscription-nodes`。
 
 `_run` 只给 LaunchDaemon 用。它的 plist 设置了 `RunAtLoad`，所以开机或安装时总会被加载一次；如果 Saved 里 `enabled=false`，它会直接退出。因此 Steer 停用时，「系统」页可能显示这个后台服务已加载但没有在运行，这是正常的，不需要修复。判断安装是否完整只看程序、sing-box、三个 plist、配置文件、Geo 数据、control 和订阅两个后台服务以及 control socket。
 

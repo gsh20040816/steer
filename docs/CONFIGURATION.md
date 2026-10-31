@@ -1,10 +1,12 @@
 # 配置与使用
 
-配置格式是 schema 9。每个平台只有一份配置，界面只编辑这一份：
+配置格式是 schema 10。每个平台只有一份配置，界面只编辑这一份：
 
 - OpenWrt：`/etc/config/steer`（UCI），用 LuCI 编辑；
 - Linux：`/etc/steer/config.json`（Canonical JSON），用网页界面编辑；
 - macOS：`/Library/Application Support/Steer/config/config.json`（Canonical JSON），用 App 编辑。
+
+订阅节点不写在配置里，而是由订阅保存在订阅节点存储里（见[订阅](#订阅)），配置里只有手动节点。
 
 下面的例子用 UCI 写法，JSON 里字段名相同。
 
@@ -12,7 +14,7 @@
 
 ```uci
 config steer 'main'
-	option schema_version '9'
+	option schema_version '10'
 	option enabled '1'
 	option log_level 'warn'
 	option dns_cache_capacity '4096'
@@ -92,7 +94,7 @@ config dns_profile 'secure_dns'
 - 协议支持 `udp tcp tls https quic h3`。
 - 规则选了代理路由时，DNS 查询也走同一条路由和它的整条前置链。
 - 本地 SOCKS/HTTP/Mixed 入口收到域名时，会先用 sing-box 的 `resolve` 按同一套 DNS 规则解析，再做路由。所以直连不会用引导 DNS 解析业务域名，代理也用规则选中的 DNS 配置。目标已经是 IP 的不解析。
-- Steer 不设置全局的 `dns.strategy`，客户端自己发的 A/AAAA 查询原样处理。DNS 服务器写的是域名时，用引导 DNS 的 `strategy` 解析它。sing-box 1.14 废弃了 DNS 规则里的 `strategy`，所以 schema 9 也去掉了 `dns_profile.strategy`。
+- Steer 不设置全局的 `dns.strategy`，客户端自己发的 A/AAAA 查询原样处理。DNS 服务器写的是域名时，用引导 DNS 的 `strategy` 解析它。sing-box 1.14 废弃了 DNS 规则里的 `strategy`，所以从 schema 9 起去掉了 `dns_profile.strategy`。
 - 缓存容量、持久化和乐观缓存是全局设置。
 
 **DNS 接管的范围**
@@ -151,7 +153,7 @@ config local_proxy 'local'
 
 ## 订阅
 
-订阅只管节点：
+订阅只管节点。配置里只写订阅本身：
 
 ```uci
 config subscription 'public'
@@ -164,8 +166,40 @@ config subscription 'public'
 ```sh
 steer subscription update --id public
 steer subscription status
+steer subscription nodes [--id public]
+steer subscription node --id public --node <node-id> --enabled 0
 steer subscription clean --id public --node <node-id>
 ```
+
+**节点存储**
+
+订阅拿到的节点保存在订阅节点存储里，每个订阅一个文件，不进配置：
+
+```text
+OpenWrt  /etc/steer/subscription-nodes/<订阅 ID>.json
+Linux    /var/lib/steer/subscription-nodes/<订阅 ID>.json
+macOS    /Library/Application Support/Steer/state/subscription-nodes/<订阅 ID>.json
+```
+
+- 文件格式是 `{"schema_version": 1, "subscription_id": "…", "nodes": [...]}`，节点字段和配置里的一样，另外带 `source_subscription`、`source_fingerprint`、`pinned_stale`。文件权限 0600（macOS 和配置文件一样是 admin 组只读的 0640），原子写入，内容没变时不重写。
+- 校验、编译、测试和状态用的是「配置 + 所有已配置订阅（不论是否启用）的存储节点」。配置里的节点不能带 `source_subscription`、`source_fingerprint`、`pinned_stale`，否则报 `SUBSCRIPTION_NODE_IN_CONFIG`。
+- 配置里已经删掉的订阅，它的存储文件不再参与，下一次成功的保存（Linux、macOS）、Apply 或订阅更新后删除。删除订阅前，它的节点不能还被路由引用。
+
+**订阅节点能做什么**
+
+订阅节点只读，只能：
+
+- **启用/停用**：只改存储，不改配置。写入前用完整配置校验，停用正被启用的路由引用的节点会被拒绝（`NODE_STILL_REFERENCED`）。
+- **清理**过期节点：只能清理已经没有路由引用的 `pinned_stale` 节点（`subscription clean`）。
+- **复制到我的节点**：在界面里把订阅节点复制成一个手动节点再编辑。复制结果保留全部协议字段和凭据，名称沿用原名，去掉三个来源字段，并且是启用的；新 ID 由界面分配。原订阅节点和路由都不变。
+
+`subscription nodes` 和三端的读取接口返回同一个格式，每个节点都附带共享规则生成的 `manual_copy`（没有 `id`）：
+
+```json
+{"subscriptions": [{"id": "public", "nodes": [{"id": "public_0123456789ab", "enabled": true, "type": "socks", "…": "…", "source_subscription": "public", "manual_copy": {"enabled": true, "type": "socks", "…": "…"}}]}]}
+```
+
+失败时返回 `{"ok": false, "error_code": "…", "error": "…", "validation": {…}}`，错误码三端一样：`SUBSCRIPTION_NOT_FOUND`、`SUBSCRIPTION_NODE_NOT_FOUND`、`NODE_STILL_REFERENCED`、`SUBSCRIPTION_NODE_CURRENT`（清理当前节点）、`VALIDATION_FAILED`、`SUBSCRIPTION_NODE_STORE_FAILED`。
 
 **更新时机**
 
@@ -180,11 +214,11 @@ steer subscription clean --id public --node <node-id>
 - 无效的节点跳过并计数。一个有效节点都没有时，这次更新算失败，保留上次的节点。
 - 节点 ID 在多次更新之间保持不变，本地设置的启用状态也保留。
 - 上游消失、又没有被路由引用的节点，这次更新直接删掉。被路由引用的保留下来，标为 `pinned_stale` 并给出警告，提醒尽快换掉引用。换掉之后，等下次更新自动删除，或者手动 `clean`。`clean` 不会顺带改路由。
-- 订阅更新不会自动 Apply，也不会因为节点列表变了就生成新的运行配置。三端都会提示新增、现有、过期、跳过的数量，并说明正在运行的配置没变。
+- 订阅更新只写节点存储和状态，不改配置，不会自动 Apply。被路由引用的节点内容不会被更新改变，所以更新也不会改变正在运行的配置。三端都会提示新增、现有、过期、跳过的数量，并说明正在运行的配置没变。
 
 **状态字段**
 
-三端用同一组字段：`never_fetched`、`last_success`（可能为空）、`last_failure`、`node_count`、`current`、`added`、`skipped`，以及每个节点的 `stale`。失败只记时间和去掉敏感信息的摘要，不会覆盖上次成功的时间和节点。`stale.referenced_by` 列出还在引用它的路由。停用的订阅不能更新。
+三端用同一组字段：`never_fetched`、`last_success`（可能为空）、`last_failure`、`node_count`、`current`、`added`、`skipped`，以及每个节点的 `stale`。节点数量和过期节点来自节点存储；状态快照只记获取结果，不保存节点。失败只记时间和去掉敏感信息的摘要，不会覆盖上次成功的时间和节点。`stale.referenced_by` 列出还在引用它的路由。停用的订阅不能更新。
 
 ## Apply、状态和测试
 
@@ -196,7 +230,7 @@ steer status
 ```
 
 - `validate` 只做解码和配置校验。
-- `apply` 还会检查 sing-box 能力、准备 Geo 数据、跑 sing-box/nftables 自带的配置检查、切换配置、做本地健康检查。
+- `apply` 还会检查 sing-box 能力、准备 Geo 数据、跑 sing-box/nftables 自带的配置检查、切换配置、做本地健康检查。新配置里影响运行的部分（`sing-box.json` 和平台的运行文件）和正在运行的完全相同、服务也健康时，只切换当前配置，不重启 sing-box；结果里的 `restarted` 为 `false`，界面提示「运行配置没有变化，未重启」。
 - `status` 只返回当前运行配置的身份（generation、Intent 和运行时的 digest）、`healthy`，以及可选的 `last_apply`。草稿、已保存配置和校验结果都不在里面。
 
 网络测试读取已保存配置里的三个网址，直接用设备当前的网络访问，Steer 没启用也能测：
@@ -225,7 +259,13 @@ steer probe --kind speedtest --route <route-id> --download
 
 ## 版本升级
 
-0.8.0 起只接受 schema 9。各平台都没有旧格式的迁移命令或安装钩子，旧配置要在升级前自己改好，否则校验和 Apply 会报错。
+0.12.0 起只接受 schema 10。schema 9 的配置由内部命令 `steer _migrate` 自动迁移：把带 `source_subscription` 的节点按订阅写进节点存储（保留 ID、启用状态、指纹、过期标记和顺序），从配置里删掉，再把 schema 改成 10。迁移是幂等的，schema 10 的配置不做任何修改；迁移前后编译出的 `sing-box.json` 完全相同。来源订阅已经不在配置里的节点会留在配置里，变成手动节点，路由引用不受影响。
+
+- OpenWrt：安装或升级软件包时由 uci-defaults 脚本和安装后脚本调用；`_start` 发现 schema 9 时也先迁移再启动。
+- Linux：`steer.service`（`_run`）和 `steer web` 启动时发现 schema 9 先迁移；Arch 包的升级钩子也调用一次。
+- macOS：LaunchDaemon（`_run`）和 control 服务启动时发现 schema 9 先迁移。
+
+0.12.0 不能直接回退到 0.11.x：schema 10 的配置在旧版本上会被拒绝。要回退，先用 0.11.x 恢复 schema 9 的配置备份。
 
 ## 整设备直连（按 MAC）
 

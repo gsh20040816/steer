@@ -70,12 +70,13 @@ Steer 不重新编译 sing-box。CI 先核对官方 APK 的 SHA-256，重签后�
 /etc/config/steer                    用户的 UCI 配置（升级时保留）
 /usr/share/steer/geodata-seed        随包安装的只读 Geo 数据和清单
 /var/lib/steer/cache.db              sing-box 下载的远程 SRS 和可选的 DNS 缓存
-/var/lib/steer/subscriptions         订阅快照
+/etc/steer/subscription-nodes        订阅节点存储（/var 在内存里，所以放在 /etc，升级时保留）
+/var/lib/steer/subscriptions         订阅状态快照
 /var/lib/steer/logs/tests            最近的测试结果
 /run/steer                           运行配置、当前配置链接、最近一次应用记录、锁
 ```
 
-安装后脚本会设置订阅的 cron 任务，然后正常运行一次 `steer apply`。只支持 schema 9，旧格式的配置会直接报错，没有版本迁移命令。包里仍然声明了 `PROVIDES`、`CONFLICTS` 和 `REPLACES`，用来替换旧包名 `steer-openwrt`，但源码里没有任何兼容逻辑。
+安装后脚本会设置订阅的 cron 任务，执行一次内部的 `steer _migrate`，然后正常运行一次 `steer apply`。只支持 schema 10；schema 9 的配置由 `_migrate` 把订阅节点移进 `/etc/steer/subscription-nodes`，包里的 uci-defaults 脚本 `/etc/uci-defaults/90-steer-schema-10` 也会调用它，覆盖带着软件包刷固件的情况。更旧的格式会直接报错。包里仍然声明了 `PROVIDES`、`CONFLICTS` 和 `REPLACES`，用来替换旧包名 `steer-openwrt`，但源码里没有任何兼容逻辑。
 
 ### 稳定版软件源
 
@@ -184,14 +185,15 @@ macOS 的原始安装包只从 GitHub Release 获取。以后如果做 Homebrew 
 packaging/archlinux/steer/
 ├── PKGBUILD
 ├── .SRCINFO
+├── steer.install
 └── .gitignore
 ```
 
 配方从固定的 `_commit` 构建 Steer，并下载 Pages 上当前的 Geo 数据包。`prepare()` 每次都先删掉旧的 `$srcdir/geodata-seed`，再解压并用同一个 Go 校验工具完整检查，所以重复运行 `makepkg` 不会失败，也不会混进旧数据。
 
-依赖里写的是虚拟包名 `sing-box`，这样官方包和 Arch Linux CN 的 `sing-box-alpha` 都能用（后者提供了 `sing-box` 这个名字，但没有提供能让 pacman 比较版本的版本号）。sing-box 能不能用，由 Steer 在应用配置时实际检查。其他依赖是 systemd、nftables、iproute2 和 ca-certificates。安装时不做配置迁移、不启用服务、不应用配置，也不生成网页 token。
+依赖里写的是虚拟包名 `sing-box`，这样官方包和 Arch Linux CN 的 `sing-box-alpha` 都能用（后者提供了 `sing-box` 这个名字，但没有提供能让 pacman 比较版本的版本号）。sing-box 能不能用，由 Steer 在应用配置时实际检查。其他依赖是 systemd、nftables、iproute2 和 ca-certificates。安装时不启用服务、不应用配置，也不生成网页 token。升级时 `steer.install` 的 `post_upgrade` 执行一次内部的 `steer _migrate`，把 schema 9 配置里的订阅节点移进 `/var/lib/steer/subscription-nodes`；迁移是幂等的，`steer.service` 和 `steer web` 启动时也会做同样的检查。
 
-`PKGBUILD` 是唯一需要手写的文件，`.SRCINFO` 必须用 `makepkg --printsrcinfo` 生成（`check-release-consistency.py` 会检查两者是否一致）。更新步骤：
+`PKGBUILD` 和 `steer.install` 是需要手写的文件，`.SRCINFO` 必须用 `makepkg --printsrcinfo` 生成（`check-release-consistency.py` 会检查两者是否一致）。更新步骤：
 
 1. 改 `pkgver` 和 40 位的 `_commit`；如果只是打包方式变了，只加 `pkgrel`。
 2. 重新生成 `.SRCINFO`。

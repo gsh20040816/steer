@@ -4,7 +4,7 @@ Linux 版面向使用 systemd 的发行版。它接管本机流量，也接管�
 
 ## 工作方式
 
-- **配置**：只有一份，`/etc/steer/config.json`，格式是 schema 9 的 Canonical JSON。没有额外的「平台设置」文件。
+- **配置**：只有一份，`/etc/steer/config.json`，格式是 schema 10 的 Canonical JSON。没有额外的「平台设置」文件。订阅节点不在配置里，而在 `/var/lib/steer/subscription-nodes`。
 - **流量**：sing-box TUN 开启 `auto_route`、`strict_route` 和 `auto_redirect`。sing-box 不锁版本，Apply 时用它自带的配置检查判断当前版本支不支持用到的字段。来源 MAC 规则用 sing-box 原生的 `source_mac_address`。
 - **DNS**：TUN 开启 `dns_mode: hijack`，普通的 TCP/UDP 53 查询和 systemd-resolved 的网卡 DNS 都由 sing-box 自己接管。Steer 只额外处理「发给本机地址的 DNS 查询」：
   - `PREROUTING` 处理局域网、虚拟机和 Docker 发给本机的查询；
@@ -14,9 +14,10 @@ Linux 版面向使用 systemd 的发行版。它接管本机流量，也接管�
   - 应用自己发的加密 DNS（DoH/DoT/DoQ）不在接管范围内。
 - **ping**：走共享的三层策略，命中代理路由的 ping 改走直连。来源地址可路由的交给内核转发；来源是本机 TUN 地址的由 sing-box 直连出口重新选源地址。
 - **IPv6 内核直连**：支持可选的 `direct_bypass`，见[配置说明](CONFIGURATION.md#ipv6-内核直连0110)。
-- **服务**：systemd 的 `steer.service`。`steer _run` 做完准备后直接 `exec` 成 sing-box，`ExecStopPost` 调用 `steer cleanup` 清理。`steer.service` 声明了 `PartOf=nftables.service`，重启 nftables 时 Steer 会跟着重启并重建规则。
+- **服务**：systemd 的 `steer.service`。`steer _run` 做完准备后直接 `exec` 成 sing-box，`ExecStopPost` 调用 `steer cleanup` 清理。`steer.service` 声明了 `PartOf=nftables.service`，重启 nftables 时 Steer 会跟着重启并重建规则。Apply 时如果运行配置（`sing-box.json`、`platform.json`、`firewall.nft`）没变、服务也在运行，只切换 `/run/steer/current`，不重启服务也不重新加载 nftables。
+- **升级**：`_run` 和 `steer web` 启动时发现 schema 9 的配置，先把订阅节点迁移到节点存储；Arch 包的升级钩子也会执行一次 `steer _migrate`。
 - **管理**：命令行 `steer`，以及只监听本机的网页界面 `steer web`。
-- **订阅**：systemd timer 定时更新配置文件里的节点，不会自动 Apply。更新失败，或者返回 200 但没有一个有效节点时，保留原来的节点。
+- **订阅**：systemd timer 定时更新订阅节点存储，不改配置文件，也不会自动 Apply。更新失败，或者返回 200 但没有一个有效节点时，保留原来的节点。
 - **Geo 数据**：安装包里带了完整的 SRS 数据和 manifest。Steer 按 manifest 精确校验规则里引用的分类，sing-box 之后在后台从远端更新。
 
 不支持的：非 systemd 系统、通用的局域网网关配置向导、多用户权限、远程访问网页界面、NetworkManager/systemd-resolved 深度集成、Clash API、实时连接图。TUN 不按网卡做白名单，所以转发的虚拟机/Docker 流量和本机流量走同一套规则；私网和链路本地目标照常排除在外。
@@ -81,7 +82,8 @@ steer health
 - 页面可见时每 30 秒刷新一次已保存配置的版本和运行状态，顶部也有手动刷新按钮。
 - 如果命令行、timer 或别的页面改了配置：有未保存修改时保留草稿并提示冲突；没有修改时提供一键重新载入。刷新运行状态不会自动替换草稿。
 - 「当前运行」的配置只读 `/run/steer/current`。最近一次 Apply 单独显示时间、结果和错误摘要，失败的配置不会被当成正在运行的。
-- 订阅列表区分「从未更新」「最近成功」「最近失败」，并显示跳过和过期的节点数。停用的订阅不能点更新。订阅更新只改了节点列表时，不会提示需要 Apply；消失且没被路由引用的节点直接删除，被引用的保留为过期并显示提醒。
+- 订阅列表区分「从未更新」「最近成功」「最近失败」，并显示跳过和过期的节点数。停用的订阅不能点更新。订阅更新只写节点存储、不改配置和它的版本，不会提示需要 Apply；消失且没被路由引用的节点直接删除，被引用的保留为过期并显示提醒。
+- 订阅节点只读，可以启用/停用、清理过期节点，或「复制到我的节点」变成可编辑的手动节点。`GET /api/v1/config` 返回的配置不含订阅节点，订阅节点通过 `GET /api/v1/subscription-nodes` 读取，启用/停用用 `PUT /api/v1/subscriptions/<id>/nodes/<node>`（请求体 `{"enabled": false}`）。校验和保存时后台自动拼上存储里的节点，草稿里不能包含订阅节点；保存时删掉的订阅，它的节点存储文件随后删除。
 
 **测试和诊断**
 
@@ -100,7 +102,8 @@ steer health
 /run/steer/operation.lock           Apply、保存配置、订阅更新共用的锁
 /run/steer/last-apply.json          最近一次 Apply 的结果
 /var/lib/steer/cache.db             sing-box 的远端 SRS 和可选的 DNS 缓存
-/var/lib/steer/subscriptions        订阅快照
+/var/lib/steer/subscriptions        订阅状态快照（不含节点）
+/var/lib/steer/subscription-nodes   0600，订阅节点存储，每个订阅一个文件
 ```
 
 Steer 不改 `/etc/resolv.conf`、NetworkManager 连接或 systemd-resolved 的配置片段；运行期间 systemd-resolved 的网卡 DNS 由 sing-box 自己管理。引导 DNS 只解析 DNS 服务器这类基础设施的域名，直连 UDP/TCP 引导 DNS 会有明文 53 查询，但里面没有用户访问的域名。
