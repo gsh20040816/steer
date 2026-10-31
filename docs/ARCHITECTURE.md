@@ -100,7 +100,7 @@ Geo 分类是共享的配置内容，两个平台都使用随包的 `/usr/share/
 
 编译器为用到的 Geo 分类生成 sing-box 的远程规则集：随包的 SRS 作为 `initial_path`，Pages 上的同名 SRS 作为 `url`，每天更新一次。下载用显式的直连 HTTP 客户端，不受用户代理规则影响；`/var/lib/steer/cache.db` 由 sing-box 保存下载缓存。首次启动不需要联网，远程更新失败只记在 sing-box 日志里，不影响已经用本地数据启动成功的应用结果。
 
-Steer 不设置全局的 `dns.strategy`，也不在 DNS 规则上设置查询级的 `strategy`，客户端的 A/AAAA 查询原样处理。SOCKS、HTTP、Mixed 本地入口收到的域名目标，在嗅探后先执行一次 `resolve`。这个动作不固定 DNS 服务器，而是交给 DNS 模块按用户规则选择对应的「DNS 配置 + 路由」，之后的流量规则再用解析结果匹配。目标本来就是 IP 时不会查询。DNS 服务器本身是域名时，解析它用的 `domain_resolver.strategy` 来自 `bootstrap.strategy`；路由默认的域名解析也用这个策略。schema 9 删掉了 `dns_profile.strategy`。
+Steer 不设置全局的 `dns.strategy`，也不在 DNS 规则上设置查询级的 `strategy`，客户端的 A/AAAA 查询原样处理。SOCKS、HTTP、Mixed 本地入口收到的域名目标，在嗅探后先执行一次 `resolve`。这个动作不固定 DNS 服务器，而是交给 DNS 模块按用户规则选择对应的「DNS 配置 + 路由」，之后的流量规则再用解析结果匹配。目标本来就是 IP 时不会查询。DNS 服务器本身是域名时，解析它用的 `domain_resolver.strategy` 来自 `bootstrap.strategy`；路由默认的域名解析也用这个策略。节点写了 `domain_strategy` 并且服务器是域名时，它的出站（包括前置链和临时测试配置里的）单独带 `domain_resolver`：服务器还是引导 DNS，策略换成节点自己的；其他节点照旧用路由默认的域名解析。三个平台的临时测试配置都定义同名的引导 DNS 服务器（`compiler.BootstrapDNSServerTag`）。schema 9 删掉了 `dns_profile.strategy`。
 
 ## macOS 数据面
 

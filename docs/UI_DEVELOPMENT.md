@@ -46,7 +46,7 @@ Canonical Intent / Validate / Compiler
 - `creation_defaults` 和 `creation_required_fields`：新建对象时要把默认值真正写进草稿或 UCI，不能只靠控件显示一个默认值。目前的默认值是 SOCKS/1080 节点、UDP/53 DNS 配置、只监听回环地址的 Mixed/1090 本地入口。用户已有的值或者改过的值不能被默认值覆盖。
 - 引用列表里，名字重名时才追加服务器地址、来源或短 ID 来区分，平时只显示名字。
 - 界面描述只描述用户能看懂的含义，不要放 UCI section、systemd 单元、launchd label、HTTP 路径、socket、CSS 或 SwiftUI 布局。
-- 三端共用的文案写成 `{label, zh_cn}`：`label` 是 LuCI 的英文 msgid，`zh_cn` 是 Linux 网页和 macOS 显示的原文，也是 LuCI 简体中文翻译唯一允许的值（`tests/check-luci-i18n.py` 检查两者完全相同）。界面里不要再为这些文案写第二份。
+- 三端共用的文案写成 `{label, zh_cn}`：`label` 是 LuCI 的英文 msgid，`zh_cn` 是 Linux 网页和 macOS 显示的原文，也是 LuCI 简体中文翻译唯一允许的值（`tests/check-luci-i18n.py` 检查两者完全相同）。界面里不要再为这些文案写第二份。节点字段和枚举选项也可以带 `zh_cn`（比如「域名解析策略」和它的选项、引导 DNS 的地址策略），Linux 网页和 macOS 有 `zh_cn` 就用它，LuCI 照常翻译 `label`。
 
 ## 各平台保留自己的东西
 

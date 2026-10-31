@@ -37,7 +37,7 @@ config bootstrap 'bootstrap'
 - `probe_proxy`：代理测试的目标，也是单独测试节点和路由时的默认目标；
 - `speedtest_proxy`：下载测速的目标。
 
-引导 DNS（Bootstrap）只支持 UDP/TCP，服务器必须写 IP。`strategy` 可选 `prefer_ipv4`、`prefer_ipv6`、`ipv4_only`、`ipv6_only`。引导 DNS 只用来解析 DNS 服务器这类基础设施的域名；直连的 UDP/TCP 引导 DNS 会发出明文 53 查询，但里面没有用户访问的域名。
+引导 DNS（Bootstrap）只支持 UDP/TCP，服务器必须写 IP。`strategy` 可选 `prefer_ipv4`、`prefer_ipv6`、`ipv4_only`、`ipv6_only`，节点可以用 `domain_strategy` 单独指定（见下面「节点域名的解析策略」）。引导 DNS 只用来解析节点服务器、DNS 服务器这类基础设施的域名；直连的 UDP/TCP 引导 DNS 会发出明文 53 查询，但里面没有用户访问的域名。
 
 ## 节点、路由和前置代理
 
@@ -79,6 +79,26 @@ config route 'block'
 - 拒绝路由为了兼容旧配置仍写作 `kind 'block'`，编译后是 sing-box 的 `action: reject`，不会生成已废弃的 block 出站。
 
 支持的节点类型：`socks http shadowsocks vmess vless trojan hysteria shadowtls tuic hysteria2 anytls ssh naive tor`。具体字段看协议；未知字段、写错的字段和协议不支持的选项都会报错。三端都可以把节点导出成分享链接，格式和限制见[分享链接兼容性](SUBSCRIPTION_COMPATIBILITY.md)。
+
+**节点域名的解析策略**
+
+节点的服务器写域名时，默认按引导 DNS 的 `strategy` 解析。某个节点要用别的策略，就在节点上写 `domain_strategy`。比如全局是 `prefer_ipv6`，osa-01 走 IPv4 的延迟是 88 ms、走 IPv6 是 264 ms，就给它单独写 `prefer_ipv4`；IPv6 更快的 lax-01 不用写：
+
+```uci
+config node 'osa_01'
+	option name 'osa-01'
+	option type 'socks'
+	option server 'osa.example'
+	option server_port '1080'
+	option domain_strategy 'prefer_ipv4'
+```
+
+- 可选 `prefer_ipv4`、`prefer_ipv6`、`ipv4_only`、`ipv6_only`，写错报 `INVALID_DOMAIN_STRATEGY`。不写就跟随引导 DNS 的 `strategy`，界面上叫「跟随默认」，字段名叫「域名解析策略」。
+- 除 Tor 以外的节点类型都能写；Tor 没有服务器，写了报错。
+- 只影响服务器是域名的节点：仍然用引导 DNS 解析，只是换成这个策略。服务器写 IP 的节点不需要解析，写了也不会改变运行配置。
+- 节点用在带 `detour` 的路由里时：不写，节点域名交给前置代理去解析；写了，改为本机用引导 DNS 按这个策略解析，再经前置连接解析出的地址。
+- 单独测试节点和路由时，也按这个策略解析。
+- 分享链接里没有这个字段：导入的节点和订阅节点都不带它，导出时也不写进链接。订阅节点复制到我的节点后，可以再给副本设置。
 
 ## DNS 配置
 
