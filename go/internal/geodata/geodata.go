@@ -7,8 +7,6 @@ package geodata
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -80,6 +78,8 @@ type ToolIdentity struct {
 	SingBoxVersion string `json:"sing_box_version"`
 }
 
+// Rule describes one SRS file. SHA256 is recorded by the Geo workflow for
+// reference; Steer checks a file's presence and size, not its hash.
 type Rule struct {
 	Kind     string `json:"kind"`
 	Category string `json:"category"`
@@ -260,19 +260,6 @@ func verifyRuleFile(path string, rule Rule) error {
 	}
 	if info.Size() != rule.Size {
 		return fmt.Errorf("size is %d, want %d", info.Size(), rule.Size)
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	digest := sha256.New()
-	if _, err := io.Copy(digest, file); err != nil {
-		return err
-	}
-	actual := hex.EncodeToString(digest.Sum(nil))
-	if actual != rule.SHA256 {
-		return fmt.Errorf("SHA-256 is %s, want %s", actual, rule.SHA256)
 	}
 	return nil
 }

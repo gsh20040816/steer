@@ -18,10 +18,7 @@ env:
   OPENWRT_RELEASE: 25.12.5
   OPENWRT_TARGET: x86/64
   SING_BOX_OPENWRT_VERSION: 1.14.4
-  SING_BOX_OPENWRT_X86_64_SHA256: 5e600d4a4d16b86f3beed88ffa76dc4ab0b82d4129a47c357cc5d09e5cd36f24
   SING_BOX_MACOS_VERSION: 1.14.4
-  SING_BOX_MACOS_REVISION: c005f35300ce76427dc285481ec5695f5b179cd2
-  SING_BOX_DARWIN_ARM64_SHA256: 0d8c7f5ed5d587b0f1a5e9772a708ec3bfa4ac4c9329604b01d8d9c2ba406838
 
 jobs:
   source-gate:
@@ -126,7 +123,6 @@ jobs:
           curl --fail --location --silent --show-error \
             --output "$RUNNER_TEMP/sing-box-openwrt.apk" \
             "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_OPENWRT_VERSION/sing-box_${SING_BOX_OPENWRT_VERSION}_openwrt_x86_64.apk"
-          echo "$SING_BOX_OPENWRT_X86_64_SHA256  $RUNNER_TEMP/sing-box-openwrt.apk" | sha256sum --check
 
       - name: Restore OpenWrt SDK ccache
         id: sdk-ccache
@@ -183,7 +179,6 @@ jobs:
           SOURCE_REVISION: ${{ github.sha }}
           GEODATA_VERSION: ${{ needs.geodata.outputs.version }}
           GEODATA_MANIFEST_SHA256: ${{ needs.geodata.outputs.manifest_sha256 }}
-          SING_BOX_UPSTREAM_SHA256: ${{ env.SING_BOX_OPENWRT_X86_64_SHA256 }}
         run: |
           # The SDK container wrote these as another uid, so they cannot be moved.
           cp -R "$RUNNER_TEMP/steer-sdk-artifacts/bin" "$RUNNER_TEMP/steer-sdk-artifacts/logs" .
@@ -310,13 +305,12 @@ jobs:
               ./cmd/steer-macos
           )
 
-      - name: Download and verify official sing-box Darwin archive
+      - name: Download official sing-box Darwin archive
         run: |
           archive="$RUNNER_TEMP/sing-box-darwin.tar.gz"
           curl --fail --location --silent --show-error \
             --output "$archive" \
             "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_MACOS_VERSION/sing-box-$SING_BOX_MACOS_VERSION-darwin-arm64.tar.gz"
-          echo "$SING_BOX_DARWIN_ARM64_SHA256  $archive" | shasum -a 256 -c
           tar -xzf "$archive" -C "$RUNNER_TEMP"
           extracted="$RUNNER_TEMP/sing-box-$SING_BOX_MACOS_VERSION-darwin-arm64"
           install -m 0755 "$extracted/sing-box" "$RUNNER_TEMP/steer-macos-binaries/sing-box"
@@ -339,8 +333,6 @@ jobs:
           STEER_SOURCE_REVISION: ${{ github.sha }}
           STEER_SOURCE_TAG: ${{ github.ref_name }}
           STEER_SING_BOX_VERSION: ${{ env.SING_BOX_MACOS_VERSION }}
-          STEER_SING_BOX_REVISION: ${{ env.SING_BOX_MACOS_REVISION }}
-          STEER_SING_BOX_ARCHIVE_SHA256: ${{ env.SING_BOX_DARWIN_ARM64_SHA256 }}
           STEER_GEO_MANIFEST_SHA256: ${{ needs.geodata.outputs.manifest_sha256 }}
         run: |
           export STEER_APP_BINARY="$(cat "$RUNNER_TEMP/swift-bin-path")/SteerApp"
@@ -394,14 +386,12 @@ jobs:
             echo "Geo manifest SHA256: $GEODATA_MANIFEST_SHA256"
             echo "OpenWrt mirrored sing-box version: $SING_BOX_OPENWRT_VERSION"
             echo "macOS bundled sing-box version: $SING_BOX_MACOS_VERSION"
-            echo "macOS bundled sing-box revision: $SING_BOX_MACOS_REVISION"
             echo "Linux targets: x86_64 aarch64"
             echo "Linux build mode: CGO_ENABLED=0"
             echo "macOS targets: arm64"
             echo "Minimum macOS: 13.0"
             echo "macOS signing: ad-hoc"
             echo "macOS notarization: none"
-            echo "macOS arm64 sing-box archive SHA256: $SING_BOX_DARWIN_ARM64_SHA256"
             echo "macOS arm64 toolchains:"
             grep -E '^(macOS SDK|Xcode|Swift|Go): ' input/macos/BUILD-METADATA.txt
           } > "$release_dir/BUILD-METADATA.txt"

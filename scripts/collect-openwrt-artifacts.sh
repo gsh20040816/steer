@@ -32,7 +32,6 @@ done
 	echo "Source revision: ${SOURCE_REVISION:-unknown}"
 	echo "Geo data version: ${GEODATA_VERSION:-unknown}"
 	echo "Geo manifest SHA256: ${GEODATA_MANIFEST_SHA256:-unknown}"
-	echo "sing-box upstream SHA256: ${SING_BOX_UPSTREAM_SHA256:-unknown}"
 	echo "sing-box mirrored SHA256: ${SING_BOX_MIRRORED_SHA256:-unknown}"
 } > "$output_dir/BUILD-METADATA.txt"
 

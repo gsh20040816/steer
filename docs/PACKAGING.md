@@ -13,7 +13,7 @@
 1. 本仓库发布：源码 tag、x86_64/aarch64 的 Linux tar.zst、OpenWrt 25.12.5 x86_64 的 APK、Apple Silicon 的 macOS DMG。不打 deb、rpm、pkg.tar 或 Nix 包。
 2. Geo 流程每 6 小时检查一次 Loyalsoldier 的最新版本，用固定版本的 geoview 和 sing-box 把完整的 GeoSite/GeoIP 转成 SRS。Pages 上只保留最新的 `geodata/latest`。
 3. 每份 Geo 数据都带一个清单（manifest），记录上游版本、DAT 文件的 SHA-256、转换工具的版本，以及每个分类对应 SRS 文件的路径、大小和 SHA-256。
-4. 应用配置时只校验实际用到的 Geo 文件。sing-box 通过 `initial_path` 直接用本地文件启动，之后每 24 小时用直连去检查同名的远程 SRS 是否更新。
+4. 应用配置时只检查实际用到的 Geo 文件是否存在、大小是否一致，不计算 SHA-256；manifest 里的 SHA-256 只做记录。sing-box 通过 `initial_path` 直接用本地文件启动，之后每 24 小时用直连去检查同名的远程 SRS 是否更新。
 5. 安装包只依赖 `sing-box` 这个包名，不限版本。应用配置时，Steer 让实际安装的 sing-box 检查生成的配置并读取它的编译选项，不兼容就报错，让用户换合适的版本。CI、OpenWrt 软件源里的 sing-box 和 macOS DMG 目前固定用官方 `1.14.4`；Geo 转换仍固定用 `1.14.1`，因为 manifest 记录了转换工具的版本，换版本就要重新生成 Geo 数据。这些都不是 Linux/Arch 上的最低版本要求，能不能用以实际检查为准。
 6. master 分支不构建、也不保存正式发布包。tag 必须指向 `origin/master` 上已有的提交；稳定版 tag 还要求同一个提交在 master 上的 CI 已经通过。GitHub Actions 出故障时，预发布版可以用完整的本地检查代替 master CI；tag 推送事件丢了的话，可以手动触发同一个 tag 的发布。两种方式都必须是 tag（`GITHUB_REF_TYPE=tag`），走完全相同的构建、检查、证明和发布流程。预发布不会覆盖稳定版的 OpenWrt 软件源。
 
@@ -30,7 +30,7 @@ Loyalsoldier 的 geosite.dat + geoip.dat
                   ↓
 完整的 rules/*.srs + manifest.json
                   ↓
-逐个文件反编译、检查非空、核对大小和 SHA-256
+逐个文件反编译、检查非空，记下大小和 SHA-256，再核对文件和清单一一对应
                   ↓
 GitHub Pages：geodata/latest
 ```
@@ -47,7 +47,7 @@ https://gsh20040816.github.io/steer/geodata/latest/rules/steer-geosite-cn.srs
 https://gsh20040816.github.io/steer/geodata/latest/steer-geodata.tar.zst
 ```
 
-Pages 只放当前版本，不保留历史版本。tag 发布流程先下载并完整校验当前的数据包，再把同一份数据放进这次的 OpenWrt、Linux 和 macOS 产物，并在构建信息里记录它的版本和 manifest 的 SHA-256。
+Pages 只放当前版本，不保留历史版本。tag 发布流程先下载当前的数据包，检查 manifest（包括转换工具的版本）、文件和清单是否一一对应、大小是否一致，不重新计算 SHA-256；再把同一份数据放进这次的 OpenWrt、Linux 和 macOS 产物，并在构建信息里记录它的版本和 manifest 的 SHA-256。
 
 ## OpenWrt
 
@@ -58,9 +58,9 @@ Pages 只放当前版本，不保留历史版本。tag 发布流程先下载并�
 | `steer` | `0.12.0-r1` | 控制程序、默认 UCI 配置、procd 启动脚本、完整的只读 Geo 数据 |
 | `luci-app-steer` | `0.12.0-r1` | LuCI 页面、ucode RPC、权限配置 |
 | `luci-i18n-steer-zh-cn` | `0.12.0-r1` | 简体中文翻译 |
-| `sing-box` | `1.14.4-r0` | SagerNet 官方 x86_64 APK，核对内容后改用 Steer 的密钥签名 |
+| `sing-box` | `1.14.4-r0` | SagerNet 官方 x86_64 APK，改用 Steer 的密钥重新签名 |
 
-Steer 不重新编译 sing-box。CI 先核对官方 APK 的 SHA-256，重签后比较除签名外的元数据是否一致，再用仓库公钥验证。软件源里的四个 APK 和 `packages.adb` 都用同一把 Steer P-256 密钥签名。私钥只存在 GitHub Actions 的 Secret `OPENWRT_APK_PRIVATE_KEY` 里，不能出现在源码、构建产物、Release 或 Pages 上。
+Steer 不重新编译 sing-box。CI 按固定版本下载官方 APK，重签后比较除签名外的元数据是否一致，再用仓库公钥验证。软件源里的四个 APK 和 `packages.adb` 都用同一把 Steer P-256 密钥签名。私钥只存在 GitHub Actions 的 Secret `OPENWRT_APK_PRIVATE_KEY` 里，不能出现在源码、构建产物、Release 或 Pages 上。
 
 `steer` 包依赖 `firewall4`、`ip`、`kmod-tun`、`kmod-nft-queue`、`kmod-nft-tproxy` 和 `sing-box`（不限版本），不依赖 geoview，也没有单独的 Geo 包。
 
@@ -137,7 +137,7 @@ GitHub Release 只提供 Apple Silicon 版：
 steer-macos-arm64.dmg       # xcode-27 / arm64 / Xcode 27.0
 ```
 
-Swift 界面不交叉编译。构建任务会编译 Swift 程序和同架构的 `steer-macos`，下载 SagerNet 官方 `sing-box 1.14.4` 的 macOS 压缩包并核对固定的 SHA，然后调用 `macos/scripts/build-app-bundle.sh` 组装。DMG 里的内容固定为：
+Swift 界面不交叉编译。构建任务会编译 Swift 程序和同架构的 `steer-macos`，下载 SagerNet 官方 `sing-box 1.14.4` 的 macOS 压缩包，然后调用 `macos/scripts/build-app-bundle.sh` 组装。DMG 里的内容固定为：
 
 ```text
 Steer.app/
@@ -189,7 +189,7 @@ packaging/archlinux/steer/
 └── .gitignore
 ```
 
-配方从固定的 `_commit` 构建 Steer，并下载 Pages 上当前的 Geo 数据包。`prepare()` 每次都先删掉旧的 `$srcdir/geodata-seed`，再解压并用同一个 Go 校验工具完整检查，所以重复运行 `makepkg` 不会失败，也不会混进旧数据。
+配方从固定的 `_commit` 构建 Steer，并下载 Pages 上当前的 Geo 数据包。`prepare()` 每次都先删掉旧的 `$srcdir/geodata-seed`，再解压并用同一个 Go 工具检查 manifest 和文件是否对得上，所以重复运行 `makepkg` 不会失败，也不会混进旧数据。
 
 依赖里写的是虚拟包名 `sing-box`，这样官方包和 Arch Linux CN 的 `sing-box-alpha` 都能用（后者提供了 `sing-box` 这个名字，但没有提供能让 pacman 比较版本的版本号）。sing-box 能不能用，由 Steer 在应用配置时实际检查。其他依赖是 systemd、nftables、iproute2 和 ca-certificates。安装时不启用服务、不应用配置，也不生成网页 token。升级时 `steer.install` 的 `post_upgrade` 执行一次内部的 `steer _migrate`，把 schema 9 配置里的订阅节点移进 `/var/lib/steer/subscription-nodes`；迁移是幂等的，`steer.service` 和 `steer web` 启动时也会做同样的检查。
 
@@ -213,9 +213,9 @@ packaging/archlinux/steer/
         ↓ tag 检查（提交在 master 上、版本号一致；稳定版还要同一提交的 CI 通过）
 v* tag 发布流程
         ↓
-下载并校验 Pages 上的 Geo 数据
+下载并检查 Pages 上的 Geo 数据
   ├── OpenWrt SDK 构建 Steer/LuCI/翻译三个 APK
-  │     + 核对并重签官方 sing-box APK
+  │     + 重签官方 sing-box APK
   │     + 签名 packages.adb
   ├── CGO_ENABLED=0 构建两个 Linux tar.zst
   └── arm64 机器上构建 macOS DMG

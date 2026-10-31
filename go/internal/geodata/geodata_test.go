@@ -70,7 +70,7 @@ func TestCatalogIncludesExactAttributeSelectors(t *testing.T) {
 	}
 }
 
-func TestValidateRequiredRulesChecksManifestAndContent(t *testing.T) {
+func TestValidateRequiredRulesChecksManifestAndFiles(t *testing.T) {
 	root := writeSeed(t)
 	rule := compiler.GeoRuleSet{
 		Kind: "geosite", Category: "category-example@cn", Tag: "steer-geosite-category-example@cn",
@@ -88,12 +88,26 @@ func TestValidateRequiredRulesChecksManifestAndContent(t *testing.T) {
 	if !errors.As(err, &geoErr) || geoErr.Code != ErrorCategoryNotFound {
 		t.Fatalf("unexpected missing-category error: %#v", err)
 	}
-	if err := os.WriteFile(rule.InitialPath, []byte("tampered\n"), 0o644); err != nil {
+	// The manifest hash is not compared; a same-size file is accepted.
+	if err := os.WriteFile(rule.InitialPath, []byte("geosite-xx\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateRequiredRules([]compiler.GeoRuleSet{rule}, root); err != nil {
+		t.Fatalf("same-size seed file was rejected: %v", err)
+	}
+	if err := os.WriteFile(rule.InitialPath, []byte("truncated\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	err = ValidateRequiredRules([]compiler.GeoRuleSet{rule}, root)
 	if !errors.As(err, &geoErr) || geoErr.Code != ErrorSeedInvalid {
-		t.Fatalf("unexpected tamper error: %#v", err)
+		t.Fatalf("unexpected size error: %#v", err)
+	}
+	if err := os.Remove(rule.InitialPath); err != nil {
+		t.Fatal(err)
+	}
+	err = ValidateRequiredRules([]compiler.GeoRuleSet{rule}, root)
+	if !errors.As(err, &geoErr) || geoErr.Code != ErrorSeedInvalid || geoErr.Path != rule.InitialPath {
+		t.Fatalf("unexpected missing-file error: %#v", err)
 	}
 }
 

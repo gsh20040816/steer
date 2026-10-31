@@ -21,7 +21,7 @@ type Options struct {
 }
 
 // Validate reads only the installed Geo manifest. Prepare remains responsible
-// for checking the size and SHA-256 of every required SRS seed file.
+// for checking that every required SRS seed file exists with the listed size.
 func Validate(value model.Intent, options Options) model.Validation {
 	result := model.ValidateWithOptions(value, model.ValidationOptions{
 		ReservedListeners:     options.ReservedListeners,

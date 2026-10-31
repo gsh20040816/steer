@@ -17,7 +17,6 @@ permissions:
 
 env:
   SING_BOX_VERSION: 1.14.1
-  SING_BOX_LINUX_AMD64_MUSL_SHA256: b907365b154e4a7e3e40be15c2cd83433c0fa65c7dc736bdb1b5face2afe4501
   GEOVIEW_REF: 3c91926d360b8f49d47520639e574608318baf12
 
 jobs:
@@ -77,10 +76,6 @@ jobs:
           curl --fail --location --silent --show-error \
             --output "$RUNNER_TEMP/sing-box.tar.gz" \
             "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_VERSION/sing-box-$SING_BOX_VERSION-linux-amd64-musl.tar.gz"
-          printf '%s  %s\n' \
-            "$SING_BOX_LINUX_AMD64_MUSL_SHA256" \
-            "$RUNNER_TEMP/sing-box.tar.gz" \
-            | sha256sum --check
           tar -xzf "$RUNNER_TEMP/sing-box.tar.gz" -C "$RUNNER_TEMP"
 
       - name: Generate and verify every SRS

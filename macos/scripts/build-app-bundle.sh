@@ -123,8 +123,6 @@ Xcode: $STEER_XCODE_VERSION
 Swift: $STEER_SWIFT_VERSION
 Go: $STEER_GO_VERSION
 sing-box version: $STEER_SING_BOX_VERSION
-sing-box revision: $STEER_SING_BOX_REVISION
-sing-box upstream archive SHA256: $STEER_SING_BOX_ARCHIVE_SHA256
 Geo manifest SHA256: $STEER_GEO_MANIFEST_SHA256
 Signing: ad-hoc
 Notarization: none

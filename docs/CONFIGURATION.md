@@ -158,7 +158,7 @@ config rule 'default'
 
 同一个字段的多个值是「或」，不同字段之间是「且」。目标 IP、网络、协议和端口只影响流量走哪条路由，不影响选哪个 DNS 配置。
 
-`geosite:` 和 `geoip:` 必须是安装包 manifest 里确实存在的分类，`geosite:steam@cn` 这种带属性的写法也按完整名称检查。Apply 在停掉当前配置之前，先校验需要的 Geo 文件路径、大小和 SHA-256。sing-box 启动时用本地文件，之后每 24 小时在后台检查 `https://gsh20040816.github.io/steer/geodata/latest/`。远端更新失败不影响已有数据，错误只记在 sing-box 日志里。
+`geosite:` 和 `geoip:` 必须是安装包 manifest 里确实存在的分类，`geosite:steam@cn` 这种带属性的写法也按完整名称检查。Apply 在停掉当前配置之前，先检查需要的 Geo 文件是否存在、大小是否和 manifest 一致，缺文件就直接报错。sing-box 启动时用本地文件，之后每 24 小时在后台检查 `https://gsh20040816.github.io/steer/geodata/latest/`。远端更新失败不影响已有数据，错误只记在 sing-box 日志里。
 
 ## 本地入口
 

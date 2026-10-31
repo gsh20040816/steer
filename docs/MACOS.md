@@ -170,7 +170,7 @@ DNS 配置 → 路由 / 出口
 steer-macos-arm64.dmg
 ```
 
-DMG 里的 `Steer.app` 包含：图形界面、`steer-macos`、SagerNet 官方 sing-box、三个 LaunchDaemon 的 plist（运行、control、订阅定时）、完整的 Geo 数据、许可证和安装器。构建时会核对 sing-box 上游压缩包的 SHA 和 Geo 数据清单，检查 SteerApp 的最低部署版本和 SDK，最后对内部程序和整个应用做 ad-hoc 签名。
+DMG 里的 `Steer.app` 包含：图形界面、`steer-macos`、SagerNet 官方 sing-box、三个 LaunchDaemon 的 plist（运行、control、订阅定时）、完整的 Geo 数据、许可证和安装器。构建时会检查 Geo 数据清单、SteerApp 的最低部署版本和 SDK，最后对内部程序和整个应用做 ad-hoc 签名。
 
 项目没有付费的 Apple 开发者账号，所以 DMG **没有公证**。ad-hoc 签名只能保证构建后文件没被改动，Gatekeeper 不会因此自动放行。安装步骤：
 

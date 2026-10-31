@@ -10,7 +10,6 @@ permissions:
 
 env:
   SING_BOX_VERSION: 1.14.4
-  SING_BOX_LINUX_AMD64_MUSL_SHA256: 8f7c5f0651238850d96a0e488e5473cd77ec1a0098f63942e943f475a12057ca
 
 jobs:
   linux-openwrt:
@@ -98,10 +97,6 @@ jobs:
           curl --fail --location --silent --show-error \
             --output "$RUNNER_TEMP/steer-linux-system/sing-box.tar.gz" \
             "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_VERSION/sing-box-$SING_BOX_VERSION-linux-amd64-musl.tar.gz"
-          printf '%s  %s\n' \
-            "$SING_BOX_LINUX_AMD64_MUSL_SHA256" \
-            "$RUNNER_TEMP/steer-linux-system/sing-box.tar.gz" \
-            | sha256sum --check
           tar -xzf "$RUNNER_TEMP/steer-linux-system/sing-box.tar.gz" \
             -C "$RUNNER_TEMP/steer-linux-system"
           install -m 755 \

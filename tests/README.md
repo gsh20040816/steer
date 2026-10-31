@@ -38,7 +38,7 @@ swift test --disable-sandbox --build-system native
 - `linux_web_test.js`：Linux 网页的开关和冲突回滚、总览页、规则和节点的标签、SSH 私钥、本地代理认证、高级 JSON 编辑、无效 JSON 时阻止离开页面、放弃修改前的确认。
 - Swift 测试：本地代理、订阅、测速、总览里 Saved/Active 的状态、提交前的检查。
 - `check-luci-i18n.py`：LuCI 里出现的文字都有中文翻译；界面描述里三端共用的文案，LuCI 的中文翻译和 `zh_cn` 完全相同。
-- `check-release-consistency.py`：同一个版本号或校验值在不同文件里是否一致（Geo 转换用的 sing-box 版本、CI 和发布包用的 sing-box 版本、geoview 提交、两个 OpenWrt 包的版本、Arch 的 PKGBUILD 和 .SRCINFO），GitHub Actions 是否都固定到具体提交，LuCI 的 rpcd 脚本是否没有调用 shell。
+- `check-release-consistency.py`：同一个版本号或固定值在不同文件里是否一致（Geo 转换用的 sing-box 版本、CI 和发布包用的 sing-box 版本、geoview 提交、两个 OpenWrt 包的版本、Arch 的 PKGBUILD 和 .SRCINFO），GitHub Actions 是否都固定到具体提交，LuCI 的 rpcd 脚本是否没有调用 shell。
 - `check-ui-contract.py`：生成的界面描述文件是最新的，LuCI 菜单和它一致。
 - `check-macos-packaging.py`：把安装器里清除 plist 隔离属性的那段脚本拿出来，在真实的扩展属性上运行一遍。
 
@@ -65,7 +65,7 @@ swift test --disable-sandbox --build-system native
 
 ## Linux systemd 容器
 
-`tests/integration/run-linux-system.sh` 只能在设置了 `STEER_LINUX_SYSTEM_TEST=1` 的一次性特权 systemd 容器里运行，不要在正常使用的机器上运行。CI 用 `tests/integration/linux-system.Dockerfile` 构建固定的 Debian 环境，挂载本次构建的 Steer、同一次校验过的 SRS 数据，以及校验过 SHA-256 的 sing-box 1.14.4 musl 版。
+`tests/integration/run-linux-system.sh` 只能在设置了 `STEER_LINUX_SYSTEM_TEST=1` 的一次性特权 systemd 容器里运行，不要在正常使用的机器上运行。CI 用 `tests/integration/linux-system.Dockerfile` 构建固定的 Debian 环境，挂载本次构建的 Steer、同一次校验过的 SRS 数据，以及官方 sing-box 1.14.4 musl 版。
 
 容器启动本身偶尔会失败，所以 CI 只对这一步重试：镜像只构建一次，容器最多重建 3 次，每次最多等 30 秒，直到 systemd 能响应且 `systemd-resolved` 已运行。每次失败都会打印容器状态、失败的 unit 和本次启动的日志。真正的 `run-linux-system.sh` 只跑一次，失败不重试。
 
@@ -145,11 +145,11 @@ unshare -Ur python3 tests/integration/check-direct-bypass.py /tmp/steer-bypass-f
 
 第一步用共享编译器和两个平台的真实配置导出 off/static/dns 三种模式的测试配置。第二步在 Linux 上运行（root 可以省略 `unshare -Ur`），把最后一个参数换成 `openwrt` 就是测 OpenWrt。
 
-脚本自己隔离网络和挂载命名空间，搭建一个没有公网出口的 client/router/server 拓扑，测试：TCP/UDP 的远端 IPv6 源地址、源 MAC、DNS 映射、排在前面的代理/拒绝/协议规则能否挡住直连、嗅探后才确定的直连，以及显式 HTTP 代理。需要 sing-box、ip、nft、dig、Python 3，以及允许用户/网络/挂载命名空间的内核。CI 用校验过的官方 sing-box 1.14.4 对两个平台都跑一遍。
+脚本自己隔离网络和挂载命名空间，搭建一个没有公网出口的 client/router/server 拓扑，测试：TCP/UDP 的远端 IPv6 源地址、源 MAC、DNS 映射、排在前面的代理/拒绝/协议规则能否挡住直连、嗅探后才确定的直连，以及显式 HTTP 代理。需要 sing-box、ip、nft、dig、Python 3，以及允许用户/网络/挂载命名空间的内核。CI 用官方 sing-box 1.14.4 对两个平台都跑一遍。
 
 ## WireGuard
 
-把 `STEER_WG_SING_BOX` 设成校验过的 sing-box 1.14.4 路径，在 `go` 目录运行：
+把 `STEER_WG_SING_BOX` 设成 sing-box 1.14.4 的路径，在 `go` 目录运行：
 
 ```sh
 go test ./internal/wireguard -run TestNativeWireGuardRemoteAccess -count=1 -v

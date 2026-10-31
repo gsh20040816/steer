@@ -12,7 +12,7 @@ go/internal/generation             运行配置（generation）里和平台无�
 go/internal/subscription           订阅的下载、解析、合并，订阅节点存储和 schema 9 节点迁移
 go/internal/probe                  HTTP/TLS 测量和报告
 go/internal/capability             检查 sing-box 版本和编译选项
-go/internal/geodata                随包 Geo 数据的清单和文件完整性校验
+go/internal/geodata                随包 Geo 数据的清单和文件检查
 go/internal/platform/openwrt       OpenWrt：网络、服务、UCI、Geo、日志
 go/internal/platform/openwrt/uci   严格的 UCI 语法解析
 go/internal/platform/linux         Linux：systemd、TUN、DNS 的 nftables 规则、JSON 配置、状态
@@ -96,7 +96,7 @@ Steer 的 PREROUTING/OUTPUT DNS 规则只处理发往本机地址的查询，并
 
 `platform/linux` 自己决定 TUN、DNS、路由表、优先级、标记和 NFQUEUE。这些只保存在运行配置目录里的 `platform.json`，不进入用户配置，也没有用户可编辑的 `/etc/steer/platform.json`。
 
-Geo 分类是共享的配置内容，两个平台都使用随包的 `/usr/share/steer/geodata-seed`。`internal/geodata` 按严格的清单解析分类，并在切换运行配置之前检查需要的 SRS 文件类型、大小和 SHA-256。
+Geo 分类是共享的配置内容，两个平台都使用随包的 `/usr/share/steer/geodata-seed`。`internal/geodata` 按严格的清单解析分类，并在切换运行配置之前检查需要的 SRS 文件是否存在、是不是普通文件、大小是否和清单一致，不计算 SHA-256。
 
 编译器为用到的 Geo 分类生成 sing-box 的远程规则集：随包的 SRS 作为 `initial_path`，Pages 上的同名 SRS 作为 `url`，每天更新一次。下载用显式的直连 HTTP 客户端，不受用户代理规则影响；`/var/lib/steer/cache.db` 由 sing-box 保存下载缓存。首次启动不需要联网，远程更新失败只记在 sing-box 日志里，不影响已经用本地数据启动成功的应用结果。
 

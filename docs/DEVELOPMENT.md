@@ -61,7 +61,7 @@ git diff --check
 - `subscription`：订阅节点存储、拼接完整 Saved Intent、更新、启用/停用、清理、复制为手动节点和 schema 9 迁移都在这里，三端共用；平台只提供目录、加锁、权限和配置写回，共享代码不能依赖 UCI 命令。
 - `probe`：只负责测量和生成报告；测什么、怎么启动临时 sing-box、日志放哪，由各平台决定。
 - `platform/openwrt`：UCI、nftables、策略路由、procd 和 OpenWrt 的目录只由它管理。
-- `internal/geodata`：Geo 数据清单、分类查询和文件完整性校验。
+- `internal/geodata`：Geo 数据清单、分类查询，以及检查 SRS 文件是否齐全、大小是否一致。
 
 ## 对外接口
 
@@ -89,13 +89,13 @@ macOS 用 launchd、utun 和管理员授权。SwiftUI 界面和 LuCI、Linux 网
 
 `tests/integration/run-openwrt-vm.sh` 只能在一次性的 OpenWrt 25.12.5 x86/64 虚拟机上运行，它会覆盖 UCI、运行目录、nftables 和 procd。覆盖的内容包括：公开 RPC、通过真实 ucode RPC 导入单条/多行/Base64 节点、正常应用/重载/重启、DNS 转发规则、sing-box 1.14 原生 MAC 规则、停用后重新启用，以及非法配置被直接拒绝。
 
-`tests/integration/run-linux-system.sh` 只能在设置了 `STEER_LINUX_SYSTEM_TEST=1` 的一次性特权 systemd 容器里运行。每次提交的 CI 都会用固定的 Debian 镜像、校验过 SHA-256 的 sing-box 1.14.4 musl 版和当前的 SRS 数据，在独立的网络命名空间里测试本机和转发流量的 IPv4/IPv6 TCP、UDP、DNS，监听端口的访问限制，停用/启用，服务重启和 nftables 重启后的恢复。这些 Linux 专属的检查只放在平台集成测试里，不放进共享核心的测试。
+`tests/integration/run-linux-system.sh` 只能在设置了 `STEER_LINUX_SYSTEM_TEST=1` 的一次性特权 systemd 容器里运行。每次提交的 CI 都会用固定的 Debian 镜像、官方 sing-box 1.14.4 musl 版和当前的 SRS 数据，在独立的网络命名空间里测试本机和转发流量的 IPv4/IPv6 TCP、UDP、DNS，监听端口的访问限制，停用/启用，服务重启和 nftables 重启后的恢复。这些 Linux 专属的检查只放在平台集成测试里，不放进共享核心的测试。
 
 发布条件：
 
 1. 本地检查全部通过。
 2. 稳定版要求这个提交在 CI 里的 Ubuntu、Linux systemd、macOS arm64 任务全部通过。GitHub Actions 出故障时，预发布版可以用完整的本地检查代替。
-3. tag 构建用官方 OpenWrt SDK 构建 Steer、LuCI 和中文翻译三个 APK，并校验、重签官方 sing-box APK；同时构建两个 Linux tar.zst 和一个 macOS arm64 DMG。
+3. tag 构建用官方 OpenWrt SDK 构建 Steer、LuCI 和中文翻译三个 APK，并重签官方 sing-box APK；同时构建两个 Linux tar.zst 和一个 macOS arm64 DMG。
 4. 发布包里的所有文件都来自要发布的这个提交。
 5. 安装后运行 `validate`、`health`、`status` 并手动测一次。
 6. 预发布版在真实设备上达到稳定版标准后，再发稳定版。

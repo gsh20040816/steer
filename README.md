@@ -73,7 +73,7 @@ steer subscription status
 
 GitHub Release 里有 `steer-linux-x86_64.tar.zst` 和 `steer-linux-aarch64.tar.zst`，包里带了一份构建时校验过的 Geo 数据，但不包含 sing-box、geoview 或 DAT 数据库。本仓库不打 deb、rpm、Arch 等发行版的包；发行版维护者请从源码 tag 构建，并安装为 `/usr/bin/steer`。
 
-macOS 只提供 Apple Silicon 版的 `steer-macos-arm64.dmg`，用 Xcode 27.0 和 macOS 27 SDK 构建。应用里打包了后台程序、官方 sing-box（固定 SHA 校验）、Geo 数据和安装器。目前只做了 ad-hoc 签名、没有公证，第一次打开时需要按 macOS 打开「未认证开发者」应用的步骤手动确认。DMG 和 `SHA256SUMS` 附有 GitHub 构件证明（attestation），但它不能代替 Developer ID 签名，也不能让 Gatekeeper 放行。
+macOS 只提供 Apple Silicon 版的 `steer-macos-arm64.dmg`，用 Xcode 27.0 和 macOS 27 SDK 构建。应用里打包了后台程序、官方 sing-box（固定版本）、Geo 数据和安装器。目前只做了 ad-hoc 签名、没有公证，第一次打开时需要按 macOS 打开「未认证开发者」应用的步骤手动确认。DMG 和 `SHA256SUMS` 附有 GitHub 构件证明（attestation），但它不能代替 Developer ID 签名，也不能让 Gatekeeper 放行。
 
 ## OpenWrt 软件源
 
@@ -88,8 +88,8 @@ apk update
 apk add steer luci-app-steer luci-i18n-steer-zh-cn
 ```
 
-软件源里有 `steer`、`luci-app-steer`、简体中文翻译，以及一份 sing-box x86_64 APK。这份 sing-box 是 SagerNet 官方构件，校验 SHA 后用 Steer 的密钥重新签名。Geo 数据直接包含在 `steer` 包里。请不要用 `--allow-untrusted` 跳过索引签名检查。
+软件源里有 `steer`、`luci-app-steer`、简体中文翻译，以及一份 sing-box x86_64 APK。这份 sing-box 是 SagerNet 官方构件，按固定版本下载后用 Steer 的密钥重新签名。Geo 数据直接包含在 `steer` 包里。请不要用 `--allow-untrusted` 跳过索引签名检查。
 
 ## 许可证
 
-GPL-3.0-or-later。sing-box、Geo 数据等第三方组件遵循各自的许可证。Steer 不修改也不重新编译 sing-box，只是在 OpenWrt 软件源里转发经过校验的官方构件，并重新签名。
+GPL-3.0-or-later。sing-box、Geo 数据等第三方组件遵循各自的许可证。Steer 不修改也不重新编译 sing-box，只是在 OpenWrt 软件源里转发官方构件，并重新签名。
