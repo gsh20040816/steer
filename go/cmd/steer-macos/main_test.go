@@ -26,7 +26,7 @@ func TestRunVersion(t *testing.T) {
 func TestRunRequiresExplicitPaths(t *testing.T) {
 	for _, args := range [][]string{
 		{"validate", "unexpected"}, {"compile", "unexpected"}, {"prepare", "unexpected"},
-		{"parse-nodes"}, {"export-node"}, {"verify-geodata"}, {"control"}, {"_state", "unexpected"}, {"_control", "unexpected"},
+		{"parse-nodes"}, {"export-node"}, {"control"}, {"_state", "unexpected"}, {"_control", "unexpected"},
 	} {
 		if err := run(args, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
 			t.Fatalf("expected explicit path error for %v", args)

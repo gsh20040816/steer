@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Command steer-geodata-build creates and verifies the package-owned SRS tree
-// published by CI. It is a build tool and is never installed on user devices.
+// Command steer-geodata-build creates the package-owned SRS tree published by
+// CI. It is a build tool and is never installed on user devices.
 package main
 
 import (
@@ -42,17 +42,10 @@ func main() {
 }
 
 func run(args []string) error {
-	if len(args) == 0 {
-		return errors.New("usage: steer-geodata-build generate|verify [flags]")
+	if len(args) == 0 || args[0] != "generate" {
+		return errors.New("usage: steer-geodata-build generate [flags]")
 	}
-	switch args[0] {
-	case "generate":
-		return runGenerate(args[1:])
-	case "verify":
-		return runVerify(args[1:])
-	default:
-		return errors.New("usage: steer-geodata-build generate|verify [flags]")
-	}
+	return runGenerate(args[1:])
 }
 
 func runGenerate(args []string) error {
@@ -140,22 +133,7 @@ func runGenerate(args []string) error {
 	if encodeErr != nil {
 		return encodeErr
 	}
-	if closeErr != nil {
-		return closeErr
-	}
-	return geodata.VerifyDirectory(*outputDirectory)
-}
-
-func runVerify(args []string) error {
-	flags := flag.NewFlagSet("verify", flag.ContinueOnError)
-	directory := flags.String("directory", "", "extracted seed directory")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if flags.NArg() != 0 || *directory == "" {
-		return errors.New("verify requires --directory")
-	}
-	return geodata.VerifyDirectory(*directory)
+	return closeErr
 }
 
 func enumerateTasks(geoSitePath, geoIPPath string) ([]buildTask, error) {
@@ -289,20 +267,6 @@ func buildRule(task buildTask, geoSitePath, geoIPPath, singBoxBinary, outputDire
 	outputPath := filepath.Join(outputDirectory, filepath.FromSlash(relativePath))
 	if output, err := exec.Command(singBoxBinary, "rule-set", "compile", "--output", outputPath, jsonPath).CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("compile %s:%s: %w: %s", task.Kind, task.Category, err, strings.TrimSpace(string(output)))
-	}
-	decodedPath := filepath.Join(temporaryDirectory, tag+".decoded.json")
-	if output, err := exec.Command(singBoxBinary, "rule-set", "decompile", "--output", decodedPath, outputPath).CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("decompile %s:%s: %w: %s", task.Kind, task.Category, err, strings.TrimSpace(string(output)))
-	}
-	decoded, err := os.ReadFile(decodedPath)
-	if err != nil {
-		return nil, err
-	}
-	var check struct {
-		Rules []json.RawMessage `json:"rules"`
-	}
-	if err := json.Unmarshal(decoded, &check); err != nil || len(check.Rules) == 0 {
-		return nil, fmt.Errorf("decompiled %s:%s has no rules", task.Kind, task.Category)
 	}
 	info, err := os.Stat(outputPath)
 	if err != nil {

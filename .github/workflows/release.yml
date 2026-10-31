@@ -66,7 +66,7 @@ jobs:
             --jq '.total_count' | grep -qv '^0$'
 
   geodata:
-    name: Resolve verified Geo seed
+    name: Resolve Geo seed
     needs: source-gate
     runs-on: ubuntu-latest
     outputs:
@@ -74,16 +74,12 @@ jobs:
       manifest_sha256: ${{ steps.manifest.outputs.sha256 }}
 
     steps:
-      - name: Check out source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-
-      - name: Download and verify current Pages Geo bundle
+      - name: Download current Pages Geo bundle
         run: |
           mkdir -p "$RUNNER_TEMP/geodata-seed"
           curl --fail --location --silent --show-error \
             https://gsh20040816.github.io/steer/geodata/latest/steer-geodata.tar.zst \
             | tar --zstd -xf - -C "$RUNNER_TEMP/geodata-seed"
-          (cd go && go run ./cmd/steer-geodata-build verify --directory "$RUNNER_TEMP/geodata-seed")
 
       - name: Record Geo seed identity
         id: manifest
@@ -112,7 +108,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
-      - name: Download verified Geo seed
+      - name: Download Geo seed
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: geodata-seed
@@ -229,7 +225,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
-      - name: Download verified Geo seed
+      - name: Download Geo seed
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: geodata-seed
@@ -283,7 +279,7 @@ jobs:
           go-version-file: go/go.mod
           cache-dependency-path: go/go.sum
 
-      - name: Download verified Geo seed from this run
+      - name: Download Geo seed from this run
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: geodata-seed

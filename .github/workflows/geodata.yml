@@ -21,7 +21,7 @@ env:
 
 jobs:
   publish:
-    name: Build, verify and deploy latest Geo data
+    name: Build and deploy latest Geo data
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -78,7 +78,7 @@ jobs:
             "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_VERSION/sing-box-$SING_BOX_VERSION-linux-amd64-musl.tar.gz"
           tar -xzf "$RUNNER_TEMP/sing-box.tar.gz" -C "$RUNNER_TEMP"
 
-      - name: Generate and verify every SRS
+      - name: Generate every SRS
         if: steps.upstream.outputs.changed == 'true'
         working-directory: go
         env:

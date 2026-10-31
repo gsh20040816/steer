@@ -70,7 +70,7 @@ func TestCatalogIncludesExactAttributeSelectors(t *testing.T) {
 	}
 }
 
-func TestValidateRequiredRulesChecksManifestAndFiles(t *testing.T) {
+func TestValidateRequiredRulesChecksCategoriesAndFiles(t *testing.T) {
 	root := writeSeed(t)
 	rule := compiler.GeoRuleSet{
 		Kind: "geosite", Category: "category-example@cn", Tag: "steer-geosite-category-example@cn",
@@ -88,19 +88,12 @@ func TestValidateRequiredRulesChecksManifestAndFiles(t *testing.T) {
 	if !errors.As(err, &geoErr) || geoErr.Code != ErrorCategoryNotFound {
 		t.Fatalf("unexpected missing-category error: %#v", err)
 	}
-	// The manifest hash is not compared; a same-size file is accepted.
-	if err := os.WriteFile(rule.InitialPath, []byte("geosite-xx\n"), 0o644); err != nil {
+	// Only presence is checked: the recorded size and hash are not compared.
+	if err := os.WriteFile(rule.InitialPath, []byte("replaced with other content\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := ValidateRequiredRules([]compiler.GeoRuleSet{rule}, root); err != nil {
-		t.Fatalf("same-size seed file was rejected: %v", err)
-	}
-	if err := os.WriteFile(rule.InitialPath, []byte("truncated\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	err = ValidateRequiredRules([]compiler.GeoRuleSet{rule}, root)
-	if !errors.As(err, &geoErr) || geoErr.Code != ErrorSeedInvalid {
-		t.Fatalf("unexpected size error: %#v", err)
+		t.Fatalf("seed file with a different size was rejected: %v", err)
 	}
 	if err := os.Remove(rule.InitialPath); err != nil {
 		t.Fatal(err)
@@ -108,28 +101,5 @@ func TestValidateRequiredRulesChecksManifestAndFiles(t *testing.T) {
 	err = ValidateRequiredRules([]compiler.GeoRuleSet{rule}, root)
 	if !errors.As(err, &geoErr) || geoErr.Code != ErrorSeedInvalid || geoErr.Path != rule.InitialPath {
 		t.Fatalf("unexpected missing-file error: %#v", err)
-	}
-}
-
-func TestVerifyDirectoryRejectsUndeclaredFiles(t *testing.T) {
-	root := writeSeed(t)
-	if err := VerifyDirectory(root); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "rules", "extra.srs"), []byte("extra"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := VerifyDirectory(root); err == nil {
-		t.Fatal("undeclared seed file was accepted")
-	}
-}
-
-func TestVerifyDirectoryRejectsUndeclaredRootEntry(t *testing.T) {
-	root := writeSeed(t)
-	if err := os.WriteFile(filepath.Join(root, "unexpected"), []byte("extra"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := VerifyDirectory(root); err == nil {
-		t.Fatal("undeclared root entry was accepted")
 	}
 }

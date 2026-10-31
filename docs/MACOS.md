@@ -170,7 +170,7 @@ DNS 配置 → 路由 / 出口
 steer-macos-arm64.dmg
 ```
 
-DMG 里的 `Steer.app` 包含：图形界面、`steer-macos`、SagerNet 官方 sing-box、三个 LaunchDaemon 的 plist（运行、control、订阅定时）、完整的 Geo 数据、许可证和安装器。构建时会检查 Geo 数据清单、SteerApp 的最低部署版本和 SDK，最后对内部程序和整个应用做 ad-hoc 签名。
+DMG 里的 `Steer.app` 包含：图形界面、`steer-macos`、SagerNet 官方 sing-box、三个 LaunchDaemon 的 plist（运行、control、订阅定时）、完整的 Geo 数据、许可证和安装器。构建时会检查 SteerApp 的最低部署版本和 SDK，最后对内部程序和整个应用做 ad-hoc 签名。
 
 项目没有付费的 Apple 开发者账号，所以 DMG **没有公证**。ad-hoc 签名只能保证构建后文件没被改动，Gatekeeper 不会因此自动放行。安装步骤：
 
@@ -222,6 +222,6 @@ sudo /usr/local/libexec/steer/steer-macos status
 - 独立的 SmartDNS 进程。
 - 识别应用自带的 DoH/DoQ 查询。
 
-Geo 规则可以正常使用。DMG 里附带的 `geodata-seed/` 和发布流程完全匹配并经过校验；Geo 格式转换在 CI 里完成，用户电脑上不装 geoview，也不读 DAT 文件。
+Geo 规则可以正常使用。DMG 里附带的 `geodata-seed/` 就是这次发布流程下载的那一份；Geo 格式转换在 CI 里完成，用户电脑上不装 geoview，也不读 DAT 文件。
 
 目前的发布版没有 Developer ID 签名和公证。以后如果有了签名证书，可以直接加上签名和公证，不需要改动安装包内容、后台服务接口或配置格式。

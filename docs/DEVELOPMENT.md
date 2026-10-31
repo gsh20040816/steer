@@ -16,7 +16,7 @@ go/internal/platform/macos                      macOS 适配器
 go/cmd/steer-openwrt                            OpenWrt 命令行
 go/cmd/steer-linux                              Linux 命令行和网页界面
 go/cmd/steer-macos                              macOS 后台程序
-go/cmd/steer-geodata-build                      CI 里生成和校验 Geo 数据的工具
+go/cmd/steer-geodata-build                      CI 里生成 Geo 数据的工具
 macos/SteerApp                                  macOS 图形界面
 linux                                           Linux 发布包里的示例配置和 systemd unit
 luci-app-steer                                  LuCI 界面、RPC、权限、翻译
@@ -61,7 +61,7 @@ git diff --check
 - `subscription`：订阅节点存储、拼接完整 Saved Intent、更新、启用/停用、清理、复制为手动节点和 schema 9 迁移都在这里，三端共用；平台只提供目录、加锁、权限和配置写回，共享代码不能依赖 UCI 命令。
 - `probe`：只负责测量和生成报告；测什么、怎么启动临时 sing-box、日志放哪，由各平台决定。
 - `platform/openwrt`：UCI、nftables、策略路由、procd 和 OpenWrt 的目录只由它管理。
-- `internal/geodata`：Geo 数据清单、分类查询，以及检查 SRS 文件是否齐全、大小是否一致。
+- `internal/geodata`：Geo 数据清单、分类查询，以及检查需要的 SRS 文件是否存在。
 
 ## 对外接口
 

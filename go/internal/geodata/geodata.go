@@ -30,10 +30,7 @@ const (
 	ErrorSeedInvalid      = "GEO_SEED_INVALID"
 )
 
-var (
-	validCategory = regexp.MustCompile(`^[a-z0-9_!.\-]+(@[a-z0-9_!.\-]+)?$`)
-	validDigest   = regexp.MustCompile(`^[0-9a-f]{64}$`)
-)
+var validCategory = regexp.MustCompile(`^[a-z0-9_!.\-]+(@[a-z0-9_!.\-]+)?$`)
 
 type Error struct {
 	Code     string `json:"code"`
@@ -77,8 +74,8 @@ type ToolIdentity struct {
 	SingBoxVersion string `json:"sing_box_version"`
 }
 
-// Rule describes one SRS file. SHA256 is recorded by the Geo workflow for
-// reference; Steer checks a file's presence and size, not its hash.
+// Rule describes one SRS file. Tag, Path, SHA256 and Size are recorded by the
+// Geo workflow for reference; Steer only checks that a required file exists.
 type Rule struct {
 	Kind     string `json:"kind"`
 	Category string `json:"category"`
@@ -113,51 +110,23 @@ func ReadManifest(seedDirectory string) (Manifest, error) {
 	return manifest, nil
 }
 
+// ValidateManifest checks what Steer reads from a manifest: its format version
+// and the categories, which come from upstream data. The identity fields,
+// paths, sizes and digests are only recorded.
 func ValidateManifest(manifest Manifest) error {
 	if manifest.SchemaVersion != ManifestSchemaVersion {
 		return fmt.Errorf("schema_version must be %d", ManifestSchemaVersion)
 	}
-	if manifest.Upstream.Repository != UpstreamRepository || manifest.Upstream.Version == "" {
-		return fmt.Errorf("upstream repository must be %q and version is required", UpstreamRepository)
-	}
-	if !validDigest.MatchString(manifest.Upstream.GeoSiteSHA256) || !validDigest.MatchString(manifest.Upstream.GeoIPSHA256) {
-		return fmt.Errorf("upstream GeoSite and GeoIP SHA-256 values are required")
-	}
-	if manifest.Tools.GeoViewRef == "" || manifest.Tools.SingBoxVersion == "" {
-		return fmt.Errorf("conversion tools geoview and sing-box must be recorded")
-	}
-	if len(manifest.Rules) == 0 {
-		return fmt.Errorf("rules must not be empty")
-	}
 	seen := make(map[string]struct{}, len(manifest.Rules))
-	previousTag := ""
 	for index, rule := range manifest.Rules {
-		if rule.Kind != "geosite" && rule.Kind != "geoip" {
-			return fmt.Errorf("rules[%d] has unsupported kind %q", index, rule.Kind)
-		}
 		if !validCategory.MatchString(rule.Category) {
 			return fmt.Errorf("rules[%d] has invalid category %q", index, rule.Category)
-		}
-		expectedTag := "steer-" + rule.Kind + "-" + rule.Category
-		if rule.Tag != expectedTag {
-			return fmt.Errorf("rules[%d] tag must be %q", index, expectedTag)
-		}
-		expectedPath := filepath.ToSlash(filepath.Join("rules", expectedTag+".srs"))
-		if rule.Path != expectedPath {
-			return fmt.Errorf("rules[%d] path must be %q", index, expectedPath)
-		}
-		if !validDigest.MatchString(rule.SHA256) || rule.Size <= 0 {
-			return fmt.Errorf("rules[%d] requires a SHA-256 and positive size", index)
 		}
 		key := rule.Kind + "\x00" + rule.Category
 		if _, exists := seen[key]; exists {
 			return fmt.Errorf("duplicate Geo rule %s:%s", rule.Kind, rule.Category)
 		}
 		seen[key] = struct{}{}
-		if previousTag != "" && previousTag >= rule.Tag {
-			return fmt.Errorf("rules must be strictly sorted by tag")
-		}
-		previousTag = rule.Tag
 	}
 	return nil
 }
@@ -180,85 +149,27 @@ func Catalog(seedDirectory, kind string) ([]string, error) {
 	return values, nil
 }
 
+// ValidateRequiredRules reports a category that the manifest does not list
+// and a required SRS file that is missing, before Apply touches the runtime.
 func ValidateRequiredRules(ruleSets []compiler.GeoRuleSet, seedDirectory string) error {
 	if len(ruleSets) == 0 {
 		return nil
 	}
-	seedDirectory = normalizedSeedDirectory(seedDirectory)
 	manifest, err := ReadManifest(seedDirectory)
 	if err != nil {
 		return err
 	}
-	index := make(map[string]Rule, len(manifest.Rules))
+	available := make(map[string]bool, len(manifest.Rules))
 	for _, rule := range manifest.Rules {
-		index[rule.Kind+"\x00"+rule.Category] = rule
+		available[rule.Kind+"\x00"+rule.Category] = true
 	}
 	for _, required := range ruleSets {
-		rule, exists := index[required.Kind+"\x00"+required.Category]
-		if !exists {
+		if !available[required.Kind+"\x00"+required.Category] {
 			return &Error{Code: ErrorCategoryNotFound, Kind: required.Kind, Category: required.Category}
 		}
-		expectedPath := filepath.Join(seedDirectory, filepath.FromSlash(rule.Path))
-		if required.Tag != rule.Tag || filepath.Clean(required.InitialPath) != expectedPath {
-			return seedError(required, required.InitialPath, fmt.Errorf("compiler path or tag does not match the package manifest"))
+		if _, err := os.Stat(required.InitialPath); err != nil {
+			return &Error{Code: ErrorSeedInvalid, Kind: required.Kind, Category: required.Category, Path: required.InitialPath, Err: err}
 		}
-		if err := verifyRuleFile(expectedPath, rule); err != nil {
-			return seedError(required, expectedPath, err)
-		}
-	}
-	return nil
-}
-
-func VerifyDirectory(seedDirectory string) error {
-	seedDirectory = normalizedSeedDirectory(seedDirectory)
-	rootEntries, err := os.ReadDir(seedDirectory)
-	if err != nil {
-		return manifestError(seedDirectory, err)
-	}
-	if len(rootEntries) != 2 || rootEntries[0].Name() != "manifest.json" || !rootEntries[0].Type().IsRegular() || rootEntries[1].Name() != "rules" || !rootEntries[1].IsDir() {
-		return manifestError(seedDirectory, fmt.Errorf("seed root must contain exactly a regular manifest.json and rules directory"))
-	}
-	manifest, err := ReadManifest(seedDirectory)
-	if err != nil {
-		return err
-	}
-	expected := make(map[string]Rule, len(manifest.Rules))
-	for _, rule := range manifest.Rules {
-		expected[filepath.Base(rule.Path)] = rule
-		path := filepath.Join(seedDirectory, filepath.FromSlash(rule.Path))
-		if err := verifyRuleFile(path, rule); err != nil {
-			return &Error{Code: ErrorSeedInvalid, Kind: rule.Kind, Category: rule.Category, Path: path, Err: err}
-		}
-	}
-	rulesDirectory := filepath.Join(seedDirectory, "rules")
-	entries, err := os.ReadDir(rulesDirectory)
-	if err != nil {
-		return manifestError(rulesDirectory, err)
-	}
-	if len(entries) != len(expected) {
-		return manifestError(rulesDirectory, fmt.Errorf("found %d files, manifest requires %d", len(entries), len(expected)))
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			return manifestError(filepath.Join(rulesDirectory, entry.Name()), fmt.Errorf("unexpected directory"))
-		}
-		if _, exists := expected[entry.Name()]; !exists {
-			return manifestError(filepath.Join(rulesDirectory, entry.Name()), fmt.Errorf("file is not declared by manifest"))
-		}
-	}
-	return nil
-}
-
-func verifyRuleFile(path string, rule Rule) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("not a regular file")
-	}
-	if info.Size() != rule.Size {
-		return fmt.Errorf("size is %d, want %d", info.Size(), rule.Size)
 	}
 	return nil
 }
@@ -272,8 +183,4 @@ func normalizedSeedDirectory(value string) string {
 
 func manifestError(path string, err error) error {
 	return &Error{Code: ErrorManifestInvalid, Path: path, Err: err}
-}
-
-func seedError(rule compiler.GeoRuleSet, path string, err error) error {
-	return &Error{Code: ErrorSeedInvalid, Kind: rule.Kind, Category: rule.Category, Path: path, Err: err}
 }

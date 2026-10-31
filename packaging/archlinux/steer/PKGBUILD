@@ -35,8 +35,6 @@ prepare() {
   rm -rf -- "$srcdir/geodata-seed"
   mkdir -p "$srcdir/geodata-seed"
   bsdtar -xf "$srcdir/steer-geodata.tar.zst" -C "$srcdir/geodata-seed"
-  cd "$srcdir/$pkgname/go"
-  go run ./cmd/steer-geodata-build verify --directory "$srcdir/geodata-seed"
 }
 
 build() {

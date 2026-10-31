@@ -65,7 +65,7 @@ swift test --disable-sandbox --build-system native
 
 ## Linux systemd 容器
 
-`tests/integration/run-linux-system.sh` 只能在设置了 `STEER_LINUX_SYSTEM_TEST=1` 的一次性特权 systemd 容器里运行，不要在正常使用的机器上运行。CI 用 `tests/integration/linux-system.Dockerfile` 构建固定的 Debian 环境，挂载本次构建的 Steer、同一次校验过的 SRS 数据，以及官方 sing-box 1.14.4 musl 版。
+`tests/integration/run-linux-system.sh` 只能在设置了 `STEER_LINUX_SYSTEM_TEST=1` 的一次性特权 systemd 容器里运行，不要在正常使用的机器上运行。CI 用 `tests/integration/linux-system.Dockerfile` 构建固定的 Debian 环境，挂载本次构建的 Steer、Pages 上当前的 SRS 数据，以及官方 sing-box 1.14.4 musl 版。
 
 容器启动本身偶尔会失败，所以 CI 只对这一步重试：镜像只构建一次，容器最多重建 3 次，每次最多等 30 秒，直到 systemd 能响应且 `systemd-resolved` 已运行。每次失败都会打印容器状态、失败的 unit 和本次启动的日志。真正的 `run-linux-system.sh` 只跑一次，失败不重试。
 

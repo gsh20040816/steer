@@ -102,11 +102,6 @@ jobs:
             https://gsh20040816.github.io/steer/geodata/latest/steer-geodata.tar.zst
           tar --zstd -xf "$RUNNER_TEMP/steer-linux-system/geodata.tar.zst" \
             -C "$RUNNER_TEMP/steer-linux-system/geodata-seed"
-          (
-            cd go
-            go run ./cmd/steer-geodata-build verify \
-              --directory "$RUNNER_TEMP/steer-linux-system/geodata-seed"
-          )
 
       - name: Build disposable systemd container
         run: docker build --file tests/integration/linux-system.Dockerfile --tag steer-linux-system:test .

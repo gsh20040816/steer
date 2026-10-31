@@ -71,7 +71,7 @@ steer web
 steer subscription status
 ```
 
-GitHub Release 里有 `steer-linux-x86_64.tar.zst` 和 `steer-linux-aarch64.tar.zst`，包里带了一份构建时校验过的 Geo 数据，但不包含 sing-box、geoview 或 DAT 数据库。本仓库不打 deb、rpm、Arch 等发行版的包；发行版维护者请从源码 tag 构建，并安装为 `/usr/bin/steer`。
+GitHub Release 里有 `steer-linux-x86_64.tar.zst` 和 `steer-linux-aarch64.tar.zst`，包里带了一份 Geo 数据，但不包含 sing-box、geoview 或 DAT 数据库。本仓库不打 deb、rpm、Arch 等发行版的包；发行版维护者请从源码 tag 构建，并安装为 `/usr/bin/steer`。
 
 macOS 只提供 Apple Silicon 版的 `steer-macos-arm64.dmg`，用 Xcode 27.0 和 macOS 27 SDK 构建。应用里打包了后台程序、官方 sing-box（固定版本）、Geo 数据和安装器。目前只做了 ad-hoc 签名、没有公证，第一次打开时需要按 macOS 打开「未认证开发者」应用的步骤手动确认。DMG 和 `SHA256SUMS` 附有 GitHub 构件证明（attestation），但它不能代替 Developer ID 签名，也不能让 Gatekeeper 放行。
 

@@ -72,7 +72,6 @@ for binary in "$helper_payload" "$sing_box_payload"; do
 		exit 1
 	}
 done
-"$helper_payload" verify-geodata --directory "$geodata_payload"
 
 /usr/bin/install -d -o root -g wheel -m 0755 "$helper_directory"
 /usr/bin/install -d -o root -g wheel -m 0755 "$socket_directory"
@@ -130,7 +129,6 @@ cleanup_stage() {
 }
 trap cleanup_stage EXIT HUP INT TERM
 /bin/cp -R "$geodata_payload/." "$geodata_stage/"
-"$helper_payload" verify-geodata --directory "$geodata_stage"
 /usr/sbin/chown -R root:wheel "$geodata_stage"
 /usr/bin/find "$geodata_stage" -type d -exec /bin/chmod 0755 {} \;
 /usr/bin/find "$geodata_stage" -type f -exec /bin/chmod 0644 {} \;
