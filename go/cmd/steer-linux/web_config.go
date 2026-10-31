@@ -52,13 +52,13 @@ func (app webApplication) handleConfig(writer http.ResponseWriter, request *http
 					return nil
 				}
 			}
-			// Save rejects drafts that contain subscription nodes and validates
-			// the draft with the stored nodes attached.
-			revision, saveErr = store.Save(value, expectedRevision)
+			// Drafts never contain subscription nodes; Save rejects them and
+			// validates the draft with the stored nodes attached.
+			saved, saveErr = store.Complete(value)
 			if saveErr != nil {
 				return nil
 			}
-			saved, saveErr = store.Complete(value)
+			revision, saveErr = store.Save(value, expectedRevision)
 			if saveErr != nil || !apply {
 				return nil
 			}

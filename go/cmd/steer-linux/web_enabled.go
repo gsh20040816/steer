@@ -37,15 +37,15 @@ func (app webApplication) handleEnabled(writer http.ResponseWriter, request *htt
 			return err
 		}
 		value.Main.Enabled = *input.Enabled
+		saved, err := store.Complete(value)
+		if err != nil {
+			return err
+		}
 		revision, err = store.Save(value, revision)
 		if err != nil {
 			return err
 		}
 		response["saved"], response["revision"], response["intent"] = true, revision, value
-		saved, err := store.Complete(value)
-		if err != nil {
-			return err
-		}
 		result, applyErr := app.applyValue(saved)
 		result, applyErr = recordApplyResult(app.RunDirectory, result, applyErr)
 		response["apply_result"] = result
