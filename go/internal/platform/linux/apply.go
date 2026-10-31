@@ -11,17 +11,27 @@ import (
 	"github.com/gsh20040816/steer/go/internal/generation"
 )
 
-func (backend *Backend) Activate(ctx context.Context, candidate generation.Candidate) error {
+// runtimeFiles are the Linux generation files besides sing-box.json that
+// change how the running service behaves.
+var runtimeFiles = []generation.RuntimeFile{{Name: "platform.json"}, {Name: "firewall.nft"}}
+
+func (backend *Backend) Activate(ctx context.Context, candidate generation.Candidate) (bool, error) {
+	current := filepath.Join(backend.options.RunDirectory, "current")
+	if generation.Unchanged(ctx, current, candidate, runtimeFiles, func(ctx context.Context) error {
+		return checkHealthOnce(ctx, backend.runner, backend.plan, backend.options, "")
+	}) {
+		return false, generation.PublishLink(backend.options.RunDirectory, candidate)
+	}
 	if _, err := backend.runner.Output(ctx, backend.options.SystemctlBinary, "stop", backend.options.ServiceName); err != nil {
-		return fmt.Errorf("stop current Linux generation: %w", err)
+		return true, fmt.Errorf("stop current Linux generation: %w", err)
 	}
 	if err := ActivateGeneration(ctx, backend.runner, candidate, backend.options.RunDirectory, backend.options.NFTBinary); err != nil {
-		return err
+		return true, err
 	}
 	if _, err := backend.runner.Output(ctx, backend.options.SystemctlBinary, "start", backend.options.ServiceName); err != nil {
-		return fmt.Errorf("start candidate Linux generation: %w", err)
+		return true, fmt.Errorf("start candidate Linux generation: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 func (backend *Backend) ActivateForServiceStart(ctx context.Context, candidate generation.Candidate) error {

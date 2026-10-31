@@ -4,8 +4,10 @@ package apply
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/gsh20040816/steer/go/internal/compiler"
@@ -18,6 +20,7 @@ type recordingBackend struct {
 	prepareErr  error
 	activateErr error
 	healthyErr  error
+	unchanged   bool
 }
 
 func (backend *recordingBackend) Prepare(context.Context, model.Intent, compiler.Output) (generation.Candidate, error) {
@@ -27,9 +30,9 @@ func (backend *recordingBackend) Prepare(context.Context, model.Intent, compiler
 	}
 	return generation.Candidate{Directory: "/candidate"}, nil
 }
-func (backend *recordingBackend) Activate(context.Context, generation.Candidate) error {
+func (backend *recordingBackend) Activate(context.Context, generation.Candidate) (bool, error) {
 	backend.calls = append(backend.calls, "activate")
-	return backend.activateErr
+	return !backend.unchanged, backend.activateErr
 }
 func (backend *recordingBackend) Healthy(context.Context, generation.Candidate) error {
 	backend.calls = append(backend.calls, "healthy")
@@ -53,6 +56,25 @@ func TestRunUsesFixedLifecycle(t *testing.T) {
 	}
 	if !reflect.DeepEqual(backend.calls, []string{"prepare", "activate", "healthy", "finalize"}) {
 		t.Fatalf("unexpected lifecycle: %#v", backend.calls)
+	}
+}
+
+func TestRunReportsWhetherActivateRestarted(t *testing.T) {
+	result, err := Run(context.Background(), validIntent(true), compiler.Options{}, &recordingBackend{})
+	if err != nil || !result.OK || !result.Restarted {
+		t.Fatalf("changed runtime was not reported as restarted: %#v %v", result, err)
+	}
+	backend := &recordingBackend{unchanged: true}
+	result, err = Run(context.Background(), validIntent(true), compiler.Options{}, backend)
+	if err != nil || !result.OK || !result.Activated || result.Restarted {
+		t.Fatalf("unchanged runtime was reported as restarted: %#v %v", result, err)
+	}
+	if !reflect.DeepEqual(backend.calls, []string{"prepare", "activate", "healthy", "finalize"}) {
+		t.Fatalf("unchanged runtime skipped the lifecycle: %#v", backend.calls)
+	}
+	encoded, _ := json.Marshal(result)
+	if !strings.Contains(string(encoded), `"restarted":false`) {
+		t.Fatalf("restarted must always be present in the Apply result: %s", encoded)
 	}
 }
 

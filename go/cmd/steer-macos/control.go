@@ -59,6 +59,7 @@ type controlResponse struct {
 	Revision      string                `json:"revision,omitempty"`
 	Status        *macosplatform.Status `json:"status,omitempty"`
 	Validation    *model.Validation     `json:"validation,omitempty"`
+	ApplyResult   *coreapply.Result     `json:"apply_result,omitempty"`
 	Payload       json.RawMessage       `json:"payload,omitempty"`
 	ErrorCode     string                `json:"error_code,omitempty"`
 	Error         string                `json:"error,omitempty"`
@@ -71,7 +72,7 @@ type controlService struct {
 	mu         sync.Mutex
 	write      func(string, []byte, int) error
 	revision   func(string) (string, error)
-	apply      func(model.Intent, macosplatform.BackendOptions) error
+	apply      func(model.Intent, macosplatform.BackendOptions) (coreapply.Result, error)
 	status     func(macosplatform.BackendOptions) macosplatform.Status
 	probe      func(context.Context, string, macosplatform.BackendOptions, probeSelection) (probeResponse, error)
 }
@@ -475,7 +476,9 @@ func (service *controlService) handle(request controlRequest) controlResponse {
 	response.Saved = true
 	response.Revision = controlRevision(document)
 	if request.Operation == "apply" {
-		if err := service.apply(value, service.options); err != nil {
+		result, err := service.apply(value, service.options)
+		response.ApplyResult = &result
+		if err != nil {
 			status := service.readRuntimeStatus()
 			response.Status = &status
 			response.Error = err.Error()
@@ -624,11 +627,11 @@ func setSubscriptionUpdatePermissions(configPath, stateDirectory string, adminGI
 	return nil
 }
 
-func applyControlConfiguration(value model.Intent, options macosplatform.BackendOptions) error {
-	return runApplyOperation(options.RunDirectory, func() (coreapply.Result, error) {
+func applyControlConfiguration(value model.Intent, options macosplatform.BackendOptions) (coreapply.Result, error) {
+	return recordApplyOperation(options.RunDirectory, func() (coreapply.Result, error) {
 		backend := macosplatform.NewBackend(macosplatform.ExecRunner{}, value, options)
 		return coreapply.Run(context.Background(), value, backend.CompilerOptions(), backend)
-	}, io.Discard)
+	})
 }
 
 func (service *controlService) writeResponse(writer io.Writer, response controlResponse) {

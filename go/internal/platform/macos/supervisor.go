@@ -84,6 +84,10 @@ func (backend *Backend) runSupervised(ctx context.Context, config string, manage
 	}
 	readyPath := filepath.Join(backend.options.RunDirectory, "dns-ready.json")
 	_ = os.Remove(readyPath)
+	runtime, err := runtimeConfigDigest(config)
+	if err != nil {
+		return err
+	}
 	runConfig := config
 	wgRuntime, err := prepareWireGuardRuntime(config, backend.options.RunDirectory)
 	if err != nil {
@@ -131,8 +135,9 @@ func (backend *Backend) runSupervised(ctx context.Context, config string, manage
 	// Readiness is diagnostic, not permission for the core to keep running.
 	// Retry DNS takeover after transient failures without tearing down traffic.
 	data, _ := json.Marshal(struct {
-		Config string `json:"config"`
-	}{Config: config})
+		Config  string `json:"config"`
+		Runtime string `json:"runtime"`
+	}{Config: config, Runtime: runtime})
 	lastError := ""
 	timer := time.NewTimer(0)
 	defer timer.Stop()
@@ -158,9 +163,10 @@ func (backend *Backend) runSupervised(ctx context.Context, config string, manage
 				err = atomicWriteMode(readyPath, data, 0o644)
 			} else {
 				failure, _ := json.Marshal(struct {
-					Config string `json:"config"`
-					Error  string `json:"error"`
-				}{config, err.Error()})
+					Config  string `json:"config"`
+					Runtime string `json:"runtime"`
+					Error   string `json:"error"`
+				}{config, runtime, err.Error()})
 				if writeErr := atomicWriteMode(readyPath, failure, 0o644); writeErr != nil {
 					_ = os.Remove(readyPath)
 					err = errors.Join(err, writeErr)
@@ -288,11 +294,12 @@ func (backend *Backend) checkDNSReady(ctx context.Context, expectedDirectory str
 		return fmt.Errorf("system DNS takeover is not ready: %w", err)
 	}
 	var marker struct {
-		Config string `json:"config"`
-		Error  string `json:"error"`
+		Runtime string `json:"runtime"`
+		Error   string `json:"error"`
 	}
-	if json.Unmarshal(data, &marker) != nil || marker.Config != filepath.Join(expectedDirectory, "sing-box.json") {
-		return errors.New("DNS takeover belongs to a different generation")
+	expected, digestErr := runtimeConfigDigest(filepath.Join(expectedDirectory, "sing-box.json"))
+	if json.Unmarshal(data, &marker) != nil || digestErr != nil || marker.Runtime != expected {
+		return errors.New("DNS takeover belongs to a different runtime configuration")
 	}
 	if marker.Error != "" {
 		return fmt.Errorf("DNS health check failed: %s", marker.Error)
@@ -301,4 +308,16 @@ func (backend *Backend) checkDNSReady(ctx context.Context, expectedDirectory str
 		return err
 	}
 	return backend.checkSystemDNS(ctx)
+}
+
+// runtimeConfigDigest names a sing-box.json by content. A generation switched
+// without a restart has a byte-identical sing-box.json, so the supervisor's
+// markers keep describing the running core after current.json moves on and
+// the old generation directory is pruned.
+func runtimeConfigDigest(path string) (string, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return contentRevision(content), nil
 }

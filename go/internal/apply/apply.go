@@ -19,6 +19,7 @@ type Result struct {
 	CandidateGeneration string            `json:"candidate_generation,omitempty"`
 	Generation          string            `json:"generation,omitempty"`
 	Activated           bool              `json:"activated"`
+	Restarted           bool              `json:"restarted"`
 	IntentDigest        string            `json:"intent_digest,omitempty"`
 	RuntimeDigest       string            `json:"runtime_digest,omitempty"`
 	Validation          *model.Validation `json:"validation,omitempty"`
@@ -30,9 +31,12 @@ type Record struct {
 	Result    Result `json:"result"`
 }
 
+// Backend is one platform adapter. Activate reports whether it restarted the
+// service: an unchanged, healthy runtime only switches current to the
+// candidate (see generation.Unchanged), everything else stops and starts.
 type Backend interface {
 	Prepare(context.Context, model.Intent, compiler.Output) (generation.Candidate, error)
-	Activate(context.Context, generation.Candidate) error
+	Activate(context.Context, generation.Candidate) (bool, error)
 	Healthy(context.Context, generation.Candidate) error
 	Finalize(context.Context, generation.Candidate) error
 	Disable(context.Context) error
@@ -63,7 +67,9 @@ func Run(ctx context.Context, value model.Intent, options compiler.Options, back
 		return result, err
 	}
 	result.CandidateGeneration = candidate.Directory
-	if err := backend.Activate(ctx, candidate); err != nil {
+	restarted, err := backend.Activate(ctx, candidate)
+	result.Restarted = restarted
+	if err != nil {
 		return result, err
 	}
 	result.Generation = candidate.Directory

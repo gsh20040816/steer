@@ -32,6 +32,15 @@ func runLockedApply(runDirectory string, operation func() (coreapply.Result, err
 // cross-process operation lock. The control daemon uses this to keep saving
 // the canonical document and switching runtime state in one transaction.
 func runApplyOperation(runDirectory string, operation func() (coreapply.Result, error), stdout io.Writer) error {
+	result, err := recordApplyOperation(runDirectory, operation)
+	if writeErr := writeJSON(stdout, result); writeErr != nil && err == nil {
+		err = writeErr
+	}
+	return err
+}
+
+// recordApplyOperation runs and records one Apply and returns its result.
+func recordApplyOperation(runDirectory string, operation func() (coreapply.Result, error)) (coreapply.Result, error) {
 	result, err := operation()
 	if err != nil {
 		result.OK = false
@@ -47,10 +56,7 @@ func runApplyOperation(runDirectory string, operation func() (coreapply.Result, 
 			err = recordErr
 		}
 	}
-	if writeErr := writeJSON(stdout, result); writeErr != nil && err == nil {
-		err = writeErr
-	}
-	return err
+	return result, err
 }
 
 func acquireLock(runDirectory string) (*os.File, error) {

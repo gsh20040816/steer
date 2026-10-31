@@ -5,10 +5,13 @@
 package generation
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	model "github.com/gsh20040816/steer/go/internal/intent"
 )
@@ -64,6 +67,63 @@ func WriteJSON(path string, value any) error {
 	}
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close %s: %w", filepath.Base(path), err)
+	}
+	return nil
+}
+
+// RuntimeFile names one platform file whose content decides how the running
+// service behaves. Normalize, when set, removes generation identity that may
+// differ between two otherwise equivalent generations.
+type RuntimeFile struct {
+	Name      string
+	Normalize func([]byte) ([]byte, error)
+}
+
+// Unchanged reports whether Activate may keep the running service and only
+// switch current to the candidate: the current generation exists, sing-box.json
+// and every platform runtime file are byte-identical, and the running service
+// is healthy. intent.json is never compared, so edits that do not reach the
+// runtime (names, unreferenced nodes, subscription metadata) never restart.
+// Any read failure means "changed" and keeps the ordinary restart path.
+func Unchanged(ctx context.Context, current string, candidate Candidate, platformFiles []RuntimeFile, healthy func(context.Context) error) bool {
+	if current == "" || candidate.Directory == "" {
+		return false
+	}
+	files := append([]RuntimeFile{{Name: "sing-box.json"}}, platformFiles...)
+	for _, file := range files {
+		left, err := readRuntimeFile(current, file)
+		if err != nil {
+			return false
+		}
+		right, err := readRuntimeFile(candidate.Directory, file)
+		if err != nil || !bytes.Equal(left, right) {
+			return false
+		}
+	}
+	return healthy(ctx) == nil
+}
+
+func readRuntimeFile(directory string, file RuntimeFile) ([]byte, error) {
+	content, err := os.ReadFile(filepath.Join(directory, file.Name))
+	if err != nil || file.Normalize == nil {
+		return content, err
+	}
+	return file.Normalize(content)
+}
+
+// PublishLink atomically points runDirectory/current at the candidate. It is
+// the whole switch when the runtime is unchanged and the last step before the
+// service starts otherwise.
+func PublishLink(runDirectory string, candidate Candidate) error {
+	link := filepath.Join(runDirectory, "current")
+	temporary := filepath.Join(runDirectory, ".current."+strconv.Itoa(os.Getpid()))
+	_ = os.Remove(temporary)
+	if err := os.Symlink(candidate.Directory, temporary); err != nil {
+		return fmt.Errorf("create current generation link: %w", err)
+	}
+	if err := os.Rename(temporary, link); err != nil {
+		_ = os.Remove(temporary)
+		return fmt.Errorf("publish current generation: %w", err)
 	}
 	return nil
 }

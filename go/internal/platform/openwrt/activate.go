@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -30,17 +29,7 @@ func ActivateGeneration(ctx context.Context, runner Runner, candidate generation
 	if _, err := runner.Output(ctx, nftBinary, "-f", filepath.Join(candidate.Directory, "firewall.nft")); err != nil {
 		return fmt.Errorf("load Steer nftables shim: %w", err)
 	}
-	link := filepath.Join(runDirectory, "current")
-	temporary := filepath.Join(runDirectory, ".current."+strconv.Itoa(os.Getpid()))
-	_ = os.Remove(temporary)
-	if err := os.Symlink(candidate.Directory, temporary); err != nil {
-		return fmt.Errorf("create current generation link: %w", err)
-	}
-	if err := os.Rename(temporary, link); err != nil {
-		_ = os.Remove(temporary)
-		return fmt.Errorf("publish current generation: %w", err)
-	}
-	return nil
+	return generation.PublishLink(runDirectory, candidate)
 }
 
 func CleanupPlatform(ctx context.Context, runner Runner, nftBinary string) error {

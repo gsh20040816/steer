@@ -89,6 +89,57 @@ func TestApplyCompletesNormalOpenWrtLifecycleWithoutRunningConfiguredProbes(t *t
 	}
 }
 
+func TestApplyKeepsServiceRunningWhenRuntimeIsUnchanged(t *testing.T) {
+	root := t.TempDir()
+	runDirectory := filepath.Join(root, "run")
+	runner := &applyRunner{}
+	apply := func(config string) coreapply.Result {
+		t.Helper()
+		value, err := DecodeBytes([]byte(config))
+		if err != nil {
+			t.Fatal(err)
+		}
+		backend := NewBackend(runner, value, BackendOptions{
+			RunDirectory: runDirectory, StateDirectory: filepath.Join(root, "state"), SingBoxBinary: "/test/sing-box",
+			NFTBinary: "/test/nft", InitScript: "/test/init", HealthTimeout: time.Second,
+			CheckListeners: func([]int) error { return nil },
+		})
+		result, err := coreapply.Run(context.Background(), value, backend.CompilerOptions(), backend)
+		if err != nil || !result.OK {
+			t.Fatalf("Apply failed: result=%#v error=%v", result, err)
+		}
+		return result
+	}
+	if result := apply(minimalConfig); !result.Restarted {
+		t.Fatalf("first Apply must start the service: %#v", result)
+	}
+	runner.calls = nil
+	unused := minimalConfig + "\nconfig node 'unused'\n\toption type 'socks'\n\toption server '192.0.2.1'\n\toption server_port '1080'\n"
+	result := apply(unused)
+	if result.Restarted || !result.Activated {
+		t.Fatalf("inventory-only Apply restarted the service: %#v", result)
+	}
+	for _, call := range runner.calls {
+		if call == "/test/init stop" || strings.HasPrefix(call, "/usr/bin/env STEER_USE_CURRENT=1") || strings.HasPrefix(call, "/test/nft -f ") || call == "/test/nft -j list tables" {
+			t.Fatalf("unchanged runtime touched the service or nftables: %v", runner.calls)
+		}
+	}
+	target, err := os.Readlink(filepath.Join(runDirectory, "current"))
+	if err != nil || target != result.Generation {
+		t.Fatalf("current was not switched to the candidate: %q %v", target, err)
+	}
+	if entries, err := os.ReadDir(filepath.Join(runDirectory, "generations")); err != nil || len(entries) != 1 {
+		t.Fatalf("previous generation was not pruned: %#v %v", entries, err)
+	}
+	runner.calls = nil
+	if result := apply(strings.Replace(unused, "option log_level 'warn'", "option log_level 'debug'", 1)); !result.Restarted {
+		t.Fatalf("a runtime change must restart the service: %#v", result)
+	}
+	if !strings.Contains(strings.Join(runner.calls, "\n"), "/test/init stop") {
+		t.Fatalf("restart did not stop the service: %v", runner.calls)
+	}
+}
+
 func TestDisableStopsAndRemovesRuntimeState(t *testing.T) {
 	root := t.TempDir()
 	config := strings.Replace(minimalConfig, "option enabled '1'", "option enabled '0'", 1)

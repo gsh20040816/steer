@@ -103,14 +103,40 @@ func (backend *Backend) Prepare(ctx context.Context, value model.Intent, compile
 	return candidate, nil
 }
 
-func (backend *Backend) Activate(ctx context.Context, candidate generation.Candidate) error {
+// runtimeFiles are the macOS generation files besides sing-box.json that
+// change how the running service behaves. generation.json differs only in
+// its generation ID and Intent digest when the runtime is unchanged.
+var runtimeFiles = []generation.RuntimeFile{
+	{Name: "platform.json"},
+	{Name: "generation.json", Normalize: func(content []byte) ([]byte, error) {
+		var metadata GenerationMetadata
+		if err := unmarshalStrict(content, &metadata); err != nil {
+			return nil, err
+		}
+		metadata.GenerationID, metadata.IntentDigest = "", ""
+		return jsonMarshal(metadata)
+	}},
+}
+
+func (backend *Backend) Activate(ctx context.Context, candidate generation.Candidate) (bool, error) {
+	if current, err := backend.paths().LoadCurrent(); err == nil {
+		directory := filepath.Join(backend.paths().GenerationsDirectory, current.Directory)
+		if generation.Unchanged(ctx, directory, candidate, runtimeFiles, func(ctx context.Context) error {
+			return backend.checkHealthyOnce(ctx, directory)
+		}) {
+			// current.json is the only runtime metadata naming a generation;
+			// the supervisor's DNS and WireGuard markers name the running
+			// sing-box.json by content, which is identical in the candidate.
+			return false, backend.publishCandidate(candidate)
+		}
+	}
 	if err := backend.stopLaunchDaemon(ctx); err != nil {
-		return err
+		return true, err
 	}
 	if err := backend.publishCandidate(candidate); err != nil {
-		return err
+		return true, err
 	}
-	return backend.startLaunchDaemon(ctx)
+	return true, backend.startLaunchDaemon(ctx)
 }
 
 // ActivateForServiceStart publishes a cold-start candidate without asking

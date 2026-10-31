@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 
 	"github.com/gsh20040816/steer/go/internal/generation"
 )
@@ -23,17 +22,7 @@ func ActivateGeneration(ctx context.Context, runner Runner, candidate generation
 	if err := os.MkdirAll(runDirectory, 0o750); err != nil {
 		return fmt.Errorf("create runtime directory: %w", err)
 	}
-	link := filepath.Join(runDirectory, "current")
-	temporary := filepath.Join(runDirectory, ".current."+strconv.Itoa(os.Getpid()))
-	_ = os.Remove(temporary)
-	if err := os.Symlink(candidate.Directory, temporary); err != nil {
-		return fmt.Errorf("create current generation link: %w", err)
-	}
-	if err := os.Rename(temporary, link); err != nil {
-		_ = os.Remove(temporary)
-		return fmt.Errorf("publish current generation: %w", err)
-	}
-	return nil
+	return generation.PublishLink(runDirectory, candidate)
 }
 
 func EnsureCurrentFirewall(ctx context.Context, runner Runner, runDirectory, nftBinary string) error {

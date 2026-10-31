@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	coreapply "github.com/gsh20040816/steer/go/internal/apply"
 	"github.com/gsh20040816/steer/go/internal/geodata"
 	model "github.com/gsh20040816/steer/go/internal/intent"
 	macosplatform "github.com/gsh20040816/steer/go/internal/platform/macos"
@@ -54,12 +55,12 @@ func TestControlServiceApplyUsesOnlyStructuredHooks(t *testing.T) {
 			written = true
 			return nil
 		},
-		apply: func(value model.Intent, _ macosplatform.BackendOptions) error {
+		apply: func(value model.Intent, _ macosplatform.BackendOptions) (coreapply.Result, error) {
 			if value.Main.SchemaVersion != model.SchemaVersion {
 				t.Fatalf("unexpected canonical schema %d", value.Main.SchemaVersion)
 			}
 			applied = true
-			return nil
+			return coreapply.Result{OK: true, Activated: true, Restarted: false}, nil
 		},
 		status: func(macosplatform.BackendOptions) macosplatform.Status {
 			return macosplatform.DefaultStatus()
@@ -73,6 +74,13 @@ func TestControlServiceApplyUsesOnlyStructuredHooks(t *testing.T) {
 	})
 	if !response.OK || response.Status == nil || response.Validation == nil || !response.Validation.OK || !written || !applied {
 		t.Fatalf("unexpected response or hook state: response=%+v written=%v applied=%v", response, written, applied)
+	}
+	if response.ApplyResult == nil || !response.ApplyResult.Activated || response.ApplyResult.Restarted {
+		t.Fatalf("control apply must return the Apply result with restarted: %+v", response.ApplyResult)
+	}
+	encoded, _ := json.Marshal(response)
+	if !strings.Contains(string(encoded), `"restarted":false`) {
+		t.Fatalf("control response omitted restarted: %s", encoded)
 	}
 }
 
@@ -332,9 +340,9 @@ func TestControlServiceSavedOnlyConfigurationCannotReachApplyHook(t *testing.T) 
 			writeCalls++
 			return nil
 		},
-		apply: func(_ model.Intent, _ macosplatform.BackendOptions) error {
+		apply: func(_ model.Intent, _ macosplatform.BackendOptions) (coreapply.Result, error) {
 			applyCalls++
-			return nil
+			return coreapply.Result{OK: true}, nil
 		},
 	}
 	response := service.handle(controlRequest{
@@ -397,9 +405,9 @@ func TestControlServiceRejectsStaleGUIRevisionAfterSubscriptionUpdate(t *testing
 					writeCalls++
 					return nil
 				},
-				apply: func(model.Intent, macosplatform.BackendOptions) error {
+				apply: func(model.Intent, macosplatform.BackendOptions) (coreapply.Result, error) {
 					applyCalls++
-					return nil
+					return coreapply.Result{OK: true}, nil
 				},
 			}
 			response := service.handle(controlRequest{
@@ -614,11 +622,11 @@ func TestControlSwitchUsesLatestSavedAndReturnsFailedApplyStatus(t *testing.T) {
 	service := &controlService{
 		configPath: path, options: macosplatform.BackendOptions{RunDirectory: t.TempDir()},
 		write: func(path string, content []byte, _ int) error { return os.WriteFile(path, content, 0600) },
-		apply: func(value model.Intent, _ macosplatform.BackendOptions) error {
+		apply: func(value model.Intent, _ macosplatform.BackendOptions) (coreapply.Result, error) {
 			if value.Main.Enabled || value.Main.LogLevel != "debug" {
 				t.Fatalf("lost latest saved configuration: %+v", value.Main)
 			}
-			return errors.New("stop failed")
+			return coreapply.Result{}, errors.New("stop failed")
 		},
 		status: func(macosplatform.BackendOptions) macosplatform.Status {
 			return macosplatform.Status{Healthy: true, GenerationID: "still-running"}

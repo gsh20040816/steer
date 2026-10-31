@@ -70,11 +70,97 @@ func TestBackendBootsOutRegisteredInactiveLaunchDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := backend.Activate(context.Background(), candidate); err != nil {
+	if _, err := backend.Activate(context.Background(), candidate); err != nil {
 		t.Fatal(err)
 	}
 	if runner.bootoutCalls != 1 || runner.bootstrapCalls != 1 || !runner.loaded || !runner.running {
 		t.Fatalf("unexpected launchd lifecycle: %#v", runner)
+	}
+}
+
+func TestBackendSwitchesUnchangedRuntimeWithoutRestart(t *testing.T) {
+	root := t.TempDir()
+	runner := &launchdFakeRunner{}
+	options := BackendOptions{
+		RunDirectory: root + "/run", StateDirectory: root + "/state", SingBoxBinary: "/test/sing-box",
+		LaunchctlBinary: "/test/launchctl", LaunchDaemonLabel: DefaultLaunchDaemonLabel,
+		LaunchDaemonPlist: root + "/steer.plist", CheckTUN: func([]string) error { return nil }, CheckDNS: func() error { return nil },
+	}
+	activate := func(value model.Intent) (directory string, compiled compiler.Output, restarted bool) {
+		t.Helper()
+		backend := NewBackend(runner, value, options)
+		compiled = compiler.Compile(value, backend.CompilerOptions())
+		candidate, err := backend.Prepare(context.Background(), value, compiled)
+		if err != nil {
+			t.Fatal(err)
+		}
+		restarted, err = backend.Activate(context.Background(), candidate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := backend.Healthy(context.Background(), candidate); err != nil {
+			t.Fatal(err)
+		}
+		if err := backend.Finalize(context.Background(), candidate); err != nil {
+			t.Fatal(err)
+		}
+		return candidate.Directory, compiled, restarted
+	}
+	value := validIntent()
+	first, _, restarted := activate(value)
+	if !restarted || runner.bootstrapCalls != 1 {
+		t.Fatalf("first Apply must start the LaunchDaemon: %#v", runner)
+	}
+	value.Nodes = []model.Node{{ID: "unused", Enabled: true, Type: "socks", Server: "192.0.2.1", ServerPort: 1080}}
+	second, compiled, restarted := activate(value)
+	if restarted || runner.bootoutCalls != 0 || runner.bootstrapCalls != 1 {
+		t.Fatalf("an inventory-only change restarted the LaunchDaemon: %#v", runner)
+	}
+	current, err := NewBackend(runner, value, options).paths().LoadCurrent()
+	if err != nil || current.Directory != filepath.Base(second) || current.GenerationID != compiled.IntentDigest {
+		t.Fatalf("current.json was not switched to the candidate: %#v %v", current, err)
+	}
+	if _, err := os.Stat(first); !os.IsNotExist(err) {
+		t.Fatalf("previous generation was not pruned: %v", err)
+	}
+	status := NewBackend(runner, model.Intent{}, options).ReadStatus(context.Background())
+	if !status.Healthy || status.GenerationID != compiled.IntentDigest || status.RuntimeDigest != compiled.RuntimeDigest {
+		t.Fatalf("status does not describe the switched generation: %#v", status)
+	}
+	value.Main.LogLevel = "debug"
+	if _, _, restarted := activate(value); !restarted || runner.bootoutCalls != 1 || runner.bootstrapCalls != 2 {
+		t.Fatalf("a runtime change must restart the LaunchDaemon: %#v", runner)
+	}
+}
+
+func TestDNSMarkerFollowsRuntimeContent(t *testing.T) {
+	root := t.TempDir()
+	backend := NewBackend(ExecRunner{}, model.Intent{}, BackendOptions{RunDirectory: root})
+	for _, name := range []string{"old", "new", "other"} {
+		content := `{"log":{}}`
+		if name == "other" {
+			content = `{"log":{"level":"debug"}}`
+		}
+		if err := os.MkdirAll(filepath.Join(root, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, name, "sing-box.json"), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runtime, err := runtimeConfigDigest(filepath.Join(root, "old", "sing-box.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := fmt.Sprintf(`{"config":%q,"runtime":%q,"error":"probe failed"}`, filepath.Join(root, "old", "sing-box.json"), runtime)
+	if err := os.WriteFile(filepath.Join(root, "dns-ready.json"), []byte(marker), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := backend.checkDNSReady(context.Background(), filepath.Join(root, "new")); err == nil || !strings.Contains(err.Error(), "probe failed") {
+		t.Fatalf("marker for identical runtime content was not accepted: %v", err)
+	}
+	if err := backend.checkDNSReady(context.Background(), filepath.Join(root, "other")); err == nil || !strings.Contains(err.Error(), "different runtime") {
+		t.Fatalf("marker for different runtime content was accepted: %v", err)
 	}
 }
 
@@ -92,7 +178,7 @@ func TestReadStatusReportsActualRuntimeProjectionDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := backend.Activate(context.Background(), candidate); err != nil {
+	if _, err := backend.Activate(context.Background(), candidate); err != nil {
 		t.Fatal(err)
 	}
 	status := backend.ReadStatus(context.Background())
@@ -116,7 +202,7 @@ func TestBackendUsesLaunchdGenerationLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := backend.Activate(context.Background(), candidate); err != nil {
+	if _, err := backend.Activate(context.Background(), candidate); err != nil {
 		t.Fatal(err)
 	}
 	if err := backend.Healthy(context.Background(), candidate); err != nil {

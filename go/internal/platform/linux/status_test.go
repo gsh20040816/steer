@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	coreapply "github.com/gsh20040816/steer/go/internal/apply"
@@ -157,5 +158,72 @@ func TestReadStatusDoesNotExposeDisabledGeneration(t *testing.T) {
 	}
 	if HasPendingApply(disabled, status, options) {
 		t.Fatal("disabled configuration without an active generation is pending")
+	}
+}
+
+type activateRunner struct {
+	calls  []string
+	active bool
+}
+
+func (runner *activateRunner) Output(_ context.Context, name string, args ...string) ([]byte, error) {
+	call := name + " " + strings.Join(args, " ")
+	runner.calls = append(runner.calls, call)
+	switch {
+	case name == "/test/sing-box" && len(args) == 1 && args[0] == "version":
+		return []byte("sing-box version 1.14.0-rc.1\nTags: with_quic,with_utls\n"), nil
+	case name == "/test/systemctl" && args[0] == "show":
+		if !runner.active {
+			return []byte("ActiveState=inactive\nMainPID=0\n"), nil
+		}
+		return []byte("ActiveState=active\nMainPID=4242\n"), nil
+	case name == "/test/systemctl" && args[0] == "start":
+		runner.active = true
+	case name == "/test/systemctl" && args[0] == "stop":
+		runner.active = false
+	case call == "/test/nft -j list tables":
+		return []byte(`{"nftables":[]}`), nil
+	}
+	return []byte(`{}`), nil
+}
+
+func TestActivateKeepsServiceRunningWhenRuntimeIsUnchanged(t *testing.T) {
+	root := t.TempDir()
+	runner := &activateRunner{}
+	apply := func(value model.Intent) coreapply.Result {
+		t.Helper()
+		backend := NewBackend(runner, value, BackendOptions{
+			RunDirectory: filepath.Join(root, "run"), StateDirectory: filepath.Join(root, "state"),
+			SingBoxBinary: "/test/sing-box", NFTBinary: "/test/nft", SystemctlBinary: "/test/systemctl",
+			CheckListeners: func([]int) error { return nil },
+		})
+		result, err := coreapply.Run(context.Background(), value, backend.CompilerOptions(), backend)
+		if err != nil || !result.OK {
+			t.Fatalf("Apply failed: %#v %v", result, err)
+		}
+		return result
+	}
+	value := validIntent()
+	value.Main.Enabled = true
+	if result := apply(value); !result.Restarted {
+		t.Fatalf("first Apply must start the service: %#v", result)
+	}
+	runner.calls = nil
+	value.Nodes = append(value.Nodes, model.Node{ID: "unused", Enabled: true, Type: "socks", Server: "192.0.2.1", ServerPort: 1080})
+	result := apply(value)
+	if result.Restarted {
+		t.Fatalf("inventory-only Apply restarted the service: %#v", result)
+	}
+	for _, call := range runner.calls {
+		if strings.HasPrefix(call, "/test/systemctl stop") || strings.HasPrefix(call, "/test/systemctl start") || strings.HasPrefix(call, "/test/nft -f ") {
+			t.Fatalf("unchanged runtime touched the service or nftables: %v", runner.calls)
+		}
+	}
+	if target, err := os.Readlink(filepath.Join(root, "run", "current")); err != nil || target != result.Generation {
+		t.Fatalf("current was not switched: %q %v", target, err)
+	}
+	runner.active = false
+	if result := apply(value); !result.Restarted {
+		t.Fatalf("an inactive service must be restarted: %#v", result)
 	}
 }

@@ -22,6 +22,7 @@ type WireGuardPeerStatus struct {
 }
 type wireGuardStatus struct {
 	Config  string                `json:"config"`
+	Runtime string                `json:"runtime"`
 	Peers   []WireGuardPeerStatus `json:"peers"`
 	Reloads int                   `json:"reloads"`
 }
@@ -50,7 +51,7 @@ func prepareWireGuardRuntime(config, runDirectory string) (*wireGuardRuntime, er
 	if err = json.Unmarshal(data, &document); err != nil {
 		return nil, err
 	}
-	runtime := &wireGuardRuntime{config: document, status: wireGuardStatus{Config: config}, statusPath: filepath.Join(runDirectory, "wireguard-status.json")}
+	runtime := &wireGuardRuntime{config: document, status: wireGuardStatus{Config: config, Runtime: contentRevision(data)}, statusPath: filepath.Join(runDirectory, "wireguard-status.json")}
 	runtime.cachePath = filepath.Join(runDirectory, "wireguard-endpoints.json")
 	runtime.cache = map[string]string{}
 	if data, e := os.ReadFile(runtime.cachePath); e == nil && len(data) <= 1<<20 {
@@ -232,7 +233,8 @@ func (backend *Backend) readWireGuardStatus(config string) []WireGuardPeerStatus
 		return nil
 	}
 	var status wireGuardStatus
-	if json.Unmarshal(data, &status) != nil || status.Config != config {
+	runtime, err := runtimeConfigDigest(config)
+	if err != nil || json.Unmarshal(data, &status) != nil || status.Runtime != runtime {
 		return nil
 	}
 	return status.Peers
