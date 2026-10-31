@@ -475,6 +475,9 @@ func runLockedMigration(configPath string, options macosplatform.BackendOptions)
 		if err := setNodeStorePermissions(options.StateDirectory, adminGID); err != nil {
 			return true, err
 		}
+		if err := setSnapshotPermissions(options.StateDirectory, adminGID); err != nil {
+			return true, err
+		}
 	}
 	return changed, nil
 }

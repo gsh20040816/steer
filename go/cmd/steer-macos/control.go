@@ -677,6 +677,28 @@ func setSubscriptionUpdatePermissions(stateDirectory string, adminGID int, snaps
 	return nil
 }
 
+// setSnapshotPermissions hands every subscription status snapshot back to the
+// admin group. Migration rewrites the snapshots of all subscriptions at once.
+func setSnapshotPermissions(stateDirectory string, adminGID int) error {
+	directory := filepath.Join(stateDirectory, "subscriptions")
+	entries, err := os.ReadDir(directory)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list subscription state: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		if err := setControlStatePermissions(filepath.Join(directory, entry.Name()), adminGID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // setNodeStorePermissions makes the subscription node store readable by the
 // admin group, like config.json, so the unprivileged GUI can read status.
 func setNodeStorePermissions(stateDirectory string, adminGID int) error {
