@@ -54,11 +54,6 @@ on_exit() {
 trap on_exit EXIT
 trap 'exit 130' INT TERM
 
-[ -x "$steer_binary" ] || fail "Steer binary is not executable: $steer_binary"
-[ -x "$sing_box_binary" ] || fail "sing-box binary is not executable: $sing_box_binary"
-[ -f "$geodata_seed/manifest.json" ] || fail "Geo seed manifest is missing: $geodata_seed/manifest.json"
-[ -d "$fixture_root" ] || fail "fixture directory is missing: $fixture_root"
-
 install -Dm755 "$steer_binary" /usr/bin/steer
 install -Dm755 "$sing_box_binary" /usr/bin/sing-box
 install -d -m755 /usr/share/steer

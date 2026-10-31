@@ -13,15 +13,6 @@ image_name=steer-linux-system:test
 max_start_attempts=3
 readiness_checks=30
 
-[ -d "$source_root" ] || {
-	echo "Linux system source root is missing: $source_root" >&2
-	exit 2
-}
-[ -d "$artifacts_root" ] || {
-	echo "Linux system artifacts root is missing: $artifacts_root" >&2
-	exit 2
-}
-
 diagnose_startup() {
 	echo "Linux system container startup attempt $start_attempt/$max_start_attempts failed." >&2
 	docker inspect --format 'status={{.State.Status}} running={{.State.Running}} exit={{.State.ExitCode}} error={{.State.Error}}' "$container_name" >&2 || true

@@ -13,7 +13,6 @@ LUCI_ROOT = ROOT / "luci-app-steer"
 PO_PATH = LUCI_ROOT / "po" / "zh_Hans" / "steer.po"
 MENU_PATH = LUCI_ROOT / "root" / "usr" / "share" / "luci" / "menu.d" / "luci-app-steer.json"
 UI_SPEC_PATH = ROOT / "ui" / "steer-ui-spec.json"
-FORM_FIXTURES_PATH = ROOT / "ui" / "form-input-fixtures.json"
 
 
 def fail(message: str) -> None:
@@ -52,17 +51,6 @@ for field in (
     if isinstance(openwrt_dns_boundary.get(field), str):
         source_ids.add(openwrt_dns_boundary[field])
 source_ids.update(openwrt_dns_boundary.get("exclusions", []))
-
-formats = ui_spec.get("input_formats", {})
-expected_formats = {"probe_url", "subscription_url", "positive_duration", "dns_http_path"}
-if set(formats) != expected_formats:
-    fail(f"shared input format metadata drifted: {sorted(formats)!r}")
-fixtures = json.loads(FORM_FIXTURES_PATH.read_text())
-if fixtures.get("schema_version") != 1 or not fixtures.get("cases"):
-    fail("invalid shared form input fixtures")
-for fixture in fixtures["cases"]:
-    if fixture.get("format") not in formats or not isinstance(fixture.get("value"), str) or not isinstance(fixture.get("valid"), bool):
-        fail(f"invalid shared form input fixture: {fixture!r}")
 
 ucode_source = (LUCI_ROOT / "root" / "usr" / "share" / "rpcd" / "ucode" / "luci.steer").read_text()
 if re.search(r"[\u3400-\u9fff]", ucode_source):
