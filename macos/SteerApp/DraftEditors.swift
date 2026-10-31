@@ -539,11 +539,11 @@ private struct SharedNodeDraftForm: View {
             TextField(label, value: nodeIntBinding(field), format: .number)
         case "select":
             Picker(label, selection: nodeStringBinding(field)) {
-                ForEach(field.options) { option in Text(option.label).tag(option.value) }
+                ForEach(field.options) { option in Text(option.displayLabel).tag(option.value) }
             }
         case "select-integer":
             Picker(label, selection: nodeIntBinding(field)) {
-                ForEach(field.options) { option in Text(option.label).tag(Int(option.value) ?? 0) }
+                ForEach(field.options) { option in Text(option.displayLabel).tag(Int(option.value) ?? 0) }
             }
         case "string-list":
             MultilineStringListEditor(
@@ -597,7 +597,7 @@ private struct SharedNodeDraftForm: View {
             "data_directory": "数据目录", "tls_server_name": "TLS 服务器名", "alpn": "ALPN", "utls_fingerprint": "uTLS 指纹",
             "insecure": "跳过证书验证", "reality_public_key": "REALITY Public key", "reality_short_id": "REALITY Short ID",
         ]
-        return labels[field.key] ?? field.label
+        return field.zhCN ?? labels[field.key] ?? field.label
     }
 
     private func nodeStringBinding(_ field: UIFieldSpec) -> Binding<String> {
@@ -1273,7 +1273,7 @@ private func normalizedObject(_ source: [String: JSONValue], key: String) -> [St
         object.removeValue(forKey: "server_port")
     }
     if key == "nodes" {
-        normalizeNodeOptionsFromSpec(&object)
+        SteerUISpec.normalizeNodeOptions(&object)
     }
     if key == "dns_profiles" {
         SteerUISpec.normalizeDNSProfile(&object)
@@ -1283,21 +1283,3 @@ private func normalizedObject(_ source: [String: JSONValue], key: String) -> [St
     }
     return object
 }
-
-private func normalizeNodeOptionsFromSpec(_ object: inout [String: JSONValue]) {
-    let type = draftString(object, "type")
-    let allowed = Set(SteerUISpec.nodeFields(for: type).map(\.key))
-    for field in nodeOptionFields where !allowed.contains(field) {
-        object.removeValue(forKey: field)
-    }
-}
-
-private let nodeOptionFields: Set<String> = [
-    "uuid", "username", "password", "private_key", "host_key", "host_key_algorithms",
-    "network", "transport", "transport_path", "transport_host", "service_name", "packet_encoding", "flow",
-    "security", "alter_id", "version", "method", "plugin", "plugin_options",
-    "congestion_control", "udp_relay_mode", "udp_over_stream", "zero_rtt_handshake", "heartbeat",
-    "quic", "quic_congestion_control", "insecure_concurrency", "server_ports", "hop_interval",
-    "obfs_type", "obfs_password", "up_mbps", "down_mbps", "executable_path", "extra_args", "data_directory",
-    "tls_server_name", "alpn", "insecure", "reality_public_key", "reality_short_id", "utls_fingerprint",
-]

@@ -272,6 +272,48 @@ final class UISafetyContractTests: XCTestCase {
     }
 
     @MainActor
+    func testNodeDomainStrategyUsesTheSharedFieldWordingAndOptionSet() throws {
+        XCTAssertEqual(
+            SteerUISpec.nodeFields(for: "socks", section: "general").map(\.key),
+            ["enabled", "name", "server", "server_port", "domain_strategy"],
+            "the strategy sits in the basic section right after the endpoint"
+        )
+        let field = try XCTUnwrap(SteerUISpec.nodeFields(for: "vless").first { $0.key == "domain_strategy" })
+        XCTAssertEqual(field.zhCN, "域名解析策略")
+        XCTAssertEqual(field.control, "select")
+        XCTAssertEqual(field.options.map(\.value), ["", "prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"])
+        XCTAssertEqual(field.options.map(\.displayLabel), ["跟随默认", "优先 IPv4", "优先 IPv6", "仅 IPv4", "仅 IPv6"])
+        XCTAssertEqual(
+            SteerUISpec.contract.bootstrapStrategies.map(\.displayLabel),
+            field.options.dropFirst().map(\.displayLabel),
+            "node and bootstrap strategies use the same wording"
+        )
+        XCTAssertNil(SteerUISpec.effectiveNodeFieldValue(field, in: [:]), "an omitted strategy shows Follow default")
+        XCTAssertFalse(SteerUISpec.nodeFields(for: "tor").contains { $0.key == "domain_strategy" })
+
+        var socks: [String: JSONValue] = [
+            "type": .string("socks"), "domain_strategy": .string("prefer_ipv4"), "uuid": .string("stale"),
+        ]
+        SteerUISpec.normalizeNodeOptions(&socks)
+        XCTAssertEqual(socks["domain_strategy"]?.stringValue, "prefer_ipv4")
+        XCTAssertNil(socks["uuid"], "options of other node types are still dropped")
+        var tor: [String: JSONValue] = [
+            "type": .string("tor"), "domain_strategy": .string("prefer_ipv4"), "executable_path": .string("/usr/bin/tor"),
+        ]
+        SteerUISpec.normalizeNodeOptions(&tor)
+        XCTAssertNil(tor["domain_strategy"], "Tor has no server to resolve")
+        XCTAssertEqual(tor["executable_path"]?.stringValue, "/usr/bin/tor")
+
+        let model = AppModel()
+        model.rawJSON = #"{"main":{"schema_version":10},"nodes":[{"id":"osa","enabled":true,"name":"osa-01","type":"socks","server":"osa.example","server_port":1080}]}"#
+        var node = try XCTUnwrap(model.draftItemObject(for: "nodes", at: 0))
+        node["domain_strategy"] = .string("prefer_ipv4")
+        XCTAssertTrue(model.replaceDraftItem(in: "nodes", at: 0, object: node))
+        XCTAssertEqual(model.draftItemObject(for: "nodes", at: 0)?["domain_strategy"]?.stringValue, "prefer_ipv4")
+        XCTAssertTrue(model.rawJSON.contains("domain_strategy"), "the working copy JSON carries the strategy")
+    }
+
+    @MainActor
     func testMacOSNewDraftItemsMaterializeTheSharedCanonicalFixture() throws {
         let document = try decode(CreationDocument.self, "ui/creation-policy-fixtures.json")
         let encoder = JSONEncoder()

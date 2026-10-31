@@ -1824,6 +1824,26 @@ async function main() {
 	const transport = groupedNodes.options.find((option) => option.name == 'transport');
 	assert.equal(transport?.default, 'tcp',
 		'LuCI node transport consumes the shared TCP / Raw default for existing omitted values');
+	const nodeOptionNames = groupedNodes.options.map((option) => option.name);
+	const domainStrategy = groupedNodes.options.find((option) => option.name == 'domain_strategy');
+	assert.ok(domainStrategy?.type == 'ListValue' && domainStrategy.modalonly === true,
+		'LuCI renders the shared domain strategy as a native list in the node editor');
+	assert.equal(nodeOptionNames.indexOf('domain_strategy'), nodeOptionNames.indexOf('server_port') + 1,
+		'the domain strategy follows the server port like in the other editors');
+	assert.deepEqual(domainStrategy.values, [
+		[ '', 'Follow default' ], [ 'prefer_ipv4', 'Prefer IPv4' ], [ 'prefer_ipv6', 'Prefer IPv6' ],
+		[ 'ipv4_only', 'IPv4 only' ], [ 'ipv6_only', 'IPv6 only' ]
+	], 'domain strategy choices are the shared msgids, empty first');
+	assert.deepEqual(domainStrategy.dependencies.map((dependency) => dependency[1]),
+		uiSpec.node_types.map((item) => item.value).filter((type) => type != 'tor'),
+		'every node type with a server, and only those, shows the domain strategy');
+	assert.equal(domainStrategy.default, undefined, 'an omitted domain strategy stays omitted');
+	domainStrategy.formValues.cfg_manual = 'prefer_ipv4';
+	await domainStrategy.submit('cfg_manual', domainStrategy.formvalue('cfg_manual'));
+	assert.equal(groupedFixture.node[0].domain_strategy, 'prefer_ipv4', 'a chosen strategy is written as a UCI option');
+	domainStrategy.rmempty = true; /* LuCI form.ListValue default */
+	await domainStrategy.submit('cfg_manual', '');
+	assert.ok(!Object.hasOwn(groupedFixture.node[0], 'domain_strategy'), 'Follow default removes the UCI option');
 	const hysteriaPassword = groupedNodes.options.find((option) => option.name == 'password');
 	assert.ok(hysteriaPassword?.password === true && hysteriaPassword.dependencies.some((dependency) =>
 		dependency[0] == 'type' && dependency[1] == 'hysteria2'),

@@ -736,6 +736,62 @@ function testNodeEditorUsesSharedDefaultWithoutMutatingDraft() {
     'opening an existing node must not materialize the editor fallback into the Draft');
 }
 
+function testNodeDomainStrategyRendersWithEndpointAndSaves() {
+  const spec = uiSpec.node_fields.find((field) => field.key === 'domain_strategy');
+  assert.strictEqual(spec.zh_cn, '域名解析策略', 'the field label is the shared wording');
+  const expectedChoices = [
+    ['', '跟随默认'], ['prefer_ipv4', '优先 IPv4'], ['prefer_ipv6', '优先 IPv6'], ['ipv4_only', '仅 IPv4'], ['ipv6_only', '仅 IPv6']
+  ];
+  const strategySelect = (environment) => {
+    const field = fieldWithLabel(environment.drawerRoot, '域名解析策略');
+    assert.ok(field, 'remote nodes expose the shared domain strategy field');
+    assert.strictEqual(field.dataset.option, 'domain_strategy', 'validation issues can focus the field');
+    return find(field, (element) => element.tag === 'select');
+  };
+  const choices = (select) => select.children.filter((child) => child instanceof Element && child.tag === 'option')
+    .map((option) => [option.value, text(option)]);
+  const intent = representativeIntent('key');
+  intent.nodes = [{ id: 'osa', enabled: true, name: 'osa-01', type: 'socks', server: 'osa.example', server_port: 1080 }];
+  let environment = createEnvironment(async () => ({ ok: true }), intent);
+  loadView(environment, 'nodes');
+  openOnlyEditor(environment, 'nodes');
+
+  let select = strategySelect(environment);
+  const basics = select.closest('.drawer-section');
+  assert.strictEqual(text(basics.children[0]), '基本信息', 'the strategy sits with the server and port, not the protocol options');
+  assert.ok(basics.contains(fieldWithLabel(environment.drawerRoot, '服务器')));
+  assert.deepStrictEqual(choices(select), expectedChoices, 'choices use the shared wording in the shared order');
+  assert.strictEqual(select.value, '', 'a node without the field follows the default');
+  const bootstrapLabels = uiSpec.bootstrap_strategies.map((item) => [item.value, item.zh_cn]);
+  assert.deepStrictEqual(expectedChoices.slice(1), bootstrapLabels, 'strategy wording matches the bootstrap choices');
+  select.value = 'prefer_ipv4';
+  select.listeners.change({ target: select });
+  buttonWithText(environment.drawerRoot, '保存到工作副本').listeners.click();
+  assert.strictEqual(intent.nodes[0].domain_strategy, 'prefer_ipv4', 'the selected strategy is saved on the node');
+
+  environment = createEnvironment(async () => ({ ok: true }), intent);
+  loadView(environment, 'nodes');
+  openOnlyEditor(environment, 'nodes');
+  select = strategySelect(environment);
+  assert.strictEqual(select.value, 'prefer_ipv4', 'a saved strategy is shown when the editor reopens');
+  select.value = '';
+  select.listeners.change({ target: select });
+  buttonWithText(environment.drawerRoot, '保存到工作副本').listeners.click();
+  assert.ok(!Object.hasOwn(intent.nodes[0], 'domain_strategy'), 'Follow default removes the field from the node');
+
+  intent.nodes[0].domain_strategy = 'ipv6_only';
+  environment = createEnvironment(async () => ({ ok: true }), intent);
+  loadView(environment, 'nodes');
+  openOnlyEditor(environment, 'nodes');
+  const protocol = find(fieldWithLabel(environment.drawerRoot, '协议'), (element) => element.tag === 'select');
+  protocol.value = 'tor';
+  protocol.listeners.change({ target: protocol });
+  assert.strictEqual(fieldWithLabel(environment.drawerRoot, '域名解析策略'), undefined, 'Tor has no server to resolve');
+  buttonWithText(environment.drawerRoot, '保存到工作副本').listeners.click();
+  assert.ok(!Object.hasOwn(intent.nodes[0], 'domain_strategy') && !Object.hasOwn(intent.nodes[0], 'server'),
+    'switching to Tor drops the domain strategy with the endpoint');
+}
+
 async function testNodeExportShowsSharedBackendLink() {
   const node = {
     id: 'edge', enabled: true, name: 'Edge', type: 'vless', server: 'proxy.example', server_port: 443,
@@ -2838,6 +2894,7 @@ Promise.resolve()
   .then(testChipsCommitPendingTokensConsistently)
   .then(testNodeStringListSubmitAndPrivateKeyRoundTrip)
   .then(testNodeEditorUsesSharedDefaultWithoutMutatingDraft)
+  .then(testNodeDomainStrategyRendersWithEndpointAndSaves)
   .then(testNodeExportShowsSharedBackendLink)
   .then(testRuleChoicesAreRestrictedAndSavedOnDrawerSubmit)
   .then(testSharedCreationDefaultsAutomaticIDsAndReferenceLabels)

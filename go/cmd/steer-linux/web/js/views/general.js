@@ -37,7 +37,7 @@
       const bootstrapProtocol = ui.select(S.uiSpec.bootstrap_protocols.map((item) => [item.value, item.label]), bootstrap.protocol, (value) => {
         bootstrap.protocol = value; S.store.touch();
       });
-      const strategy = ui.select(S.uiSpec.bootstrap_strategies.map((item) => [item.value, item.label]), bootstrap.strategy, (value) => {
+      const strategy = ui.select(S.uiSpec.bootstrap_strategies.map((item) => [item.value, item.zh_cn || item.label]), bootstrap.strategy, (value) => {
         bootstrap.strategy = value; S.store.touch();
       });
 

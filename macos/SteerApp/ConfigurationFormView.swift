@@ -58,7 +58,7 @@ struct ConfigurationFormView: View {
                             Text("缺失（需修复）").foregroundStyle(.red).tag("")
                         }
                         ForEach(SteerUISpec.contract.bootstrapStrategies) { option in
-                            Text(option.label).tag(option.value)
+                            Text(option.displayLabel).tag(option.value)
                         }
                     }
                     Text("Bootstrap 服务器必须填写 IP 地址，避免解析环路。")

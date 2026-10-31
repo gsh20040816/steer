@@ -5,7 +5,15 @@ import Foundation
 struct UIChoice: Decodable, Identifiable {
     let value: String
     let label: String
+    /// The shared Chinese wording, when the UI spec carries one.
+    let zhCN: String?
     var id: String { value }
+    var displayLabel: String { zhCN ?? label }
+
+    enum CodingKeys: String, CodingKey {
+        case value, label
+        case zhCN = "zh_cn"
+    }
 }
 
 struct UIDNSProtocolSpec: Decodable, Identifiable {
@@ -60,6 +68,8 @@ struct UIInputFormat: Decodable {
 struct UIFieldSpec: Decodable, Identifiable {
     let key: String
     let label: String
+    /// The shared Chinese wording, when the UI spec carries one.
+    let zhCN: String?
     let control: String
     let section: String
     let types: [String]
@@ -75,6 +85,7 @@ struct UIFieldSpec: Decodable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case key, label, control, section, types, options, when, sensitive, multiline, placeholder
+        case zhCN = "zh_cn"
         case requiredTypes = "required_types"
         case defaultValue = "default"
     }
@@ -83,6 +94,7 @@ struct UIFieldSpec: Decodable, Identifiable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         key = try container.decode(String.self, forKey: .key)
         label = try container.decode(String.self, forKey: .label)
+        zhCN = try container.decodeIfPresent(String.self, forKey: .zhCN)
         control = try container.decode(String.self, forKey: .control)
         section = try container.decode(String.self, forKey: .section)
         types = try container.decodeIfPresent([String].self, forKey: .types) ?? []
@@ -484,6 +496,17 @@ enum SteerUISpec {
         object["type"] = .string(value)
         for field in nodeFields(for: value) where object[field.key] == nil {
             if let defaultValue = field.defaultValue { object[field.key] = defaultValue }
+        }
+    }
+
+    /// Drops node options the selected type does not have. The option list is
+    /// the shared node field list; enabled, name and the endpoint are handled
+    /// by the node form itself.
+    static func normalizeNodeOptions(_ object: inout [String: JSONValue]) {
+        let allowed = Set(nodeFields(for: object["type"]?.stringValue ?? "").map(\.key))
+        let options = Set(contract.nodeFields.map(\.key)).subtracting(["enabled", "name", "server", "server_port"])
+        for field in options where !allowed.contains(field) {
+            object.removeValue(forKey: field)
         }
     }
 

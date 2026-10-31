@@ -110,7 +110,7 @@ struct WireGuardDraftForm: View {
             SecureField("私钥",text:stringBinding($object,"private_key",required:true))
             Picker("Endpoint 地址策略",selection:stringBinding($object,"endpoint_strategy")) {
                 Text("继承 Bootstrap").tag("")
-                ForEach(SteerUISpec.contract.bootstrapStrategies) { option in Text(option.label).tag(option.value) }
+                ForEach(SteerUISpec.contract.bootstrapStrategies) { option in Text(option.displayLabel).tag(option.value) }
             }
             TextField("监听 UDP 端口（0 自动）",value:intBinding($object,"listen_port"),format:.number)
             TextField("MTU（0 使用默认）",value:intBinding($object,"mtu"),format:.number)

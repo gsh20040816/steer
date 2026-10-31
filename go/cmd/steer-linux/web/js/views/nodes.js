@@ -112,6 +112,10 @@
     data_directory: '数据目录', tls_server_name: 'TLS 服务器名', alpn: 'ALPN', utls_fingerprint: 'uTLS 指纹',
     insecure: '跳过证书校验', reality_public_key: 'REALITY 公钥', reality_short_id: 'REALITY Short ID'
   };
+  /* 界面描述里带 zh_cn 的字段和选项用共享文案，三端一致；其余沿用本页的中文名或英文原文。 */
+  const fieldLabel = (field) => field.zh_cn || FIELD_LABEL[field.key] || field.label;
+  const choiceLabel = (item) => item.zh_cn || item.label;
+  const ENDPOINT_KEYS = ['enabled', 'name', 'server', 'server_port'];
   const NODE_OPTION_KEYS = new Set(S.uiSpec.node_fields.map((field) => field.key));
   function fieldsFor(type) { return S.uiSpec.node_fields.filter((field) => field.types.includes(type)); }
   function requiresRemoteEndpoint(type) {
@@ -414,6 +418,7 @@
         const server = ui.input({ value: draft.server || '', placeholder: 'example.com 或 IP', mono: true });
         const port = ui.input({ type: 'number', value: draft.server_port || '', placeholder: '443' });
         const endpoint = h('div', { class: 'field--row field--endpoint' });
+        const generalBox = h('div', {});
         const specBox = h('div', {});
         let listControls = [];
 
@@ -431,14 +436,14 @@
 
         function specControl(field) {
           const key = field.key;
-          if (field.control === 'boolean') return ui.toggleRow(FIELD_LABEL[key] || field.label, !!fieldValue(field), (v) => { draft[key] = v; });
+          if (field.control === 'boolean') return ui.toggleRow(fieldLabel(field), !!fieldValue(field), (v) => { draft[key] = v; });
           if (field.control === 'string-list') {
             const control = ui.chips(asList(draft[key]), { placeholder: field.placeholder || '', onchange: (v) => { draft[key] = v; } });
             listControls.push(control);
             return control;
           }
           if (field.control === 'select' || field.control === 'select-integer') {
-            const options = field.options.map((item) => [item.value, item.label]);
+            const options = field.options.map((item) => [item.value, choiceLabel(item)]);
             const selected = fieldValue(field);
             if ((selected == null || selected === '') && !options.some(([value]) => value === '')) options.unshift(['', '缺失（需修复）']);
             return ui.select(
@@ -461,13 +466,15 @@
           listControls.forEach((control) => control.commitPending());
           listControls = [];
           specBox.replaceChildren();
+          generalBox.replaceChildren();
           endpoint.replaceChildren();
           endpoint.hidden = !requiresRemoteEndpoint(draft.type);
           if (requiresRemoteEndpoint(draft.type)) endpoint.append(ui.field('服务器', server, null, 'server'), ui.field('端口', port, null, 'server_port'));
-          for (const field of fieldsFor(draft.type).filter((candidate) => !['enabled', 'name', 'server', 'server_port'].includes(candidate.key))) {
+          for (const field of fieldsFor(draft.type).filter((candidate) => !ENDPOINT_KEYS.includes(candidate.key))) {
             if (field.when && !field.when.values.includes(String(effectiveValue(field.when.field) ?? ''))) continue;
-            specBox.append(ui.field(
-              FIELD_LABEL[field.key] || field.label,
+            /* general 分组（如域名解析策略）跟在服务器和端口后面，其余放进协议参数。 */
+            (field.section === 'general' ? generalBox : specBox).append(ui.field(
+              fieldLabel(field),
               specControl(field),
               field.sensitive ? '敏感字段；留空表示不设置' : null,
               field.key
@@ -480,7 +487,7 @@
           h('div', { class: 'drawer-section' }, h('div', { class: 'drawer-section__title' }, '基本信息'), [
             ui.field('名称', name, null, 'name'), ui.field('启用', enabled, null, 'enabled'),
             ui.field('协议', typeSel, null, 'type'),
-            endpoint
+            endpoint, generalBox
           ]),
           h('div', { class: 'drawer-section' }, h('div', { class: 'drawer-section__title' }, '协议参数'), specBox)
         );
@@ -505,6 +512,8 @@
             for (const key of Object.keys(draft)) {
               if (draft[key] === '' || draft[key] == null) delete draft[key];
             }
+            /* 清空的字段（如选回「跟随默认」）要从节点上删掉，不能只合并草稿里剩下的字段。 */
+            for (const key of Object.keys(node)) if (!Object.hasOwn(draft, key)) delete node[key];
             Object.assign(node, draft);
             return node;
           }
