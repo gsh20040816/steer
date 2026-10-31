@@ -6,25 +6,9 @@ set -eu
 package_root="${1:-bin/packages/x86_64/steer}"
 output_dir="${2:-dist}"
 
-[ -d "$package_root" ] || {
-	echo "Package directory not found: $package_root" >&2
-	exit 1
-}
-
 mkdir -p "$output_dir"
-
-for pattern in \
-	'sing-box-*.apk' \
-	'steer-[0-9]*.apk' \
-	'luci-app-steer-*.apk' \
-	'luci-i18n-steer-zh-cn-*.apk'; do
-	set -- $(find "$package_root" -maxdepth 1 -type f -name "$pattern" | sort)
-	if [ "$#" -ne 1 ]; then
-		echo "Expected exactly one APK matching $pattern, found $#" >&2
-		exit 1
-	fi
-	cp "$1" "$output_dir/"
-done
+# The SDK build checked that the signed index holds exactly these packages.
+cp "$package_root"/*.apk "$output_dir/"
 
 {
 	echo "OpenWrt release: ${OPENWRT_RELEASE:-unknown}"

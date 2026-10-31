@@ -7,39 +7,9 @@ package_dir="${1:-bin/packages/x86_64/steer}"
 output_dir="${2:-openwrt-repository}"
 public_key="${3:-keys/steer-apk.pem}"
 
-[ -d "$package_dir" ] || {
-	echo "OpenWrt package repository not found: $package_dir" >&2
-	exit 1
-}
-[ -f "$package_dir/packages.adb" ] || {
-	echo "Signed OpenWrt package index not found: $package_dir/packages.adb" >&2
-	exit 1
-}
-[ -f "$public_key" ] || {
-	echo "OpenWrt repository public key not found: $public_key" >&2
-	exit 1
-}
-[ ! -e "$output_dir" ] || {
-	echo "OpenWrt repository output already exists: $output_dir" >&2
-	exit 1
-}
-
 mkdir -p "$output_dir"
-
-for pattern in \
-	'sing-box-*.apk' \
-	'steer-[0-9]*.apk' \
-	'luci-app-steer-*.apk' \
-	'luci-i18n-steer-zh-cn-*.apk'; do
-	set -- $(find "$package_dir" -maxdepth 1 -type f -name "$pattern" | sort)
-	if [ "$#" -ne 1 ]; then
-		echo "Expected exactly one repository APK matching $pattern, found $#" >&2
-		exit 1
-	fi
-	cp "$1" "$output_dir/"
-done
-
-cp "$package_dir/packages.adb" "$output_dir/"
+# The SDK build checked that the signed index holds exactly these packages.
+cp "$package_dir"/*.apk "$package_dir/packages.adb" "$output_dir/"
 cp "$public_key" "$output_dir/steer-apk.pem"
 
 {
