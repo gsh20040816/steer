@@ -388,25 +388,89 @@
     return applyUnchanged(result) && unchangedNotice() ? `；${unchangedNotice()}` : '';
   }
 
-  /* 订阅接口的结构化错误码 → 用户能看懂的原因；不显示「CODE: detail」原文和内部 ID。 */
-  function subscriptionErrorMessage(error) {
-    const code = error?.code || '';
-    if (code === 'NODE_STILL_REFERENCED') {
-      const routes = asList(S.store?.intent?.routes);
-      const names = [...new Set(asList(error.details?.validation?.errors)
-        .filter((issue) => issue.object_type === 'route')
-        .map((issue) => routes.find((route) => route.id === issue.object_id))
-        .filter(Boolean)
-        .map((route) => route.name || ({ direct: '直连', block: '拒绝' })[route.kind] || route.id))];
-      return `仍有路由在使用这个节点${names.length ? `（${names.join('、')}）` : ''}，请先修改这些路由`;
+  /* ---------- 订阅节点：文案全部来自界面描述的 subscription_nodes，三端一致 ---------- */
+  function subscriptionNodesSpec() { return S.uiSpec.subscription_nodes || {}; }
+
+  function subscriptionNodeAction(key) {
+    const action = subscriptionNodesSpec().actions?.[key];
+    return action?.zh_cn || action?.label || key;
+  }
+
+  function subscriptionNodeMessage(key) {
+    return subscriptionNodesSpec().messages?.[key]?.zh_cn || '';
+  }
+
+  /* 路由显示名：先用草稿里的名称（直连/拒绝用固定名称），草稿里没有时用已保存配置给出的名称，最后才用 ID。 */
+  function routeDisplayName(routeID, savedName) {
+    const route = asList(S.store?.intent?.routes).find((candidate) => candidate.id === routeID);
+    if (route) return route.name || ({ direct: '直连', block: '拒绝' })[route.kind] || route.id;
+    return savedName || routeID;
+  }
+
+  /* 「仍有路由在使用这个节点（…）」：routes 是 [{ id, name? }]，按 ID 去重；没有路由时返回空串。 */
+  function stillReferencedText(routes) {
+    const spec = subscriptionNodesSpec();
+    const template = spec.errors?.NODE_STILL_REFERENCED?.zh_cn;
+    const seen = new Set();
+    const names = [];
+    for (const route of asList(routes)) {
+      if (!route?.id || seen.has(route.id)) continue;
+      seen.add(route.id);
+      names.push(routeDisplayName(route.id, route.name));
     }
-    return {
-      SUBSCRIPTION_NOT_FOUND: '订阅不在已保存的配置里，请先保存配置',
-      SUBSCRIPTION_NODE_NOT_FOUND: '这个订阅节点已经不存在，节点列表已刷新',
-      SUBSCRIPTION_NODE_CURRENT: '只能清理已失效的节点',
-      VALIDATION_FAILED: '已保存的配置没有通过校验，请先修复后保存',
-      SUBSCRIPTION_NODE_STORE_FAILED: '订阅节点存储读写失败，请查看诊断日志'
-    }[code] || error?.message || '操作失败';
+    if (!template || !names.length) return '';
+    return template.split(spec.routes_placeholder || '{routes}').join(names.join(subscriptionNodeMessage('list_separator') || '、'));
+  }
+
+  /* 订阅接口的结构化错误码 → 共享文案；没有共享文案的错误码显示后台返回的原因。 */
+  function subscriptionErrorMessage(error) {
+    const backend = (typeof error === 'string' ? error : error?.message) || '操作失败';
+    const code = typeof error === 'object' && error ? error.code || '' : '';
+    const text = subscriptionNodesSpec().errors?.[code]?.zh_cn;
+    if (!text) return backend;
+    if (code !== 'NODE_STILL_REFERENCED') return text;
+    const routes = asList(error.details?.validation?.errors)
+      .filter((issue) => issue?.object_type === 'route' && (!issue.option || issue.option === 'node'))
+      .map((issue) => ({ id: issue.object_id }));
+    return stillReferencedText(routes) || backend;
+  }
+
+  /* 清理已失效的订阅节点。草稿里的路由或已保存配置里的路由（订阅状态的 referenced_by）仍在使用时，
+     不调用后台，列出这些路由；否则只写订阅节点存储，结束后（无论成败）只刷新订阅节点列表和状态，不动草稿。 */
+  async function cleanSubscriptionNode(node, savedReferences = []) {
+    const label = subscriptionNodeAction('clean');
+    const routes = [
+      ...asList(S.store?.intent?.routes).filter((route) => route?.node === node.id).map((route) => ({ id: route.id })),
+      ...asList(savedReferences).filter((reference) => (reference?.object_type || 'route') === 'route')
+        .map((reference) => ({ id: reference.id, name: reference.name }))
+    ].filter((route) => route.id);
+    if (routes.length) {
+      const draftRoutes = new Set(asList(S.store?.intent?.routes).map((route) => route.id));
+      const listed = [...new Map(routes.map((route) => [route.id, route])).values()];
+      dialog({
+        title: `${label} · ${node.name || node.id}`,
+        body: h('div', {}, [
+          h('p', {}, stillReferencedText(routes)),
+          h('ul', { class: 'issue-list' }, listed.map((route) => h('li', { class: 'issue issue--warning' }, [
+            h('span', { class: 'issue__where' }, routeDisplayName(route.id, route.name)),
+            draftRoutes.has(route.id) ? h('button', { class: 'btn btn--sm', onclick: () => jumpToObject({
+              object_type: 'route', object_id: route.id, option: 'node'
+            }) }, '前往引用') : null
+          ])))
+        ]),
+        actions: [['关闭', null]]
+      });
+      return { ok: false, blocked: true };
+    }
+    try {
+      const { refreshError } = await S.store.cleanSubscriptionNode(node.source_subscription, node.id);
+      const cleaned = subscriptionNodeMessage('cleaned');
+      toast(refreshError ? `${cleaned}；节点列表刷新失败，请稍后点击顶部「刷新」` : cleaned, refreshError ? 'warn' : 'ok');
+      return { ok: true };
+    } catch (error) {
+      toast(`${label}失败：${subscriptionErrorMessage(error)}`, 'err');
+      return { ok: false, error };
+    }
   }
 
   function applyRecord(status, includeTechnicalDetail = false) {
@@ -932,9 +996,8 @@
       ROUTE_DETOUR_CYCLE: '前置代理链存在循环引用',
       LOCAL_PROXY_AUTH_REQUIRED: '该监听地址允许其他设备连接，必须设置用户名和密码',
       INVALID_DURATION: '更新间隔必须是大于零的时长',
-      DNS_PROJECTION_EMPTY: '该规则仅含连接阶段条件，不影响 DNS 上游选择',
-      SUBSCRIPTION_NODE_IN_CONFIG: '配置里不能包含订阅节点；订阅节点由订阅管理'
-    }[issue.code] || issue.message;
+      DNS_PROJECTION_EMPTY: '该规则仅含连接阶段条件，不影响 DNS 上游选择'
+    }[issue.code] || S.uiSpec.subscription_nodes?.validation_issues?.[issue.code]?.zh_cn || issue.message;
   }
 
   function issueList(issues, jump, warning = false) {
@@ -1079,11 +1142,7 @@
   }
 
   function collectionDragCompatible(state, item) {
-    if (!state || !collectionItemMovable(state.collection, item)) return false;
-    const policy = S.uiSpec.collection_ordering?.[state.collection];
-    if (!policy?.group_field) return true;
-    const source = state.items.find((candidate) => candidate.id === state.itemID);
-    return (source?.[policy.group_field] || '') === (item?.[policy.group_field] || '');
+    return !!state && collectionItemMovable(state.collection, item);
   }
 
   function clearCollectionDragVisuals(state = collectionDragState) {
@@ -1382,5 +1441,5 @@
     });
   }
 
-  Object.assign(S, { ui: { beginRender, beginRoute, isCurrentRoute, renderShell, renderStatusStrip, runState, toast, dialog, conflictDialog, drawer, field, input, textarea, select, multiChoice, toggle, toggleRow, chips, matchEditor, issueList, viewHead, section, fact, facts, emptyState, rowMenu, collectionItemMovable, selectedCollectionID, selectCollectionItem, collectionDragHandle, collectionRowAttributes, selectWithMissing, newCollectionID, creationDraft, referenceOptions, classifyLocalProxyListen, applyRecord, applyTime, generationLabel, applyUnchanged, subscriptionErrorMessage, onValidate, onSave, onDiscard, onToggleEnabled, onRefreshState, jumpToObject, takeObjectFocus, focusDrawerOption, collectionReferences, guardCollectionDeletion } });
+  Object.assign(S, { ui: { beginRender, beginRoute, isCurrentRoute, renderShell, renderStatusStrip, runState, toast, dialog, conflictDialog, drawer, field, input, textarea, select, multiChoice, toggle, toggleRow, chips, matchEditor, issueList, viewHead, section, fact, facts, emptyState, rowMenu, collectionItemMovable, selectedCollectionID, selectCollectionItem, collectionDragHandle, collectionRowAttributes, selectWithMissing, newCollectionID, creationDraft, referenceOptions, classifyLocalProxyListen, applyRecord, applyTime, generationLabel, applyUnchanged, subscriptionErrorMessage, subscriptionNodeAction, subscriptionNodeMessage, stillReferencedText, cleanSubscriptionNode, onValidate, onSave, onDiscard, onToggleEnabled, onRefreshState, jumpToObject, takeObjectFocus, focusDrawerOption, collectionReferences, guardCollectionDeletion } });
 })();

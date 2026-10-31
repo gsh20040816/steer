@@ -1,12 +1,14 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* 订阅：状态表 + 立即更新 + stale 节点清理（引用安全由后端拒绝）+ 编辑抽屉。
-   订阅节点在订阅节点存储里：更新、清理只刷新节点列表，不重新载入配置草稿。 */
+/* 订阅：状态表 + 立即更新 + 已失效节点清理 + 编辑抽屉。
+   订阅节点在订阅节点存储里：更新、清理不受未保存修改影响，结束后只刷新节点列表和状态，不重新载入配置草稿。 */
 'use strict';
 (function () {
   const S = window.S;
   const { h, icon, fmtTime, asList } = S;
   const ui = S.ui;
-  const CLEAN_LABEL = S.uiSpec.subscription_nodes?.actions?.clean?.zh_cn || '清理';
+  const CLEAN_LABEL = ui.subscriptionNodeAction('clean');
+  /* 「清理已失效节点」由共享的「清理」和「已失效」组成，和节点页的文案一致。 */
+  const CLEAN_STALE_LABEL = `${CLEAN_LABEL}${ui.subscriptionNodeMessage('stale_marker')}节点`;
 
   let statuses = null;
 
@@ -103,9 +105,11 @@
     return opened;
   }
 
-  /* 清理只写订阅节点存储，不碰配置草稿；草稿里的路由引用先由删除保护拦住，已保存配置的引用由后台拒绝。 */
+  /* 每个已失效节点一行：名称 + 共享的「清理」按钮。草稿或已保存配置（订阅状态的 referenced_by）
+     里仍有路由在用时，ui.cleanSubscriptionNode 不调用后台，列出这些路由。 */
   function openCleanup(subscription, isCurrent, root) {
     const box = h('div', { class: 'u-mt-10' });
+    const savedReferences = new Map(asList(subscription.stale).map((stale) => [stale.id, stale.referenced_by || []]));
     const renderList = () => {
       box.replaceChildren();
       const remaining = storedNodes(subscription.id).filter((n) => n.pinned_stale);
@@ -115,26 +119,19 @@
       }
       box.append(h('ul', { class: 'issue-list' }, remaining.map((node) => {
         const button = h('button', { class: 'btn btn--sm btn--danger', onclick: async () => {
-          if (!ui.guardCollectionDeletion('nodes', node.id, node.name || node.id)) return;
           button.disabled = true;
-          try {
-            const { refreshError } = await S.store.cleanSubscriptionNode(subscription.id, node.id);
-            ui.toast(refreshError
-              ? `已清理 ${node.name || '已失效节点'}；节点列表刷新失败，请稍后刷新`
-              : `已清理 ${node.name || '已失效节点'}`, refreshError ? 'warn' : 'ok');
-          } catch (e) {
-            ui.toast(`${CLEAN_LABEL}失败：${ui.subscriptionErrorMessage(e)}`, 'err');
-          }
+          const result = await ui.cleanSubscriptionNode(node, savedReferences.get(node.id));
           button.disabled = false;
+          if (result.ok) savedReferences.delete(node.id);
           renderList();
-          if (isCurrent()) view.render(root);
+          if (!result.blocked && isCurrent()) view.render(root);
         } }, CLEAN_LABEL);
         return h('li', { class: 'issue issue--warning' }, [h('span', { class: 'issue__msg' }, node.name || node.id), button]);
       })));
     };
     renderList();
     ui.dialog({
-      title: `清理已失效节点 · ${subscription.name || subscription.id}`,
+      title: `${CLEAN_STALE_LABEL} · ${subscription.name || subscription.id}`,
       body: h('div', {}, [
         h('p', { class: 'muted' }, '已失效节点指订阅更新后不再存在的节点。若仍有路由正在引用该节点，将无法直接清理。'),
         box
@@ -168,15 +165,11 @@
               ui.toast('已停用的订阅不能更新；请先启用并保存配置', 'warn');
               return;
             }
-            if (S.store.dirty) {
-              ui.toast('请先保存或放弃工作副本修改，再更新订阅', 'warn');
-              return;
-            }
+            /* 更新只写订阅节点存储和状态，配置和它的 revision 不变，所以有未保存修改时也可以更新，草稿保持原样。 */
             updateBtn.disabled = true;
             updateBtn.classList.add('spinning');
             updateBtn.textContent = '更新中…';
             try {
-              /* 订阅更新只写订阅节点存储和状态，配置和它的 revision 不变，草稿保持原样。 */
               const res = await S.api.updateSubscription(s.id);
               const updated = (res.subscriptions || []).find((item) => item.id === s.id);
               const [refreshed] = await Promise.allSettled([S.store.refreshSubscriptionNodes(), S.store.refreshOverview()]);
@@ -185,6 +178,8 @@
               updateBtn.textContent = '立即更新';
               if (isCurrent()) await view.render(root);
             } catch (e) {
+              /* 失败时同样只刷新节点列表和状态（重新渲染会重新读取订阅状态）。 */
+              await Promise.allSettled([S.store.refreshSubscriptionNodes(), S.store.refreshOverview()]);
               ui.toast(ui.subscriptionErrorMessage(e), 'err');
               updateBtn.textContent = '立即更新';
               if (isCurrent()) view.render(root);
@@ -196,7 +191,7 @@
           const url = String(s.url || '');
           const menu = ui.rowMenu([
             s.stale?.length ? {
-              label: `清理失效节点 ×${s.stale.length}`,
+              label: `${CLEAN_STALE_LABEL} ×${s.stale.length}`,
               onclick: () => openCleanup(s, isCurrent, root)
             } : null,
             s.stale?.length ? 'separator' : null,

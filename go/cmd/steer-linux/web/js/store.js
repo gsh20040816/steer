@@ -23,7 +23,8 @@
   /* 订阅节点来自订阅节点存储，不进草稿：[{ id, nodes }]，按已保存配置里的订阅分组。 */
   let subscriptionNodeLists = [];
   let manualCopies = new Map();
-  let subscriptionNodesError = '';
+  /* 最近一次读取失败的错误（含结构化错误码）；读取成功后清空。 */
+  let subscriptionNodesError = null;
   let subscriptionNodesSequence = 0;
 
   const listeners = new Set();
@@ -71,7 +72,7 @@
     }
     subscriptionNodeLists = lists;
     manualCopies = copies;
-    subscriptionNodesError = '';
+    subscriptionNodesError = null;
   };
   /* 只采用最近一次发起的读取，乱序返回的旧列表不能覆盖新列表；失败时保留上一份列表。 */
   const loadSubscriptionNodes = async () => {
@@ -81,15 +82,13 @@
       if (sequence === subscriptionNodesSequence) installSubscriptionNodes(value);
       return { ok: sequence === subscriptionNodesSequence };
     } catch (error) {
-      if (sequence === subscriptionNodesSequence) subscriptionNodesError = error?.message || '订阅节点读取失败';
+      if (sequence === subscriptionNodesSequence) subscriptionNodesError = error || new Error('');
       throw error;
     }
   };
-  /* 订阅或节点已经不存在时，界面上的列表已过期，重新读取一次。 */
-  const LIST_OUTDATED_CODES = new Set(['SUBSCRIPTION_NOT_FOUND', 'SUBSCRIPTION_NODE_NOT_FOUND']);
-  const refreshAfterNodeError = async (error) => {
-    if (!LIST_OUTDATED_CODES.has(error?.code)) return;
-    try { await loadSubscriptionNodes(); } catch (_) { /* keep the explicit operation error */ }
+  /* 订阅节点操作失败后同样只刷新订阅节点列表和状态，不动草稿；刷新失败不覆盖操作本身的错误。 */
+  const refreshAfterNodeError = async () => {
+    await Promise.allSettled([loadSubscriptionNodes(), store.refreshOverview()]);
     emit();
   };
   const parseDraft = (text) => {
@@ -124,14 +123,15 @@
     get externalRevision() { return externalRevision; },
     get hasExternalChange() { return externalRevision !== '' && externalRevision !== revision; },
     get lastRefreshedAt() { return lastRefreshedAt; },
-    /* 草稿里仍存在的订阅的存储节点，按草稿里的订阅顺序；和后台校验时拼接的节点一致。 */
+    /* 草稿里每个订阅一组存储节点，按草稿里的订阅顺序；还没有存储节点的订阅（例如未保存的新订阅）是空分组。
+       草稿里已删除的订阅不出现，和保存后后台删除它的节点存储一致。 */
     get subscriptionNodes() {
       const lists = new Map(subscriptionNodeLists.map((entry) => [entry.id, entry]));
       const seen = new Set();
       return (Array.isArray(intent?.subscriptions) ? intent.subscriptions : []).map((subscription) => {
         if (!subscription?.id || seen.has(subscription.id)) return null;
         seen.add(subscription.id);
-        return lists.get(subscription.id) || null;
+        return lists.get(subscription.id) || { id: subscription.id, nodes: [] };
       }).filter(Boolean);
     },
     /* 手动节点（草稿）+ 订阅节点：路由选择、引用标签和删除保护都用这份列表。 */
@@ -163,7 +163,7 @@
       try {
         value = await S.api.setSubscriptionNodeEnabled(subscriptionId, nodeId, enabled);
       } catch (error) {
-        await refreshAfterNodeError(error);
+        await refreshAfterNodeError();
         throw error;
       }
       if (sequence === subscriptionNodesSequence) {
@@ -180,7 +180,7 @@
       try {
         result = await S.api.cleanNode(subscriptionId, nodeId);
       } catch (error) {
-        await refreshAfterNodeError(error);
+        await refreshAfterNodeError();
         throw error;
       }
       const [refreshed] = await Promise.allSettled([store.refreshSubscriptionNodes(), store.refreshOverview()]);
@@ -224,10 +224,9 @@
         (!policy.movable_kinds?.length || policy.movable_kinds.includes(item.kind)) &&
         (!policy.pinned_last_boolean_field || item[policy.pinned_last_boolean_field] !== true);
       if (!movable(source)) return false;
-      const sourceGroup = policy.group_field ? (source[policy.group_field] || '') : '';
       const peers = (Array.isArray(visibleIDs) ? visibleIDs : values.map((item) => item?.[idField]))
         .map((id) => values.find((item) => item?.[idField] === id))
-        .filter((item) => movable(item) && (!policy.group_field || (item[policy.group_field] || '') === sourceGroup));
+        .filter(movable);
       const position = peers.findIndex((item) => item[idField] === itemID);
       const target = peers[position + offset];
       if (position < 0 || !target) return false;
@@ -244,8 +243,6 @@
         (!policy.movable_kinds?.length || policy.movable_kinds.includes(item.kind)) &&
         (!policy.pinned_last_boolean_field || item[policy.pinned_last_boolean_field] !== true);
       if (!movable(source) || !movable(target)) return false;
-      const sourceGroup = policy.group_field ? (source[policy.group_field] || '') : '';
-      if (policy.group_field && (target[policy.group_field] || '') !== sourceGroup) return false;
       const allowedIDs = new Set(Array.isArray(visibleIDs) ? visibleIDs : values.map((item) => item?.[idField]));
       if (!allowedIDs.has(itemID) || !allowedIDs.has(targetID)) return false;
       const sourceIndex = values.indexOf(source);

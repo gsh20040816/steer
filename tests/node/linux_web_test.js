@@ -257,13 +257,13 @@ function createEnvironment(save, intent = { main: { enabled: true } }, options =
         return this.probeResults;
       },
       get subscriptionNodes() {
-        const configured = new Set((this.intent?.subscriptions || []).map((subscription) => subscription.id));
-        return subscriptionNodeLists.filter((entry) => configured.has(entry.id));
+        const lists = new Map(subscriptionNodeLists.map((entry) => [entry.id, entry]));
+        return (this.intent?.subscriptions || []).map((subscription) => lists.get(subscription.id) || { id: subscription.id, nodes: [] });
       },
       get allNodes() {
         return [...(this.intent?.nodes || []), ...this.subscriptionNodes.flatMap((entry) => entry.nodes)];
       },
-      subscriptionNodesError: '',
+      subscriptionNodesError: options.subscriptionNodesError || null,
       async refreshSubscriptionNodes() { return { ok: true }; },
       touch() { touchCount++; this.dirty = true; }
     }
@@ -1069,24 +1069,25 @@ async function testCollectionDragInteractionCommitsOnDropOnly() {
 }
 
 function testNodeDisplaySortingHeadersNeverMutateTheDraft() {
-  const fixtureNodes = JSON.parse(JSON.stringify(nodeDisplaySortingFixtures.nodes));
   const intent = runtimeTestIntent();
-  /* 草稿只有手动节点；订阅节点来自订阅节点读取接口。 */
-  intent.nodes = fixtureNodes.filter((node) => !node.source_subscription)
-    .map(({ source_subscription: _source, ...node }) => node);
-  intent.subscriptions = [ { id: 'feed', name: 'Feed', enabled: true, url: 'https://feed.example/sub', update_interval: '24h' } ];
+  /* 草稿只有手动节点（fixture.nodes）；订阅节点是订阅节点读取接口的载荷（fixture.subscription_nodes）。 */
+  intent.nodes = JSON.parse(JSON.stringify(nodeDisplaySortingFixtures.nodes));
+  const subscriptionNodes = JSON.parse(JSON.stringify(nodeDisplaySortingFixtures.subscription_nodes));
+  intent.subscriptions = subscriptionNodes.subscriptions.map((entry) => ({
+    id: entry.id, name: 'Feed', enabled: true, url: 'https://feed.example/sub', update_interval: '24h'
+  }));
   const originalIDs = intent.nodes.map((node) => node.id);
   const environment = createEnvironment(async () => ({ ok: true }), intent, {
     probeResults: { latest_results: nodeDisplaySortingFixtures.latest_results, warnings: [] },
-    subscriptionNodes: { subscriptions: [{
-      id: 'feed', nodes: fixtureNodes.filter((node) => node.source_subscription === 'feed')
-    }] }
+    subscriptionNodes
   });
   loadView(environment, 'nodes');
   const view = environment.S.views.nodes;
 
   for (const fixture of nodeDisplaySortingFixtures.cases) {
-    const group = fixtureNodes.filter((node) => (node.source_subscription || '') === fixture.group);
+    const group = fixture.group
+      ? environment.S.store.subscriptionNodes.find((entry) => entry.id === fixture.group).nodes
+      : intent.nodes;
     assert.deepEqual(
       view.sortNodesForDisplay(group, fixture.mode, fixture.direction, environment.S.store.probeResults).map((node) => node.id),
       fixture.expected_ids,
@@ -1221,21 +1222,37 @@ function draftLifecycleIntent() {
   };
 }
 
-/* GET /api/v1/subscription-nodes 的载荷：完整节点字段（含凭据）+ 来源字段 + 共享的 manual_copy。 */
-function subscriptionNodeEntry(node) {
-  const { id: _id, source_subscription: _source, source_fingerprint: _fingerprint, pinned_stale: _stale, ...fields } = node;
-  return { ...node, manual_copy: { ...fields, enabled: true } };
-}
-
+/* GET /api/v1/subscription-nodes 的载荷，原样写出：完整节点字段（含凭据）+ 来源字段 + 共享的 manual_copy。 */
 function draftLifecycleSubscriptionNodes() {
   return { subscriptions: [{
     id: 'feed',
     nodes: [
-      { id: 'feed_current', enabled: true, name: 'Current', type: 'trojan', server: 'current.example', server_port: 443, password: 'feed-secret', tls_server_name: 'current.example', source_subscription: 'feed', source_fingerprint: 'fp-current' },
-      { id: 'feed_stale', enabled: true, name: 'Stale', type: 'socks', server: 'stale.example', server_port: 1080, source_subscription: 'feed', source_fingerprint: 'fp-stale', pinned_stale: true }
-    ].map(subscriptionNodeEntry)
+      {
+        id: 'feed_current', enabled: true, name: 'Current', type: 'trojan', server: 'current.example', server_port: 443,
+        password: 'feed-secret', tls_server_name: 'current.example', source_subscription: 'feed', source_fingerprint: 'fp-current',
+        manual_copy: { enabled: true, name: 'Current', type: 'trojan', server: 'current.example', server_port: 443, password: 'feed-secret', tls_server_name: 'current.example' }
+      },
+      {
+        id: 'feed_stale', enabled: true, name: 'Stale', type: 'socks', server: 'stale.example', server_port: 1080,
+        source_subscription: 'feed', source_fingerprint: 'fp-stale', pinned_stale: true,
+        manual_copy: { enabled: true, name: 'Stale', type: 'socks', server: 'stale.example', server_port: 1080 }
+      }
+    ]
   }] };
 }
+
+/* 共享文案（界面描述 subscription_nodes），测试直接从界面描述取，避免和实现各写一份。 */
+const SUBSCRIPTION_TEXT = {
+  clean: uiSpec.subscription_nodes.actions.clean.zh_cn,
+  cleaned: uiSpec.subscription_nodes.messages.cleaned.zh_cn,
+  staleMarker: uiSpec.subscription_nodes.messages.stale_marker.zh_cn,
+  readOnly: uiSpec.subscription_nodes.messages.read_only_note.zh_cn,
+  loadFailed: uiSpec.subscription_nodes.messages.load_failed.zh_cn,
+  emptyGroup: uiSpec.subscription_nodes.messages.empty_group.zh_cn,
+  stillReferenced: (names) => uiSpec.subscription_nodes.errors.NODE_STILL_REFERENCED.zh_cn
+    .replace(uiSpec.subscription_nodes.routes_placeholder, names.join(uiSpec.subscription_nodes.messages.list_separator.zh_cn))
+};
+SUBSCRIPTION_TEXT.cleanStaleMenu = (count) => `${SUBSCRIPTION_TEXT.clean}${SUBSCRIPTION_TEXT.staleMarker}节点 ×${count}`;
 
 const SUBSCRIPTION_SOURCE_FIELDS = ['source_subscription', 'source_fingerprint', 'pinned_stale', 'manual_copy'];
 
@@ -1489,10 +1506,14 @@ async function testSharedUISafetyContracts() {
 		formInputFixtures.cases.every((fixture) => uiSpec.input_formats[fixture.format]),
 		'Linux consumes the shared high-frequency form format metadata and fixtures');
   const clone = (value) => JSON.parse(JSON.stringify(value));
-  const environment = createEnvironment(async () => ({ ok: true }), clone(collectionReferenceFixtures.intent));
+  /* 完整 Intent = 草稿（只有手动节点）+ 订阅节点读取接口的载荷，和删除保护使用的列表相同。 */
+  const environment = createEnvironment(async () => ({ ok: true }), clone(collectionReferenceFixtures.intent), {
+    subscriptionNodes: clone(collectionReferenceFixtures.subscription_nodes)
+  });
+  const completeIntent = { ...environment.S.store.intent, nodes: environment.S.store.allNodes };
   for (const fixture of collectionReferenceFixtures.cases) {
     const actual = environment.S.ui.collectionReferences(
-      collectionReferenceFixtures.intent, fixture.target_collection, fixture.target_id
+      completeIntent, fixture.target_collection, fixture.target_id
     ).map((reference) => ({
       source_collection: reference.source_collection,
       source_object_type: reference.source_object_type,
@@ -1506,6 +1527,10 @@ async function testSharedUISafetyContracts() {
   assert.match(text(environment.body), /Used route/);
   assert.doesNotMatch(text(environment.body), /Used route \/ node/);
   assert.equal(environment.S.ui.guardCollectionDeletion('nodes', 'node_free', 'Free node'), true);
+  assert.equal(environment.S.ui.guardCollectionDeletion('subscriptions', 'feed', 'Feed'), false,
+    'a subscription whose stored node a route uses cannot be deleted');
+  assert.match(text(environment.body), /Feed route/);
+  assert.equal(environment.S.ui.guardCollectionDeletion('subscriptions', 'feed_free', 'Free feed'), true);
 
   const summaryEnvironment = createEnvironment(async () => ({ ok: true }), draftLifecycleIntent());
   loadView(summaryEnvironment, 'rules');
@@ -1977,10 +2002,11 @@ async function testAdvancedRouterDiscardAndGuardedActions() {
 }
 
 function addedFeedNode() {
-  return subscriptionNodeEntry({
+  return {
     id: 'feed_added', enabled: true, name: 'Added', type: 'socks', server: 'added.example', server_port: 1080,
-    source_subscription: 'feed', source_fingerprint: 'fp-added'
-  });
+    source_subscription: 'feed', source_fingerprint: 'fp-added',
+    manual_copy: { enabled: true, name: 'Added', type: 'socks', server: 'added.example', server_port: 1080 }
+  };
 }
 
 async function testSubscriptionAsyncWorkPreservesNewDraftAndRoute() {
@@ -2031,7 +2057,7 @@ async function testSubscriptionAsyncWorkPreservesNewDraftAndRoute() {
     entry.nodes = entry.nodes.filter((node) => node.id !== nodeId);
     return { subscriptions: [] };
   };
-  buttonWithText(environment.view, '清理失效节点 ×1').listeners.click();
+  buttonWithText(environment.view, SUBSCRIPTION_TEXT.cleanStaleMenu(1)).listeners.click();
   const configCallsBeforeClean = backend.configCalls;
   const cleaning = lastButtonWithText(environment.body, uiSpec.subscription_nodes.actions.clean.zh_cn).listeners.click();
   await Promise.resolve();
@@ -2098,7 +2124,7 @@ async function testSubscriptionAsyncWorkRefreshesOnlyTheNodeListAfterDiscard() {
     await cleanGate.promise;
     return realClean(...args);
   };
-  buttonWithText(environment.view, '清理失效节点 ×1').listeners.click();
+  buttonWithText(environment.view, SUBSCRIPTION_TEXT.cleanStaleMenu(1)).listeners.click();
   const configCallsBeforeClean = backend.configCalls;
   const cleaning = lastButtonWithText(environment.body, uiSpec.subscription_nodes.actions.clean.zh_cn).listeners.click();
   await Promise.resolve();
@@ -2117,7 +2143,7 @@ async function testSubscriptionAsyncWorkRefreshesOnlyTheNodeListAfterDiscard() {
   assert.strictEqual(environment.S.store.intent.main.log_level, 'error');
   assert.ok(!environment.S.store.allNodes.some((node) => node.id === 'feed_stale'),
     'cleanup completion shows the latest stored node list');
-  assert.match(text(environment.toasts), /已清理 Stale/);
+  assert.ok(text(environment.toasts).includes(SUBSCRIPTION_TEXT.cleaned), 'cleanup shows the shared clean-up notice');
 }
 
 function localProxyIntent(proxy) {
@@ -2342,6 +2368,7 @@ async function testSharedSubscriptionStatusLifecycleAndDisabledUpdate() {
     id: status.id, enabled: status.enabled, name: status.name, url: status.url, update_interval: status.update_interval
   }));
   let updates = 0;
+  let cleans = 0;
   let nodeListRefreshes = 0;
   let reloads = 0;
   const environment = createEnvironment(async () => ({ ok: true }), intent, { api: {
@@ -2350,10 +2377,8 @@ async function testSharedSubscriptionStatusLifecycleAndDisabledUpdate() {
       updates++;
       return { subscriptions: statuses.filter((status) => status.id === id) };
     },
-    cleanNode: async () => ({ subscriptions: statuses })
-  }, subscriptionNodes: { subscriptions: [{ id: 'failed', nodes: [subscriptionNodeEntry(
-    { id: 'failed_blocked', enabled: true, name: 'Blocked stale', type: 'socks', server: 'blocked.example', server_port: 1080, source_subscription: 'failed', source_fingerprint: 'fp-blocked', pinned_stale: true }
-  )] }] } });
+    cleanNode: async () => { cleans++; return { subscriptions: statuses }; }
+  }, subscriptionNodes: JSON.parse(JSON.stringify(subscriptionStatusFixtures.subscription_nodes)) });
   environment.S.store.reload = async () => { reloads++; return { ok: true }; };
   environment.S.store.refreshOverview = async () => ({});
   environment.S.store.refreshSubscriptionNodes = async () => { nodeListRefreshes++; return { ok: true }; };
@@ -2376,16 +2401,32 @@ async function testSharedSubscriptionStatusLifecycleAndDisabledUpdate() {
   await updateButtons[disabledIndex].listeners.click();
   assert.strictEqual(updates, 0, 'disabled subscription Update never reaches the backend');
 
+  /* 更新不看未保存修改：草稿有修改时照样调用后台，草稿保持原样。 */
+  environment.S.store.dirty = true;
+  intent.main.log_level = 'debug';
   const successIndex = statuses.findIndex((status) => status.id === 'success');
   await updateButtons[successIndex].listeners.click();
-  assert.strictEqual(updates, 1);
+  assert.strictEqual(updates, 1, 'a dirty Draft never blocks a subscription update');
   assert.strictEqual(nodeListRefreshes, 1, 'a subscription update refreshes the stored node list');
   assert.strictEqual(reloads, 0, 'a subscription update never reloads the configuration Draft');
+  assert.strictEqual(environment.S.store.dirty, true);
+  assert.strictEqual(environment.S.store.intent.main.log_level, 'debug', 'a subscription update keeps the unsaved Draft');
   const updateToast = text(environment.toasts);
   assert.match(updateToast, /新增 2 · 当前 2 · 已失效 0 · 已跳过 0/,
     'update toast uses the same status contract and all inventory counters');
   assert.match(updateToast, /当前运行配置未改变/);
   assert.match(updateToast, /仍被路由使用的节点已自动保留/);
+
+  /* 已保存配置里的路由（状态的 referenced_by）仍在用：不调用后台，用共享文案列出路由；草稿里的名称优先。 */
+  await environment.S.views.subscriptions.render(environment.view);
+  buttonWithText(environment.view, SUBSCRIPTION_TEXT.cleanStaleMenu(1)).listeners.click();
+  const cleanButton = lastButtonWithText(environment.body, SUBSCRIPTION_TEXT.clean);
+  assert.ok(cleanButton, 'the Subscriptions page cleans each stale node with the shared clean-up label');
+  assert.ok(text(environment.body).includes('Blocked stale'), 'the stale node name is shown beside its clean-up button');
+  await cleanButton.listeners.click();
+  assert.strictEqual(cleans, 0, 'a stale node used by a Saved route is not sent to the backend');
+  assert.ok(text(environment.body).includes(SUBSCRIPTION_TEXT.stillReferenced(['Proxy'])),
+    'the blocked clean-up lists the route with the shared wording and the Draft route name');
 }
 
 const SUBSCRIPTION_NODE_ACTIONS = uiSpec.subscription_nodes.actions;
@@ -2440,7 +2481,8 @@ async function testSubscriptionNodesLoadReadOnlyAndStayOutOfDrafts() {
   }
   assert.strictEqual(buttonWithText(rows[0], SUBSCRIPTION_NODE_ACTIONS.clean.zh_cn), null, 'current nodes cannot be cleaned');
   assert.ok(buttonWithText(rows[1], SUBSCRIPTION_NODE_ACTIONS.clean.zh_cn), 'stale nodes offer the shared Clean up action');
-  assert.match(text(rows[1]), /已失效/);
+  assert.ok(text(rows[1]).includes(SUBSCRIPTION_TEXT.staleMarker), 'stale nodes carry the shared stale marker');
+  assert.ok(text(environment.view).includes(SUBSCRIPTION_TEXT.readOnly), 'subscription groups show the shared read-only note');
   assert.strictEqual(buttonWithText(environment.view, '添加节点'), null, 'subscription groups cannot add nodes');
   assert.doesNotMatch(text(environment.view), /feed-secret|fp-current/, 'credentials and fingerprints stay out of the DOM');
 
@@ -2468,12 +2510,24 @@ async function testSubscriptionNodesLoadReadOnlyAndStayOutOfDrafts() {
     'a subscription removed from the Draft no longer contributes nodes, as in backend validation');
 
   const failing = await subscriptionNodeEnvironment((state) => {
-    state.api.subscriptionNodes = async () => { throw new Error('SUBSCRIPTION_NODE_STORE_FAILED: read failed'); };
+    state.api.subscriptionNodes = async () => {
+      throw Object.assign(new Error('SUBSCRIPTION_NODE_STORE_FAILED: read failed'), { code: 'SUBSCRIPTION_NODE_STORE_FAILED', status: 500 });
+    };
   });
   assert.deepStrictEqual(failing.store.allNodes.map((node) => node.id), ['node'], 'a store read failure does not block the console');
   failing.environment.S.views.nodes.render(failing.environment.view);
-  assert.match(text(failing.environment.view), /订阅节点暂时无法读取/);
+  assert.ok(text(failing.environment.view).includes(
+    `${SUBSCRIPTION_TEXT.loadFailed}：${uiSpec.subscription_nodes.errors.SUBSCRIPTION_NODE_STORE_FAILED.zh_cn}`),
+    'a read failure shows the shared load failure and the shared reason');
   assert.doesNotMatch(text(failing.environment.view), /SUBSCRIPTION_NODE_STORE_FAILED/);
+
+  /* 草稿里还没有存储节点的订阅（例如未保存的新订阅）也是一个分组，显示共享的空分组提示。 */
+  failing.store.intent.subscriptions.push({ id: 'fresh', enabled: true, name: 'Fresh', url: 'https://fresh.example/sub', update_interval: '6h' });
+  failing.store.touch();
+  openNodeGroup(failing.environment, 'Fresh');
+  const freshTabs = findAll(failing.environment.view, (element) => element.tag === 'button' && element.attributes.role === 'tab');
+  assert.deepStrictEqual(freshTabs.map(text), ['手动节点1', 'Feed0', 'Fresh0'], 'every Draft subscription forms a group, in Draft order');
+  assert.ok(text(failing.environment.view).includes(SUBSCRIPTION_TEXT.emptyGroup), 'an empty subscription group shows the shared note');
 }
 
 async function testSubscriptionNodeEnableDisableUsesTheStoreEndpoint() {
@@ -2522,8 +2576,20 @@ async function testSubscriptionNodeEnableDisableUsesTheStoreEndpoint() {
   await flushUI();
   assert.strictEqual(backend.subscriptionNodeReads, readsBeforeMissing + 1, 'a missing node refreshes the outdated list');
   assert.strictEqual(nodeRow(environment.view, 'feed_stale'), null, 'the refreshed list no longer shows the removed node');
-  assert.match(text(environment.toasts), /这个订阅节点已经不存在/);
+  assert.ok(text(environment.toasts).includes(uiSpec.subscription_nodes.errors.SUBSCRIPTION_NODE_NOT_FOUND.zh_cn));
   assert.strictEqual(store.dirty, false);
+
+  /* 未保存的修改不影响启用/停用，草稿保持原样。 */
+  store.intent.main.log_level = 'debug';
+  store.touch();
+  const configCallsBeforeToggle = backend.configCalls;
+  await buttonWithText(nodeRow(environment.view, 'feed_current'), SUBSCRIPTION_NODE_ACTIONS.disable.zh_cn).listeners.click();
+  await flushUI();
+  assert.deepStrictEqual(backend.nodeSets.at(-1), { subscriptionId: 'feed', nodeId: 'feed_current', enabled: false },
+    'a dirty Draft never blocks enable/disable');
+  assert.strictEqual(store.dirty, true);
+  assert.strictEqual(store.intent.main.log_level, 'debug', 'enable/disable keeps the unsaved Draft');
+  assert.strictEqual(backend.configCalls, configCallsBeforeToggle, 'enable/disable never reloads the Draft');
 }
 
 async function testSubscriptionNodeAPIUsesSharedPayloads() {
@@ -2669,19 +2735,64 @@ async function testSubscriptionNodeCleanFromNodesPage() {
   const clean = SUBSCRIPTION_NODE_ACTIONS.clean.zh_cn;
   openNodeGroup(environment, 'Feed');
   buttonWithText(nodeRow(environment.view, 'feed_stale'), clean).listeners.click();
-  assert.match(text(environment.body), /不能删除 · Stale/, 'a stale node used by a Draft route cannot be cleaned');
-  assert.strictEqual(backend.subscriptionCleans, 0);
+  await flushUI();
+  assert.ok(text(environment.body).includes(SUBSCRIPTION_TEXT.stillReferenced(['Stale route'])),
+    'a stale node used by a Draft route is blocked with the shared wording and the route name');
+  assert.ok(buttonWithText(environment.body, '前往引用'), 'the blocked clean-up can jump to the route');
+  assert.strictEqual(backend.subscriptionCleans, 0, 'a blocked clean-up never reaches the backend');
 
+  /* 未保存的修改本身不阻止清理；清理不弹确认框，只写订阅节点存储。 */
   store.intent.routes = store.intent.routes.filter((route) => route.id !== 'stale_route');
   store.touch();
+  const configCallsBeforeClean = backend.configCalls;
   openNodeGroup(environment, 'Feed');
   buttonWithText(nodeRow(environment.view, 'feed_stale'), clean).listeners.click();
-  await lastButtonWithText(environment.body, clean).listeners.click();
   await flushUI();
-  assert.strictEqual(backend.subscriptionCleans, 1);
+  assert.strictEqual(backend.subscriptionCleans, 1, 'a dirty Draft never blocks clean-up and no confirmation is asked');
   assert.strictEqual(nodeRow(environment.view, 'feed_stale'), null, 'the cleaned node leaves the refreshed list');
-  assert.match(text(environment.toasts), /已清理 Stale/);
+  assert.ok(text(environment.toasts).includes(SUBSCRIPTION_TEXT.cleaned), 'cleanup shows the shared clean-up notice');
   assert.ok(nodeRow(environment.view, 'feed_current'), 'current nodes are untouched');
+  assert.strictEqual(store.dirty, true, 'clean-up keeps the unsaved Draft');
+  assert.strictEqual(backend.configCalls, configCallsBeforeClean, 'clean-up never reloads the Draft');
+
+  /* 已保存配置里的引用由后台拒绝：共享文案列出路由（草稿里的名称），失败后同样刷新节点列表。 */
+  backend.subscriptionNodes.subscriptions[0].nodes.push({
+    id: 'feed_saved_ref', enabled: true, name: 'Saved ref', type: 'socks', server: 'saved.example', server_port: 1080,
+    source_subscription: 'feed', source_fingerprint: 'fp-saved', pinned_stale: true,
+    manual_copy: { enabled: true, name: 'Saved ref', type: 'socks', server: 'saved.example', server_port: 1080 }
+  });
+  await store.refreshSubscriptionNodes();
+  backend.api.cleanNode = async () => {
+    throw Object.assign(new Error('NODE_STILL_REFERENCED: route "proxy" still references subscription node "feed_saved_ref"'), {
+      code: 'NODE_STILL_REFERENCED', status: 422,
+      details: { ok: false, error_code: 'NODE_STILL_REFERENCED', validation: { ok: false, warnings: [], errors: [
+        { code: 'DANGLING_NODE', object_type: 'route', object_id: 'proxy', option: 'node', message: 'missing node' },
+        { code: 'DANGLING_NODE', object_type: 'route', object_id: 'saved_only', option: 'node', message: 'missing node' }
+      ] } }
+    });
+  };
+  const readsBeforeRejected = backend.subscriptionNodeReads;
+  openNodeGroup(environment, 'Feed');
+  buttonWithText(nodeRow(environment.view, 'feed_saved_ref'), clean).listeners.click();
+  await flushUI();
+  assert.ok(text(environment.toasts).includes(`${clean}失败：${SUBSCRIPTION_TEXT.stillReferenced(['Proxy', 'saved_only'])}`),
+    'a backend rejection names the Draft route and falls back to the ID of a route only in the Saved configuration');
+  assert.ok(backend.subscriptionNodeReads > readsBeforeRejected, 'a failed clean-up refreshes the node list as well');
+
+  /* 没有共享文案的错误码显示后台原因；NODE_STILL_REFERENCED 没有路由时同样退回后台原因。 */
+  assert.strictEqual(environment.S.ui.subscriptionErrorMessage(Object.assign(new Error('backend detail'), { code: 'SOMETHING_NEW' })), 'backend detail');
+  assert.strictEqual(environment.S.ui.subscriptionErrorMessage(Object.assign(new Error('still used'), {
+    code: 'NODE_STILL_REFERENCED', details: { validation: { errors: [] } }
+  })), 'still used');
+  for (const code of uiSpec.subscription_nodes.error_codes.filter((candidate) => candidate !== 'NODE_STILL_REFERENCED')) {
+    assert.strictEqual(environment.S.ui.subscriptionErrorMessage(Object.assign(new Error(`${code}: raw`), { code })),
+      uiSpec.subscription_nodes.errors[code].zh_cn, `${code} uses the shared wording`);
+  }
+  const inConfig = text(environment.S.ui.issueList([
+    { code: 'SUBSCRIPTION_NODE_IN_CONFIG', object_type: 'node', object_id: 'x', option: 'source_subscription', message: 'raw' }
+  ], () => {}));
+  assert.ok(inConfig.includes(uiSpec.subscription_nodes.validation_issues.SUBSCRIPTION_NODE_IN_CONFIG.zh_cn),
+    'the SUBSCRIPTION_NODE_IN_CONFIG issue uses the shared wording');
 }
 
 async function testApplyResultUnchangedRuntimeNotice() {

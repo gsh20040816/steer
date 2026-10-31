@@ -7,8 +7,8 @@
   const ui = S.ui;
 
   const MANUAL = '_manual';
-  const SUBSCRIPTION_NODE_ACTIONS = S.uiSpec.subscription_nodes?.actions || {};
-  const actionLabel = (key) => SUBSCRIPTION_NODE_ACTIONS[key]?.zh_cn || SUBSCRIPTION_NODE_ACTIONS[key]?.label || key;
+  const actionLabel = (key) => ui.subscriptionNodeAction(key);
+  const nodeMessage = (key) => ui.subscriptionNodeMessage(key);
   let activeGroup = MANUAL;
   let displaySortMode = 'default';
   let displaySortDirection = S.uiSpec.node_display_sorting?.default_direction || 'best_first';
@@ -135,7 +135,7 @@
     return formatEndpoint(node.server, node.server_port);
   }
 
-  /* 草稿里只有手动节点；订阅节点来自订阅节点读取接口，按订阅分组、只读。 */
+  /* 草稿里只有手动节点；订阅节点来自订阅节点读取接口，按草稿里的订阅分组（含还没有节点的订阅）、只读。 */
   function groupOf(node) {
     return S.store.intent.nodes.includes(node) ? MANUAL : (node.source_subscription || MANUAL);
   }
@@ -169,10 +169,13 @@
     return button;
   }
 
-  function copyToManual(node, root) {
+  async function copyToManual(node, isCurrent, root) {
     const copy = S.store.manualCopy(node);
     if (!copy) {
-      ui.toast('这个订阅节点已经不存在；请刷新节点列表后重试', 'warn');
+      /* 列表里已经没有这个节点：刷新列表后提示共享文案。 */
+      await S.store.refreshSubscriptionNodes().catch(() => null);
+      ui.toast(ui.subscriptionErrorMessage({ code: 'SUBSCRIPTION_NODE_NOT_FOUND' }), 'warn');
+      if (isCurrent()) view.render(root);
       return;
     }
     /* manual_copy 由后台按共享规则生成（不含 ID）；这里只按手动节点的规则分配新 ID。 */
@@ -180,31 +183,16 @@
     S.store.intent.nodes.push(manual);
     S.store.touch();
     activeGroup = MANUAL;
-    ui.toast(`${manual.name || '订阅节点'} 已复制到我的节点 · 未保存`, 'info');
+    ui.toast(`${manual.name || '订阅节点'} 已${actionLabel('copy_to_manual')} · 未保存`, 'info');
     view.render(root);
     openNodeEditor(manual);
   }
 
-  function confirmClean(node, isCurrent, root) {
-    if (!ui.guardCollectionDeletion('nodes', node.id, node.name || node.id)) return;
-    const label = actionLabel('clean');
-    ui.dialog({
-      title: `${label}已失效节点 · ${node.name || node.id}`,
-      body: h('p', {}, '这个节点已经不在订阅里。清理后会从订阅节点中删除，不会修改任何路由。'),
-      actions: [
-        ['取消', null],
-        [label, async (close) => {
-          close();
-          try {
-            await S.store.cleanSubscriptionNode(node.source_subscription, node.id);
-            ui.toast(`已清理 ${node.name || '已失效节点'}`, 'ok');
-          } catch (error) {
-            ui.toast(`${label}失败：${ui.subscriptionErrorMessage(error)}`, 'err');
-          }
-          if (isCurrent()) view.render(root);
-        }, 'btn--danger']
-      ]
-    });
+  /* 清理不弹确认框（和 LuCI、macOS 一致）；草稿里的路由引用由 ui.cleanSubscriptionNode 拦住，
+     已保存配置里的引用由后台拒绝并给出共享文案。 */
+  async function cleanStaleNode(node, isCurrent, root) {
+    await ui.cleanSubscriptionNode(node);
+    if (isCurrent()) view.render(root);
   }
 
   function testButton(label, download, nodeId, eligible) {
@@ -587,10 +575,10 @@
             'separator',
             { label: '删除', danger: true, onclick: () => deleteNode(node) }
           ] : [
-            { label: actionLabel('copy_to_manual'), title: '复制成可以编辑的手动节点；原订阅节点和路由保持不变', onclick: () => copyToManual(node, root) },
+            { label: actionLabel('copy_to_manual'), title: '复制成可以编辑的手动节点；原订阅节点和路由保持不变', onclick: () => copyToManual(node, isCurrent, root) },
             exportItem,
             node.pinned_stale ? 'separator' : null,
-            node.pinned_stale ? { label: actionLabel('clean'), danger: true, onclick: () => confirmClean(node, isCurrent, root) } : null
+            node.pinned_stale ? { label: actionLabel('clean'), danger: true, onclick: () => cleanStaleNode(node, isCurrent, root) } : null
           ]);
           const enabled = editable
             ? ui.toggle(node.enabled, (v) => { node.enabled = v; S.store.touch(); view.render(root); }, `启用 ${node.name || node.id}`)
@@ -602,7 +590,7 @@
               'nodes', node, sourceNodes, () => view.render(root), { disabledReason: orderingDisabledReason }
             )) : null,
             h('td', {}, enabled),
-            h('td', {}, h('div', { class: 'cell-inline' }, h('strong', {}, node.name || node.id), node.pinned_stale ? h('span', { class: 'badge badge--stale' }, '已失效') : null)),
+            h('td', {}, h('div', { class: 'cell-inline' }, h('strong', {}, node.name || node.id), node.pinned_stale ? h('span', { class: 'badge badge--stale' }, nodeMessage('stale_marker')) : null)),
             h('td', {}, h('span', { class: `tag protocol-badge protocol--${node.type}` }, PROTOCOL_LABEL[node.type] || node.type)),
             h('td', { class: 'mono' }, nodeEndpoint(node)),
             h('td', { class: 'probe-sort-cell' }, probeAction(conn)),
@@ -628,24 +616,26 @@
       root.append(
         ui.viewHead('节点', editable
           ? '手动添加的节点；拖动左侧手柄或按 ↑/↓ 调整顺序'
-          : `来自订阅「${active?.label || ''}」的节点，只读；需要修改时请先「${actionLabel('copy_to_manual')}」`, [
+          : `订阅「${active?.label || ''}」的节点 · ${nodeMessage('read_only_note')}`, [
           importButton(),
           editable ? addButton() : null
         ]),
         h('div', { class: 'toolbar-row' }, [groupNav, batch])
       );
-      if (S.store.subscriptionNodesError)
-        root.append(h('div', { class: 'alert alert--err' }, '订阅节点暂时无法读取；可以点击顶部「刷新」重试。'));
+      if (S.store.subscriptionNodesError) {
+        const reason = ui.subscriptionErrorMessage(S.store.subscriptionNodesError);
+        root.append(h('div', { class: 'alert alert--err' }, `${nodeMessage('load_failed')}${reason && reason !== '操作失败' ? `：${reason}` : ''}`));
+      }
       root.append(
         nodes.length
           ? h('div', { class: 'card table-card' }, h('div', { class: 'table-wrap' }, table))
-          : ui.emptyState(editable ? '还没有手动节点。可以逐个添加，也可以粘贴分享链接批量导入。' : '该订阅没有节点', editable ? [importButton(), addButton()] : [], 'server')
+          : ui.emptyState(editable ? '还没有手动节点。可以逐个添加，也可以粘贴分享链接批量导入。' : nodeMessage('empty_group'), editable ? [importButton(), addButton()] : [], 'server')
       );
 
       const focus = ui.takeObjectFocus('node');
       const focusedNode = focus && allNodes.find((node) => node.id === focus.object_id);
       if (focusedNode && groupOf(focusedNode) === MANUAL) openNodeEditor(focusedNode, focus.option);
-      else if (focusedNode) ui.toast(`已定位订阅节点 ${focusedNode.name || focusedNode.id}；订阅节点只读，需要修改时请先「${actionLabel('copy_to_manual')}」`, 'warn');
+      else if (focusedNode) ui.toast(`已定位订阅节点 ${focusedNode.name || focusedNode.id}；${nodeMessage('read_only_note')}`, 'warn');
     }
   };
 
