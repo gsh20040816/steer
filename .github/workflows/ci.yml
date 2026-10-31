@@ -3,6 +3,8 @@ name: CI
 on:
   pull_request:
   push:
+    branches:
+      - master
   workflow_dispatch:
 
 permissions:
@@ -37,20 +39,13 @@ jobs:
           go test -race ./...
           go vet ./...
 
-      - name: Compile every supported Linux and OpenWrt target
+      # The x86_64 commands are already compiled by the tests above.
+      - name: Cross-compile the aarch64 Linux target
         working-directory: go
         run: |
-          mkdir -p "$RUNNER_TEMP/steer-platform-smoke"
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-            -o "$RUNNER_TEMP/steer-platform-smoke/steer-openwrt-x86_64" \
-            ./cmd/steer-openwrt
-          for target in amd64:x86_64 arm64:aarch64; do
-            goarch="${target%%:*}"
-            release_arch="${target#*:}"
-            CGO_ENABLED=0 GOOS=linux GOARCH="$goarch" go build \
-              -o "$RUNNER_TEMP/steer-platform-smoke/steer-linux-$release_arch" \
-              ./cmd/steer-linux
-          done
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
+            -o "$RUNNER_TEMP/steer-linux-aarch64" \
+            ./cmd/steer-linux
 
       - name: Lint shell and property lists
         run: |
@@ -179,22 +174,14 @@ jobs:
       - name: Test native macOS packaging and plist quarantine handling
         run: python3 tests/check-macos-packaging.py
 
-      - name: Test shared Go core and native macOS adapter
+      # Shared packages are tested on Linux; only cmd/steer-macos has
+      # darwin-only files, and the adapter is worth running on a real Mac.
+      - name: Test native macOS adapter and helper
         working-directory: go
         run: |
-          go test -race ./...
-          go vet ./...
-          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build \
-            -o "$RUNNER_TEMP/steer-macos" \
-            ./cmd/steer-macos
+          go test -race ./cmd/steer-macos/... ./internal/platform/macos/...
+          go vet ./cmd/steer-macos/... ./internal/platform/macos/...
 
-      - name: Test and build Swift GUI in debug and release modes
+      - name: Test Swift GUI
         working-directory: macos
-        run: |
-          plutil -lint launchd/com.steer.steer.plist launchd/com.steer.steer.control.plist
-          swift test --disable-sandbox --build-system native
-          swift build -c release --disable-sandbox --build-system native
-          app_binary="$(swift build -c release --show-bin-path --build-system native)/SteerApp"
-          xcrun vtool -show-build "$app_binary"
-          test "$(xcrun vtool -show-build "$app_binary" | awk '$1 == "minos" {print $2; exit}')" = 13.0
-          test "$(xcrun vtool -show-build "$app_binary" | awk '$1 == "sdk" {print $2; exit}' | cut -d. -f1)" = 27
+        run: swift test --disable-sandbox --build-system native

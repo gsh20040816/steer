@@ -95,7 +95,7 @@ sh -n tests/integration/run-linux-system.sh
 git diff --check
 ```
 
-每个分支提交和 PR 都会在 CI 里跑：Ubuntu 上的 Linux/OpenWrt 测试、Linux systemd 容器集成测试、arm64 macOS 上的 Go 和 Swift 测试（Xcode 27.0、macOS 27 SDK）。CI 不限制并发，也不保存正式发布包。
+推送到 master 和每个 PR 都会在 CI 里跑：Ubuntu 上的 Linux/OpenWrt 测试、Linux systemd 容器集成测试、arm64 macOS 上 macOS 专属 Go 包（`cmd/steer-macos`、`internal/platform/macos`）和 Swift 的测试（Xcode 27.0、macOS 27 SDK）。共享的 Go 包只在 Ubuntu 上测；Swift 的 release 构建和 SDK 版本检查只在 tag 发布时做。其他分支和 tag 的推送不触发 CI，需要时可以手动运行。CI 不限制并发，也不保存正式发布包。
 
 打 tag 的规则：
 

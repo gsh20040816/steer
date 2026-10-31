@@ -3,7 +3,7 @@
 发布由三条流程组成：
 
 - **Geo 数据流程**：定时把 Loyalsoldier 的 Geo 数据转成 SRS 并发布到 GitHub Pages。
-- **CI**：每个分支提交和 PR 都在所有支持的平台上跑测试。
+- **CI**：推送到 master 和每个 PR 都在所有支持的平台上跑测试。其他分支和 tag 的推送不触发 CI，需要时可以手动运行。
 - **tag 发布流程**：推送 `v*` tag 后，从 tag 指向的源码构建、检查并发布 OpenWrt、Linux、macOS 的全部产物。
 
 用户设备上不再安装 geoview，也不再保存或转换 DAT 文件。
@@ -203,13 +203,13 @@ packaging/archlinux/steer/
 ## 构建和发布流程
 
 ```text
-每个提交 / PR 的 CI（不限并发）
+推送到 master / PR 的 CI（不限并发）
   ├── Go 测试（-race）+ vet
   ├── Node/LuCI 测试
   ├── 翻译、版本一致性、界面描述文件检查
-  ├── 各平台命令的编译检查
+  ├── aarch64 Linux 交叉编译检查
   ├── Linux systemd 容器集成测试
-  └── arm64 macOS 上的 Go + Swift 测试和编译
+  └── arm64 macOS 上 macOS 专属 Go 包和 Swift 的测试
         ↓ tag 检查（提交在 master 上、版本号一致；稳定版还要同一提交的 CI 通过）
 v* tag 发布流程
         ↓
