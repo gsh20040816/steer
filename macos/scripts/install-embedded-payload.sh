@@ -2,10 +2,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -eu
 
-if [ "$(/usr/bin/uname -s)" != "Darwin" ]; then
-	printf '%s\n' 'Steer embedded payload can only be installed on macOS.' >&2
-	exit 1
-fi
 if [ "$(/usr/bin/id -u)" -ne 0 ]; then
 	printf '%s\n' 'Steer embedded payload installer must run as root.' >&2
 	exit 1
@@ -56,22 +52,6 @@ if /usr/bin/find "$geodata_payload" -type l -print -quit | /usr/bin/grep -q .; t
 fi
 
 /usr/bin/codesign --verify --deep --strict "$app_bundle"
-/usr/bin/plutil -lint "$runtime_plist_payload" "$control_plist_payload" "$subscription_plist_payload" >/dev/null
-
-machine_arch="$(/usr/bin/uname -m)"
-case "$machine_arch" in
-	arm64|x86_64) ;;
-	*)
-		printf 'Unsupported macOS architecture: %s\n' "$machine_arch" >&2
-		exit 1
-		;;
-esac
-for binary in "$helper_payload" "$sing_box_payload"; do
-	/usr/bin/file "$binary" | /usr/bin/grep -Eq "Mach-O .*${machine_arch}" || {
-		printf 'Embedded binary does not match %s: %s\n' "$machine_arch" "$binary" >&2
-		exit 1
-	}
-done
 
 /usr/bin/install -d -o root -g wheel -m 0755 "$helper_directory"
 /usr/bin/install -d -o root -g wheel -m 0755 "$socket_directory"

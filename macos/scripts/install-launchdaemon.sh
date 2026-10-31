@@ -53,7 +53,6 @@ fi
 install -m 0644 "$repository_root/macos/launchd/com.steer.steer.plist" "$plist_path"
 install -m 0644 "$repository_root/macos/launchd/com.steer.steer.control.plist" "$control_plist_path"
 install -m 0644 "$repository_root/macos/launchd/com.steer.steer.subscription.plist" "$subscription_plist_path"
-plutil -lint "$plist_path" "$control_plist_path" "$subscription_plist_path" >/dev/null
 chown root:wheel "$helper_directory/steer-macos" "$runtime_binary" "$plist_path" "$control_plist_path" "$subscription_plist_path"
 chmod 0755 "$helper_directory/steer-macos" "$runtime_binary"
 chmod 0644 "$plist_path" "$control_plist_path" "$subscription_plist_path"

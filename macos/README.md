@@ -34,7 +34,7 @@ steer-macos
 
 - 把 App 拖进 `/Applications`，第一次在「系统」页安装系统组件，输入一次管理员密码。之后的保存、应用、订阅更新和清理都通过 control socket 完成，不再要密码。socket 权限是 `root:admin 0660`，后台还会用 peer credential 确认请求方属于管理员组；请求是结构化的，不能执行任意命令。
 - 「系统」页逐项检查后台程序、sing-box、三个 LaunchDaemon（文件和注册状态）、配置、Geo 数据和 control socket。缺了或者版本对不上就显示「修复」。卸载默认保留配置、状态和日志，要删除用户数据还得再确认一次。
-- macOS 27 拒绝加载带 `com.apple.quarantine` 标记的 LaunchDaemon plist，报错 `155: Refusing to execute/trust quarantined program/file`。安装脚本在校验 App 签名和文件校验和之后，只去掉三个已安装 plist 上的这个标记，然后再注册服务，不会递归清理 App 或其他文件。
+- macOS 27 拒绝加载带 `com.apple.quarantine` 标记的 LaunchDaemon plist，报错 `155: Refusing to execute/trust quarantined program/file`。安装脚本在校验 App 签名之后，只去掉三个已安装 plist 上的这个标记，然后再注册服务，不会递归清理 App 或其他文件。
 - 目前只有 ad-hoc 签名，没有 Developer ID 和公证。第一次打开要按「未认证开发者」的流程手动确认。GitHub 的构件证明可以验证来源，但不能让 Gatekeeper 放行。
 
 ## 从源码安装

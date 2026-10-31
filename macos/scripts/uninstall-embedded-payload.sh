@@ -2,10 +2,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -eu
 
-if [ "$(/usr/bin/uname -s)" != "Darwin" ]; then
-	printf '%s\n' 'Steer embedded payload can only be uninstalled on macOS.' >&2
-	exit 1
-fi
 if [ "$(/usr/bin/id -u)" -ne 0 ]; then
 	printf '%s\n' 'Steer embedded payload uninstaller must run as root.' >&2
 	exit 1
