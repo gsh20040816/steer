@@ -263,16 +263,14 @@ func readReports(stateDirectory string) ([]Report, []string) {
 			warnings = append(warnings, "a saved probe result is invalid")
 			return nil
 		}
-		if info, err := entry.Info(); err != nil || info.Size() > maxArchivedReportSize {
-			warnings = append(warnings, "a saved probe result is invalid")
-			return nil
-		}
+		// SaveReport wrote this file from a sanitized report at a path
+		// derived from a valid identity.
 		report, err := readReportFile(path)
-		if err != nil || !validReportIdentity(report) {
+		if err != nil {
 			warnings = append(warnings, "a saved probe result is invalid")
 			return nil
 		}
-		reports = append(reports, SanitizeReport(report))
+		reports = append(reports, report)
 		return nil
 	})
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {

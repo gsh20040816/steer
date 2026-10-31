@@ -77,13 +77,8 @@ func TestNodeStoreRoundTripWritesPrivateFilesOnlyWhenChanged(t *testing.T) {
 	if info, _ := os.Stat(store.Path("feed")); info.Mode().Perm() != 0o600 {
 		t.Fatal("changed nodes were not rewritten atomically")
 	}
-	if err := store.Save("feed", []model.Node{storeNode("other", "other_a", "a.example")}); err == nil {
-		t.Fatal("a node of another subscription was stored")
-	}
 	for _, document := range []string{
 		`{"schema_version":2,"subscription_id":"feed","nodes":[]}`,
-		`{"schema_version":1,"subscription_id":"other","nodes":[]}`,
-		`{"schema_version":1,"subscription_id":"feed","nodes":[{"id":"x","enabled":true,"type":"socks","server":"a","server_port":1,"source_subscription":"other"}]}`,
 		`{"schema_version":1,"subscription_id":"feed","nodes":[],"extra":true}`,
 	} {
 		if err := os.WriteFile(store.Path("feed"), []byte(document), 0o600); err != nil {

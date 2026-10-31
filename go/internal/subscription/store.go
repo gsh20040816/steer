@@ -72,13 +72,8 @@ func (store NodeStore) Load(id string) ([]model.Node, error) {
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return nil, fmt.Errorf("decode subscription %s nodes: trailing value", id)
 	}
-	if file.SchemaVersion != NodeStoreSchemaVersion || file.SubscriptionID != id {
-		return nil, fmt.Errorf("subscription %s node store has schema %d for %q", id, file.SchemaVersion, file.SubscriptionID)
-	}
-	for _, node := range file.Nodes {
-		if node.SourceSubscription != id {
-			return nil, fmt.Errorf("subscription %s node store contains node %q of %q", id, node.ID, node.SourceSubscription)
-		}
+	if file.SchemaVersion != NodeStoreSchemaVersion {
+		return nil, fmt.Errorf("subscription %s node store has unsupported schema %d", id, file.SchemaVersion)
 	}
 	if file.Nodes == nil {
 		file.Nodes = []model.Node{}
@@ -95,11 +90,6 @@ func (store NodeStore) Save(id string, nodes []model.Node) error {
 	}
 	if !storeID(id) {
 		return fmt.Errorf("subscription ID %q cannot name a node store file", id)
-	}
-	for _, node := range nodes {
-		if node.SourceSubscription != id {
-			return fmt.Errorf("node %q does not belong to subscription %s", node.ID, id)
-		}
 	}
 	if nodes == nil {
 		nodes = []model.Node{}

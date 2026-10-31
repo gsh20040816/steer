@@ -17,11 +17,6 @@ type Report struct {
 
 var versionPattern = regexp.MustCompile(`(?m)^sing-box version ([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)`)
 
-var knownCapabilities = map[string]bool{
-	"tun": true, "auto_route": true, "auto_redirect": true, "tproxy": true,
-	"with_wireguard": true, "with_gvisor": true, "with_quic": true, "dns_quic": true, "with_utls": true,
-}
-
 func Parse(output string, required []string) Report {
 	report := Report{}
 	match := versionPattern.FindStringSubmatch(output)
@@ -34,11 +29,7 @@ func Parse(output string, required []string) Report {
 		if !strings.HasPrefix(line, "Tags:") {
 			continue
 		}
-		for _, tag := range strings.FieldsFunc(strings.TrimSpace(strings.TrimPrefix(line, "Tags:")), func(r rune) bool { return r == ',' || r == ' ' || r == '\t' }) {
-			if tag != "" {
-				report.Tags = append(report.Tags, tag)
-			}
-		}
+		report.Tags = append(report.Tags, strings.FieldsFunc(strings.TrimSpace(strings.TrimPrefix(line, "Tags:")), func(r rune) bool { return r == ',' || r == ' ' || r == '\t' })...)
 	}
 	sort.Strings(report.Tags)
 	tagSet := map[string]bool{}
@@ -46,10 +37,6 @@ func Parse(output string, required []string) Report {
 		tagSet[tag] = true
 	}
 	for _, capability := range required {
-		if !knownCapabilities[capability] {
-			report.Errors = append(report.Errors, "unknown runtime capability "+capability)
-			continue
-		}
 		requiredTag := ""
 		switch capability {
 		case "with_quic", "dns_quic":
