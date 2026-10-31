@@ -20,7 +20,6 @@ runtime_plist_payload="$script_dir/com.steer.steer.plist"
 control_plist_payload="$script_dir/com.steer.steer.control.plist"
 subscription_plist_payload="$script_dir/com.steer.steer.subscription.plist"
 config_payload="$script_dir/config.example.json"
-payload_sums="$script_dir/PAYLOAD-SHA256SUMS"
 geodata_payload="$resources_dir/geodata-seed"
 
 helper_directory="/usr/local/libexec/steer"
@@ -45,7 +44,6 @@ for payload in \
 	"$control_plist_payload" \
 	"$subscription_plist_payload" \
 	"$config_payload" \
-	"$payload_sums" \
 	"$script_dir/install-embedded-payload.sh" \
 	"$script_dir/uninstall-embedded-payload.sh" \
 	"$geodata_payload/manifest.json"; do
@@ -57,10 +55,6 @@ if /usr/bin/find "$geodata_payload" -type l -print -quit | /usr/bin/grep -q .; t
 	exit 1
 fi
 
-(
-	cd "$script_dir"
-	/usr/bin/shasum -a 256 -c PAYLOAD-SHA256SUMS
-)
 /usr/bin/codesign --verify --deep --strict "$app_bundle"
 /usr/bin/plutil -lint "$runtime_plist_payload" "$control_plist_payload" "$subscription_plist_payload" >/dev/null
 

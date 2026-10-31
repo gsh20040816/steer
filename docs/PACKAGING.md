@@ -153,15 +153,14 @@ Steer.app/
         │   ├── com.steer.steer.plist
         │   ├── com.steer.steer.control.plist
         │   ├── com.steer.steer.subscription.plist
-        │   ├── config.example.json
-        │   └── PAYLOAD-SHA256SUMS
+        │   └── config.example.json
         ├── geodata-seed/{manifest.json,rules/...}
         └── LICENSES/{Steer-GPL-3.0.txt,sing-box-GPL-3.0.txt}
 ```
 
 Swift 的测试、构建和查询输出路径都显式加上 `--build-system native`。原因是 Swift 6.4 默认的构建系统在当前工具链下，会把二进制里记录的 SDK 版本写成最低部署版本 13.0；原生构建系统能正确记录 SDK 27.0。打包脚本会检查 SteerApp 的最低部署版本是 13.0、SDK 是 27，防止这个问题回来。
 
-组装时 `Info.plist` 会写入真实版本号、build number（Actions 的 run number）、`CFBundleExecutable=SteerApp`、`CFBundleIdentifier=com.steer.steer` 和 `LSMinimumSystemVersion=13.0`。签名时先 ad-hoc 签内部程序，再生成 `PAYLOAD-SHA256SUMS`，最后签整个应用。
+组装时 `Info.plist` 会写入真实版本号、build number（Actions 的 run number）、`CFBundleExecutable=SteerApp`、`CFBundleIdentifier=com.steer.steer` 和 `LSMinimumSystemVersion=13.0`。签名时先 ad-hoc 签内部程序，再签整个应用；安装和卸载脚本运行前用 `codesign --verify --deep --strict` 校验整个应用。
 
 项目没有 Developer ID，构建信息里写的是 `Notarization: none`。DMG 和应用都不能宣称已公证；第一次打开时需要手动确认，这是预期行为。
 

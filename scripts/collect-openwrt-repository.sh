@@ -55,5 +55,4 @@ cp "$public_key" "$output_dir/steer-apk.pem"
 (
 	cd "$output_dir"
 	sha256sum ./*.apk packages.adb steer-apk.pem BUILD-METADATA.txt > SHA256SUMS
-	sha256sum -c SHA256SUMS
 )

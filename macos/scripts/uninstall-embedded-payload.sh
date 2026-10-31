@@ -30,15 +30,6 @@ esac
 script_dir="$(CDPATH= cd -- "$(/usr/bin/dirname -- "$0")" && /bin/pwd)"
 resources_dir="$(CDPATH= cd -- "$script_dir/.." && /bin/pwd)"
 app_bundle="$(CDPATH= cd -- "$resources_dir/../.." && /bin/pwd)"
-payload_sums="$script_dir/PAYLOAD-SHA256SUMS"
-[ -f "$payload_sums" ] && [ ! -L "$payload_sums" ] || {
-	printf '%s\n' 'Steer payload checksums are unavailable.' >&2
-	exit 1
-}
-(
-	cd "$script_dir"
-	/usr/bin/shasum -a 256 -c PAYLOAD-SHA256SUMS
-)
 /usr/bin/codesign --verify --deep --strict "$app_bundle"
 
 helper_directory="/usr/local/libexec/steer"

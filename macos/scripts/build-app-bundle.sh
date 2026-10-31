@@ -77,26 +77,11 @@ cat > "$app/Contents/Info.plist" <<EOF
 </plist>
 EOF
 
-# Sign every embedded executable before hashing the installer payload. Signing
-# changes Mach-O bytes, so checksums generated earlier would make every first
-# install fail before it can write any system component.
+# Sign every embedded executable before the bundle, so the bundle signature
+# that the installer verifies covers the signed binaries.
 codesign --force --sign - --timestamp=none "$installer_directory/steer-macos"
 codesign --force --sign - --timestamp=none "$installer_directory/sing-box"
 codesign --force --sign - --timestamp=none "$app/Contents/MacOS/SteerApp"
-
-(
-	cd "$installer_directory"
-	shasum -a 256 \
-		steer-macos \
-		sing-box \
-		install-embedded-payload.sh \
-		uninstall-embedded-payload.sh \
-		com.steer.steer.plist \
-		com.steer.steer.control.plist \
-		com.steer.steer.subscription.plist \
-		config.example.json \
-		> PAYLOAD-SHA256SUMS
-)
 
 codesign --force --sign - --timestamp=none "$app"
 
