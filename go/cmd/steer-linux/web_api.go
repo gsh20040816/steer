@@ -353,17 +353,18 @@ func (app webApplication) applySaved() (coreapply.Result, error) {
 			validation := model.Validation{Errors: []model.Issue{{Code: "DECODE_FAILED", ObjectType: "json", Message: err.Error()}}, Warnings: []model.Issue{}}
 			return coreapply.Result{Validation: &validation}, err
 		}
+		validation := linuxplatform.ValidateWithGeoDataDirectory(value, app.seedDirectory())
+		if !validation.OK {
+			return coreapply.Result{Validation: &validation}, linuxplatform.ValidationError{Validation: validation}
+		}
 		return app.applyValue(value)
 	})
 }
 
-// applyValue applies a complete Saved Intent (configuration plus stored
-// subscription nodes); the caller holds the operation lock.
+// applyValue applies a validated complete Saved Intent (configuration plus
+// stored subscription nodes); the caller holds the operation lock. Saves
+// validate before they write, so a value they just saved is applied as is.
 func (app webApplication) applyValue(value model.Intent) (coreapply.Result, error) {
-	validation := linuxplatform.ValidateWithGeoDataDirectory(value, app.seedDirectory())
-	if !validation.OK {
-		return coreapply.Result{Validation: &validation}, linuxplatform.ValidationError{Validation: validation}
-	}
 	runner := app.runner()
 	backend := linuxplatform.NewBackend(runner, value, linuxplatform.BackendOptions{
 		RunDirectory: app.RunDirectory, StateDirectory: app.StateDirectory, GeoDataDirectory: app.seedDirectory(),

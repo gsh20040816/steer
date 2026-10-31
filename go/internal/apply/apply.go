@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // Package apply coordinates the synchronous cross-platform Apply lifecycle.
-// Backends own platform resources and service operations.
+// Backends own platform resources and service operations. Callers validate
+// the Intent with their platform's validation before calling Run.
 package apply
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/gsh20040816/steer/go/internal/compiler"
 	"github.com/gsh20040816/steer/go/internal/generation"
@@ -42,17 +42,7 @@ type Backend interface {
 	Disable(context.Context) error
 }
 
-type ValidationError struct{ Validation model.Validation }
-
-func (value ValidationError) Error() string {
-	return fmt.Sprintf("candidate validation failed with %d error(s)", len(value.Validation.Errors))
-}
-
 func Run(ctx context.Context, value model.Intent, options compiler.Options, backend Backend) (Result, error) {
-	validation := model.Validate(value)
-	if !validation.OK {
-		return Result{Validation: &validation}, ValidationError{Validation: validation}
-	}
 	compiled := compiler.Compile(value, options)
 	result := Result{IntentDigest: compiled.IntentDigest, RuntimeDigest: compiled.RuntimeDigest}
 	if !value.Main.Enabled {

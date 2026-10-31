@@ -58,10 +58,6 @@ func (backend *Backend) CompilerOptions() compiler.Options {
 }
 
 func (backend *Backend) Prepare(ctx context.Context, value model.Intent, compiled compiler.Output) (candidate generation.Candidate, returnErr error) {
-	validation := ValidateWithGeoDataDirectory(value, backend.options.GeoDataDirectory)
-	if !validation.OK {
-		return generation.Candidate{}, ValidationError{Validation: validation}
-	}
 	versionOutput, err := backend.runner.Output(ctx, backend.options.SingBoxBinary, "version")
 	if err != nil {
 		return generation.Candidate{}, fmt.Errorf("inspect macOS sing-box: %w", err)

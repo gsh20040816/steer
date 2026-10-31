@@ -62,6 +62,7 @@ func runApply(args []string) error {
 		if err != nil {
 			return coreapply.Result{Validation: &validation}, err
 		}
+		validation = linuxplatform.Validate(value)
 		if !validation.OK {
 			return coreapply.Result{Validation: &validation}, linuxplatform.ValidationError{Validation: validation}
 		}
@@ -180,8 +181,8 @@ func runCleanup(args []string) error {
 }
 
 // loadIntent returns the complete Saved Intent (config.json plus stored
-// subscription nodes) and its validation. Subscription nodes written into
-// config.json are reported as validation errors.
+// subscription nodes). A failure to load it is also returned as validation
+// errors; subscription nodes written into config.json are reported that way.
 func loadIntent(path, stateDirectory string) (intent.Intent, intent.Validation, error) {
 	value, _, err := linuxplatform.SavedStore(path, stateDirectory).LoadSaved()
 	var validationErr linuxplatform.ValidationError
@@ -191,7 +192,7 @@ func loadIntent(path, stateDirectory string) (intent.Intent, intent.Validation, 
 	if err != nil {
 		return intent.Intent{}, intent.Validation{Errors: []intent.Issue{{Code: "DECODE_FAILED", ObjectType: "json", Message: err.Error()}}, Warnings: []intent.Issue{}}, err
 	}
-	return value, linuxplatform.Validate(value), nil
+	return value, intent.Validation{}, nil
 }
 
 // applyAndPrune runs Apply and, after a success, drops the node store files

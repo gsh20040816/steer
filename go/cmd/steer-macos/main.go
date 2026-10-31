@@ -233,6 +233,9 @@ func runPrepare(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if validation := macosplatform.ValidateWithGeoDataDirectory(value, options.geoDataDirectory); !validation.OK {
+		return macosplatform.ValidationError{Validation: validation}
+	}
 	backend := macosplatform.NewBackend(macosplatform.ExecRunner{}, value, options.value())
 	compiled := compiler.Compile(value, backend.CompilerOptions())
 	candidate, err := backend.Prepare(context.Background(), value, compiled)
@@ -257,6 +260,10 @@ func runApply(args []string, stdout io.Writer) error {
 		value, err := loadSaved(*configPath, options.stateDirectory)
 		if err != nil {
 			return coreapply.Result{}, err
+		}
+		validation := macosplatform.ValidateWithGeoDataDirectory(value, options.geoDataDirectory)
+		if !validation.OK {
+			return coreapply.Result{Validation: &validation}, macosplatform.ValidationError{Validation: validation}
 		}
 		return applyAndPrune(value, *configPath, options.value())
 	}, stdout)
@@ -346,6 +353,9 @@ func prepareColdStart(configPath string, options macosplatform.BackendOptions) e
 	value, err := loadSaved(configPath, options.StateDirectory)
 	if err != nil {
 		return err
+	}
+	if validation := macosplatform.ValidateWithGeoDataDirectory(value, options.GeoDataDirectory); !validation.OK {
+		return macosplatform.ValidationError{Validation: validation}
 	}
 	backend := macosplatform.NewBackend(macosplatform.ExecRunner{}, value, options)
 	compiled := compiler.Compile(value, backend.CompilerOptions())
