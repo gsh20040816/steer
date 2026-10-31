@@ -155,11 +155,7 @@ func sendControlRequest(socketPath string, request controlRequest) (controlRespo
 	if _, err := connection.Write(append(encoded, '\n')); err != nil {
 		return controlResponse{}, fmt.Errorf("send control request: %w", err)
 	}
-	unixConnection, ok := connection.(*net.UnixConn)
-	if !ok {
-		return controlResponse{}, errors.New("control connection is not a Unix socket")
-	}
-	if err := unixConnection.CloseWrite(); err != nil {
+	if err := connection.(*net.UnixConn).CloseWrite(); err != nil {
 		return controlResponse{}, fmt.Errorf("finish control request: %w", err)
 	}
 	responseData, err := io.ReadAll(io.LimitReader(connection, maxControlMessage+1))
@@ -324,15 +320,8 @@ func (service *controlService) handle(request controlRequest) controlResponse {
 			response.Error = err.Error()
 			return response
 		}
-		request.Document = encoded.String()
 		response.Payload = json.RawMessage(encoded.Bytes())
-		revision, err := currentControlRevision(service.configPath)
-		if err != nil {
-			response.Error = err.Error()
-			return response
-		}
-		request.ExpectedRevision = revision
-		request.Operation = "apply"
+		return service.saveConfiguration(response, value, encoded.Bytes(), true)
 	}
 	if request.Operation == "diagnostics" {
 		if request.Document != "" || request.ExpectedRevision != "" || request.ID != "" || request.Kind != "" || request.NodeID != "" || request.RouteID != "" || request.Download {
@@ -432,6 +421,13 @@ func (service *controlService) handle(request controlRequest) controlResponse {
 		response.Error = "decode canonical configuration: " + err.Error()
 		return response
 	}
+	return service.saveConfiguration(response, config, document, request.Operation == "apply")
+}
+
+// saveConfiguration validates config with the stored subscription nodes,
+// writes document, which encodes config and ends in a newline, and applies
+// it when apply is set. The caller holds the operation lock.
+func (service *controlService) saveConfiguration(response controlResponse, config model.Intent, document []byte, apply bool) controlResponse {
 	// The document never contains subscription nodes; the stored ones are
 	// attached so validation and Apply see the complete Saved Intent.
 	store := macosplatform.SavedStore(service.configPath, service.options.StateDirectory)
@@ -461,7 +457,7 @@ func (service *controlService) handle(request controlRequest) controlResponse {
 	_ = store.RemoveOrphanNodes(config)
 	response.Saved = true
 	response.Revision = controlRevision(document)
-	if request.Operation == "apply" {
+	if apply {
 		result, err := service.apply(value, service.options)
 		response.ApplyResult = &result
 		if err != nil {
@@ -485,7 +481,7 @@ func (service *controlService) handleSubscription(request controlRequest) contro
 	nodeOperation := request.Operation == "subscription-clean" || request.Operation == "subscription-node-set"
 	if request.Document != "" || request.ExpectedRevision != "" || request.Kind != "" || request.RouteID != "" || request.Download ||
 		(nodeOperation && (request.ID == "" || request.NodeID == "")) ||
-		(!nodeOperation && request.NodeID != "") || ((request.Operation == "subscription-node-set") != (request.Enabled != nil)) {
+		(!nodeOperation && request.NodeID != "") || (request.Operation == "subscription-node-set" && request.Enabled == nil) {
 		response.Error = "unexpected operation arguments"
 		return response
 	}
@@ -828,11 +824,6 @@ func writeControlConfiguration(path string, content []byte, adminGID int) error 
 	}
 	if _, err := temporary.Write(content); err != nil {
 		return closeWithError(err)
-	}
-	if len(content) == 0 || content[len(content)-1] != '\n' {
-		if _, err := temporary.Write([]byte{'\n'}); err != nil {
-			return closeWithError(err)
-		}
 	}
 	if err := temporary.Sync(); err != nil {
 		return closeWithError(err)
