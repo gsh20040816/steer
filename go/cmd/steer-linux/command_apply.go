@@ -91,6 +91,8 @@ func runService(args []string) error {
 	if err := migrateLocked(*configPath, *runDirectory, *stateDirectory); err != nil {
 		return err
 	}
+	// A cold start loads the firewall when it activates the new generation;
+	// a restart keeps the current generation and reloads its firewall.
 	if _, err := os.Stat(filepath.Join(*runDirectory, "current", "sing-box.json")); err != nil {
 		lock, lockErr := acquireApplyLock(*runDirectory)
 		if lockErr != nil {
@@ -126,8 +128,7 @@ func runService(args []string) error {
 		if disabled {
 			return nil
 		}
-	}
-	if err := linuxplatform.EnsureCurrentFirewall(context.Background(), linuxplatform.ExecRunner{}, *runDirectory, *nftBinary); err != nil {
+	} else if err := linuxplatform.EnsureCurrentFirewall(context.Background(), linuxplatform.ExecRunner{}, *runDirectory, *nftBinary); err != nil {
 		return err
 	}
 	return syscall.Exec(*singBoxPath, []string{filepath.Base(*singBoxPath), "run", "-c", filepath.Join(*runDirectory, "current", "sing-box.json")}, os.Environ())
