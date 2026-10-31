@@ -565,29 +565,32 @@ private struct SubscriptionStaleList: View {
                     .foregroundStyle(.secondary)
             }
             ForEach(status.stale) { node in
+                let routes = model.routesUsingSubscriptionNode(subscriptionID: status.id, nodeID: node.id)
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 3) {
                         HStack {
                             Text(node.name?.isEmpty == false ? node.name! : "未命名节点")
                                 .fontWeight(.medium)
-                            Label("已保留", systemImage: "pin.fill")
+                            Label(SteerUISpec.subscriptionNodeMessage("stale_marker"), systemImage: "pin.fill")
                                 .font(.caption)
                                 .foregroundStyle(.orange)
                         }
-                        Text(node.referencedBy.isEmpty
+                        Text(routes.isEmpty
                              ? "未被任何路由使用，可以安全清理"
-                             : "阻止原因：" + node.referencedBy.map(referenceLabel).joined(separator: "，"))
+                             : SteerUISpec.subscriptionNodeErrorText(
+                                 code: "NODE_STILL_REFERENCED", routes: routes, fallback: ""
+                             ))
                             .font(.caption)
-                            .foregroundStyle(node.referencedBy.isEmpty ? Color.secondary : Color.red)
+                            .foregroundStyle(routes.isEmpty ? Color.secondary : Color.red)
                     }
                     Spacer()
-                    Button("清理") {
+                    // Unsaved changes never block cleanup; routes that still use
+                    // the node do, and cleaning reports them instead of the backend.
+                    Button(SteerUISpec.subscriptionNodeActionLabel("clean")) {
                         model.cleanSubscriptionNode(subscriptionID: status.id, nodeID: node.id)
                     }
-                    .disabled(model.isBusy || model.isDirty
-                              || model.subscriptionOperationInProgress(status.id)
-                              || !node.referencedBy.isEmpty)
-                    .help(node.referencedBy.isEmpty ? "只移除这个已失效节点；不会改变当前运行配置" : "仍被路由使用，不能清理")
+                    .disabled(model.isBusy || model.subscriptionOperationInProgress(status.id))
+                    .help("只移除这个已失效节点；不会改变当前运行配置")
                 }
                 .padding(.vertical, 3)
             }
@@ -595,12 +598,6 @@ private struct SubscriptionStaleList: View {
         .padding(14)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(.quaternary))
-    }
-
-    private func referenceLabel(_ reference: SubscriptionReference) -> String {
-        let type = ["route": "路由", "rule": "规则"][reference.objectType] ?? "配置"
-        let label = reference.name?.isEmpty == false ? reference.name! : "未命名\(type)"
-        return "\(type) \(label)"
     }
 }
 
@@ -784,7 +781,7 @@ struct DraftCollectionView: View {
                 }
                 if descriptor.key == "subscriptions", let selectedItem {
                     Button("立即更新") { model.updateSubscription(selectedItem.identifier) }
-                        .disabled(model.isBusy || model.isDirty
+                        .disabled(model.isBusy
                                   || model.subscriptionOperationInProgress(selectedItem.identifier)
                                   || model.subscriptionStatus(selectedItem.identifier)?.enabled == false)
                         .help(model.subscriptionStatus(selectedItem.identifier)?.enabled == false
@@ -840,13 +837,17 @@ struct DraftCollectionView: View {
                         Image(systemName: descriptor.symbol)
                             .font(.largeTitle)
                             .foregroundStyle(.tertiary)
-                        Text(isSubscriptionNodeGroup ? "这个订阅还没有节点" : descriptor.emptyMessage)
-                            .font(.headline)
-                        Text(isSubscriptionNodeGroup
-                             ? "保存配置并在“订阅”页更新后，节点会显示在这里。"
-                             : "使用右上角的“\(descriptor.addLabel)”创建工作副本条目。")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                        if isSubscriptionNodeGroup {
+                            Text(SteerUISpec.subscriptionNodeMessage("empty_group"))
+                                .font(.headline)
+                                .multilineTextAlignment(.center)
+                        } else {
+                            Text(descriptor.emptyMessage)
+                                .font(.headline)
+                            Text("使用右上角的“\(descriptor.addLabel)”创建工作副本条目。")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
@@ -906,8 +907,8 @@ struct DraftCollectionView: View {
                 } else if descriptor.key == "rules" {
                     Label("从上到下严格匹配；Default 必须位于最后。", systemImage: "info.circle")
                         .foregroundStyle(.secondary)
-                } else if descriptor.key == "nodes" {
-                    Label("订阅节点只读；手动节点可编辑。", systemImage: "info.circle")
+                } else if isSubscriptionNodeGroup {
+                    Label(SteerUISpec.subscriptionNodeMessage("read_only_note"), systemImage: "info.circle")
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -1263,10 +1264,12 @@ struct DraftCollectionView: View {
         model.canEditDraft && model.draftSyntaxError == nil
     }
 
+    /// Unsaved changes never block cleanup; routes that still use the node
+    /// do, and the model reports them when the button is used.
     private func canCleanSubscriptionNode(_ item: DraftItem) -> Bool {
         guard item.pinnedStale, let source = item.sourceSubscription else { return false }
-        return !model.isBusy && !model.isDirty && !model.subscriptionNodeOperationInProgress(item)
-            && !model.subscriptionOperationInProgress(source) && model.nodeReferences(item.identifier).isEmpty
+        return !model.isBusy && !model.subscriptionNodeOperationInProgress(item)
+            && !model.subscriptionOperationInProgress(source)
     }
 
     @ViewBuilder
@@ -1295,9 +1298,7 @@ struct DraftCollectionView: View {
                 Label(SteerUISpec.subscriptionNodeActionLabel("clean"), systemImage: "trash")
             }
             .disabled(!canCleanSubscriptionNode(item))
-            .help(model.nodeReferences(item.identifier).isEmpty
-                  ? "只移除这个已失效节点；不会改变当前运行配置"
-                  : "仍被路由使用，不能清理")
+            .help("只移除这个已失效节点；不会改变当前运行配置")
         }
     }
 
@@ -1332,6 +1333,9 @@ struct DraftCollectionView: View {
     private func cleanSubscriptionNode(_ item: DraftItem) {
         guard let source = item.sourceSubscription else { return }
         actionError = ""
+        // Draft routes that block the cleanup become jump links; the model
+        // lists every blocking route, Saved ones included, in its message.
+        blockedReferences = model.nodeReferences(item.identifier)
         model.cleanSubscriptionNode(subscriptionID: source, nodeID: item.identifier)
     }
 
@@ -1403,7 +1407,7 @@ struct DraftCollectionView: View {
                     .labelStyle(.iconOnly)
                     .foregroundStyle(item.enabled ? Color.green : Color.secondary)
                     .help(item.subscriptionOwned
-                          ? "订阅节点只读；可在操作菜单中\(enableActionLabel(item))"
+                          ? SteerUISpec.subscriptionNodeMessage("read_only_note")
                           : "系统直连路由始终启用")
             )
         }
@@ -1430,7 +1434,7 @@ struct DraftCollectionView: View {
                 HStack(spacing: 6) {
                     Text(item.title).fontWeight(.medium)
                     if descriptor.key == "nodes", item.pinnedStale {
-                        Label("已失效", systemImage: "pin.fill")
+                        Label(SteerUISpec.subscriptionNodeMessage("stale_marker"), systemImage: "pin.fill")
                             .font(.caption)
                             .foregroundStyle(.orange)
                             .help("原订阅中已不再包含此节点；因仍在使用而暂时保留")
@@ -1507,7 +1511,7 @@ struct DraftCollectionView: View {
                     }
                 }
                 .buttonStyle(.borderless)
-                .disabled(model.isDirty || model.subscriptionOperationInProgress(item.identifier)
+                .disabled(model.subscriptionOperationInProgress(item.identifier)
                           || model.subscriptionStatus(item.identifier)?.enabled == false)
                 .help(model.subscriptionStatus(item.identifier)?.enabled == false
                       ? "已停用的订阅不能更新"
@@ -1523,7 +1527,7 @@ struct DraftCollectionView: View {
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .disabled(model.isBusy || model.subscriptionNodeOperationInProgress(item))
-                .help("订阅节点只读；可\(enableActionLabel(item))或\(SteerUISpec.subscriptionNodeActionLabel("copy_to_manual"))")
+                .help(SteerUISpec.subscriptionNodeMessage("read_only_note"))
                 if model.subscriptionNodeOperationInProgress(item) {
                     ProgressView().controlSize(.small)
                 }
@@ -1783,8 +1787,7 @@ struct DiagnosticsView: View {
         case "LOCAL_PROXY_AUTH_REQUIRED": return "该监听地址允许其他设备连接，必须设置用户名和密码"
         case "INVALID_DURATION": return "更新间隔必须是大于零的时长"
         case "DNS_PROJECTION_EMPTY": return "该规则仅含连接阶段条件，不影响 DNS 上游选择"
-        case "SUBSCRIPTION_NODE_IN_CONFIG": return "配置里不能包含订阅节点；订阅节点由订阅管理"
-        default: return issue.message
+        default: return SteerUISpec.subscriptionNodeValidationIssueText(code: issue.code) ?? issue.message
         }
     }
 

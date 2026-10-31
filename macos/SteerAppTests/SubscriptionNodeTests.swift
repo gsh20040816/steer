@@ -44,6 +44,8 @@ private actor SubscriptionNodeBackend: BackendClient {
     private var nodeReads = 0
     private var nodeSets: [String] = []
     private var cleans: [String] = []
+    private var statuses: [SubscriptionRuntimeStatus] = []
+    private var nodeReadFailure: BackendClientError?
 
     func componentStatus() async -> SystemComponentsStatus {
         SystemComponentsStatus(installed: true, embeddedInstallerAvailable: false, updateAvailable: false)
@@ -74,7 +76,7 @@ private actor SubscriptionNodeBackend: BackendClient {
     func probe(kind: String, nodeID: String?, routeID: String?, download: Bool) async throws -> ProbeLatestResult {
         throw BackendClientError.helperUnavailable
     }
-    func subscriptionStatuses() async throws -> [SubscriptionRuntimeStatus] { [] }
+    func subscriptionStatuses() async throws -> [SubscriptionRuntimeStatus] { statuses }
     func updateSubscription(id: String) async throws {
         guard let index = groups.firstIndex(where: { $0.id == id }) else { return }
         groups[index].nodes.append(storedNode("jdub-new", name: "New"))
@@ -82,12 +84,20 @@ private actor SubscriptionNodeBackend: BackendClient {
     func cleanSubscription(id: String, nodeID: String) async throws {
         cleans.append("\(id)/\(nodeID)")
         guard let index = groups.firstIndex(where: { $0.id == id }) else { return }
+        guard groups[index].nodes.contains(where: {
+            $0["id"]?.stringValue == nodeID && $0["pinned_stale"]?.boolValue == true
+        }) else {
+            throw BackendClientError.subscriptionOperationFailed(
+                code: "SUBSCRIPTION_NODE_CURRENT", detail: "SUBSCRIPTION_NODE_CURRENT: raw detail", validation: nil
+            )
+        }
         groups[index].nodes.removeAll { $0["id"]?.stringValue == nodeID }
     }
     func geoCatalog(kind: String) async throws -> [String] { [] }
 
     func subscriptionNodes() async throws -> SubscriptionNodeInventory {
         nodeReads += 1
+        if let nodeReadFailure { throw nodeReadFailure }
         return try inventory()
     }
 
@@ -132,6 +142,12 @@ private actor SubscriptionNodeBackend: BackendClient {
     }
 
     func returnApplyResult(_ result: RuntimeApplyResult?) { nextApplyResult = result }
+    func returnStatuses(_ value: [SubscriptionRuntimeStatus]) { statuses = value }
+    func dropStoredNode(subscriptionID: String, nodeID: String) {
+        guard let index = groups.firstIndex(where: { $0.id == subscriptionID }) else { return }
+        groups[index].nodes.removeAll { $0["id"]?.stringValue == nodeID }
+    }
+    func failNodeReads(_ error: BackendClientError?) { nodeReadFailure = error }
     func sentDocuments() -> [String] { documents }
     func nodeReadCount() -> Int { nodeReads }
     func nodeSetCalls() -> [String] { nodeSets }
@@ -184,14 +200,34 @@ final class SubscriptionNodeTests: XCTestCase {
         XCTAssertEqual(SteerUISpec.subscriptionNodeActionLabel("disable"), "停用")
         XCTAssertEqual(SteerUISpec.subscriptionNodeActionLabel("clean"), "清理")
         XCTAssertEqual(SteerUISpec.subscriptionNodeActionLabel("copy_to_manual"), "复制到我的节点")
+        XCTAssertEqual(SteerUISpec.subscriptionNodeMessage("read_only_note"), "订阅节点只读，复制到我的节点后可以编辑")
+        XCTAssertEqual(SteerUISpec.subscriptionNodeMessage("stale_marker"), "已失效")
+        XCTAssertEqual(
+            SteerUISpec.subscriptionNodeValidationIssueText(code: "SUBSCRIPTION_NODE_IN_CONFIG"),
+            contract.validationIssues["SUBSCRIPTION_NODE_IN_CONFIG"]?.zhCN
+        )
         XCTAssertFalse(contract.errorCodes.isEmpty)
         for code in contract.errorCodes {
-            XCTAssertNotNil(SubscriptionNodeErrorText.message(code: code), code)
+            let text = contract.errors[code]?.zhCN ?? ""
+            XCTAssertFalse(text.isEmpty, code)
+            let error = BackendClientError.subscriptionOperationFailed(
+                code: code, detail: "\(code): raw detail", validation: nil
+            )
+            if text.contains(contract.routesPlaceholder) {
+                // Without route names the backend message is shown.
+                XCTAssertEqual(error.localizedDescription, "\(code): raw detail")
+            } else {
+                XCTAssertEqual(error.localizedDescription, text, "known codes show the shared text")
+            }
         }
-        let error = BackendClientError.subscriptionOperationFailed(
-            code: "NODE_STILL_REFERENCED", detail: "NODE_STILL_REFERENCED: raw detail", validation: nil
+        XCTAssertEqual(
+            SteerUISpec.subscriptionNodeErrorText(code: "NODE_STILL_REFERENCED", routes: ["Japan", "Backup"], fallback: ""),
+            "仍有路由在使用这个节点（Japan、Backup），请先修改这些路由"
         )
-        XCTAssertFalse(error.localizedDescription.contains("raw detail"), "known codes show localized text")
+        let unknown = BackendClientError.subscriptionOperationFailed(
+            code: "SOMETHING_NEW", detail: "SOMETHING_NEW: backend wording", validation: nil
+        )
+        XCTAssertEqual(unknown.localizedDescription, "SOMETHING_NEW: backend wording", "unknown codes keep the backend message")
     }
 
     func testSubscriptionNodesAreListedReadOnlyBesideManualNodes() async throws {
@@ -345,14 +381,21 @@ final class SubscriptionNodeTests: XCTestCase {
         XCTAssertNil(model.revisionConflict)
     }
 
-    func testCleanAndUpdateRefreshSubscriptionNodesWithoutTouchingAnEditedDraft() async throws {
+    func testUnsavedChangesNeverBlockSubscriptionNodeOperations() async throws {
         let (model, backend) = try await loadedModel()
         model.setDraftValue(in: "main", key: "log_level", value: .string("debug"))
         let edited = model.rawJSON
+        XCTAssertTrue(model.isDirty)
+
+        let off = try XCTUnwrap(model.subscriptionNodeItems.first { $0.identifier == "jdub-off" })
+        model.setSubscriptionNodeEnabled(off, enabled: true)
+        try await waitUntil { !model.subscriptionNodeOperationInProgress(off) }
+        XCTAssertEqual(model.subscriptionNodeItems.first { $0.identifier == "jdub-off" }?.enabled, true)
 
         model.cleanSubscriptionNode(subscriptionID: "jdub", nodeID: "jdub-old")
         try await waitUntil { !model.subscriptionOperationInProgress("jdub") }
         XCTAssertEqual(model.subscriptionNodeItems.map(\.identifier), ["jdub-a1", "jdub-off"])
+        XCTAssertEqual(model.message, "已清理失效节点；当前运行配置未改变")
 
         model.updateSubscription("jdub")
         try await waitUntil { !model.subscriptionOperationInProgress("jdub") }
@@ -360,9 +403,75 @@ final class SubscriptionNodeTests: XCTestCase {
 
         XCTAssertEqual(model.rawJSON, edited)
         XCTAssertTrue(model.isDirty)
+        XCTAssertEqual(model.savedRevision, "revision-1")
         XCTAssertNil(model.revisionConflict, "the store changed, the Saved configuration did not")
         let cleans = await backend.cleanCalls()
         XCTAssertEqual(cleans, ["jdub/jdub-old"])
+        let sets = await backend.nodeSetCalls()
+        XCTAssertEqual(sets, ["jdub/jdub-off/true"])
+    }
+
+    func testCleanIsBlockedOnlyByRoutesInTheDraftOrTheSavedConfiguration() async throws {
+        let (model, backend) = try await loadedModel()
+
+        // A route that uses the stale node only in the draft blocks cleanup
+        // without reaching the backend, and is listed by its name.
+        let route = try XCTUnwrap(model.draftItems(for: "routes").first { $0.identifier == "route-jp" })
+        var object = try XCTUnwrap(model.draftItemObject(for: "routes", at: route.index))
+        object["node"] = .string("jdub-old")
+        XCTAssertTrue(model.replaceDraftItem(in: "routes", at: route.index, object: object))
+        XCTAssertEqual(model.routesUsingSubscriptionNode(subscriptionID: "jdub", nodeID: "jdub-old"), ["Japan"])
+        model.cleanSubscriptionNode(subscriptionID: "jdub", nodeID: "jdub-old")
+        XCTAssertFalse(model.subscriptionOperationInProgress("jdub"))
+        XCTAssertEqual(model.message, "仍有路由在使用这个节点（Japan），请先修改这些路由")
+        XCTAssertEqual(model.subscriptionNodeError, model.message)
+        var cleans = await backend.cleanCalls()
+        XCTAssertTrue(cleans.isEmpty)
+
+        // Routes of the Saved configuration come from the subscription status;
+        // a route still in the draft is named as the draft names it.
+        let (saved, savedBackend) = try await loadedModel(statuses: [try status(
+            id: "jdub", staleID: "jdub-old",
+            references: [("route-jp", "Old Japan"), ("route-gone", "Deleted"), ("route-anon", nil)]
+        )])
+        XCTAssertEqual(
+            saved.routesUsingSubscriptionNode(subscriptionID: "jdub", nodeID: "jdub-old"),
+            ["Japan", "Deleted", "route-anon"]
+        )
+        saved.cleanSubscriptionNode(subscriptionID: "jdub", nodeID: "jdub-old")
+        XCTAssertEqual(saved.message, "仍有路由在使用这个节点（Japan、Deleted、route-anon），请先修改这些路由")
+        cleans = await savedBackend.cleanCalls()
+        XCTAssertTrue(cleans.isEmpty)
+
+        // Without references the backend cleans the node.
+        let (free, freeBackend) = try await loadedModel(statuses: [try status(
+            id: "jdub", staleID: "jdub-old", references: []
+        )])
+        XCTAssertTrue(free.routesUsingSubscriptionNode(subscriptionID: "jdub", nodeID: "jdub-old").isEmpty)
+        free.cleanSubscriptionNode(subscriptionID: "jdub", nodeID: "jdub-old")
+        try await waitUntil { !free.subscriptionOperationInProgress("jdub") }
+        XCTAssertEqual(free.message, SteerUISpec.subscriptionNodeMessage("cleaned"))
+        XCTAssertTrue(free.subscriptionNodeError.isEmpty)
+        cleans = await freeBackend.cleanCalls()
+        XCTAssertEqual(cleans, ["jdub/jdub-old"])
+    }
+
+    func testCleanFailuresAndNodeListFailuresUseTheSharedTexts() async throws {
+        let (model, backend) = try await loadedModel()
+
+        // The backend refuses to clean a current node.
+        model.cleanSubscriptionNode(subscriptionID: "jdub", nodeID: "jdub-off")
+        try await waitUntil { !model.subscriptionOperationInProgress("jdub") }
+        XCTAssertEqual(model.subscriptionNodeError, "清理失败：只能清理已失效的节点")
+        XCTAssertFalse(model.subscriptionNodeError.contains("raw detail"))
+
+        await backend.failNodeReads(.subscriptionOperationFailed(
+            code: "SUBSCRIPTION_NODE_STORE_FAILED", detail: "SUBSCRIPTION_NODE_STORE_FAILED: disk", validation: nil
+        ))
+        model.refreshSubscriptionNodes()
+        try await waitUntil { !model.subscriptionNodeError.hasPrefix("清理") }
+        XCTAssertEqual(model.subscriptionNodeError, "订阅节点读取失败：订阅节点列表读写失败，请查看诊断日志")
+        XCTAssertEqual(model.subscriptionNodeItems.count, 3, "the last node list stays visible")
     }
 
     func testTimerUpdatesOfTheNodeStoreAreShownAfterARefresh() async throws {
@@ -375,7 +484,7 @@ final class SubscriptionNodeTests: XCTestCase {
         try await waitUntil { !model.isBusy }
         XCTAssertEqual(model.subscriptionNodeItems.last?.identifier, "jdub-new")
 
-        try await backend.cleanSubscription(id: "jdub", nodeID: "jdub-new")
+        await backend.dropStoredNode(subscriptionID: "jdub", nodeID: "jdub-new") // the next timer run
         model.refreshSubscriptionNodes()
         try await waitUntil { model.subscriptionNodeItems.last?.identifier == "jdub-off" }
         XCTAssertEqual(model.rawJSON, edited)
@@ -427,8 +536,27 @@ final class SubscriptionNodeTests: XCTestCase {
         XCTAssertFalse(model.message.contains("运行配置没有变化"), model.message)
     }
 
-    private func loadedModel() async throws -> (AppModel, SubscriptionNodeBackend) {
+    private func status(
+        id: String, staleID: String, references: [(id: String, name: String?)]
+    ) throws -> SubscriptionRuntimeStatus {
+        let referencedBy: [JSONValue] = references.map { reference in
+            var object: [String: JSONValue] = ["object_type": .string("route"), "id": .string(reference.id)]
+            if let name = reference.name { object["name"] = .string(name) }
+            return .object(object)
+        }
+        let value = JSONValue.object([
+            "id": .string(id), "url": .string("https://sub.example/\(id)"), "enabled": .bool(true),
+            "never_fetched": .bool(false), "node_count": .number(3), "current": .number(2),
+            "stale": .array([.object(["id": .string(staleID), "referenced_by": .array(referencedBy)])]),
+        ])
+        return try JSONDecoder().decode(SubscriptionRuntimeStatus.self, from: JSONEncoder().encode(value))
+    }
+
+    private func loadedModel(
+        statuses: [SubscriptionRuntimeStatus] = []
+    ) async throws -> (AppModel, SubscriptionNodeBackend) {
         let backend = SubscriptionNodeBackend()
+        await backend.returnStatuses(statuses)
         let model = AppModel(backend: backend)
         model.loadInitialState()
         try await waitUntil { model.hasInitializedDraft && !model.isBusy }

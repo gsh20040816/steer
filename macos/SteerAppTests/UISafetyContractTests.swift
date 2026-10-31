@@ -8,10 +8,12 @@ final class UISafetyContractTests: XCTestCase {
     private struct ReferenceDocument: Decodable {
         let schemaVersion: Int
         let intent: JSONValue
+        let subscriptionNodes: SubscriptionNodeInventory
         let cases: [ReferenceCase]
 
         enum CodingKeys: String, CodingKey {
             case schemaVersion = "schema_version"
+            case subscriptionNodes = "subscription_nodes"
             case intent, cases
         }
     }
@@ -121,7 +123,11 @@ final class UISafetyContractTests: XCTestCase {
     func testSharedReferenceGuardContractMatchesSwift() throws {
         let document = try decode(ReferenceDocument.self, "ui/collection-reference-fixtures.json")
         XCTAssertEqual(document.schemaVersion, 1)
-        let root = try XCTUnwrap(document.intent.objectValue)
+        // The draft holds manual nodes only; stored subscription nodes are
+        // attached as the backend sees the complete Intent.
+        let root = AppModel.referenceRoot(
+            try XCTUnwrap(document.intent.objectValue), inventory: document.subscriptionNodes
+        )
         for fixture in document.cases {
             let actual = SteerUISpec.inboundReferences(
                 root: root, targetCollection: fixture.targetCollection, targetID: fixture.targetID

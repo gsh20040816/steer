@@ -67,12 +67,6 @@ final class CollectionOrderingTests: XCTestCase {
     private struct NodeSortingDocument: Decodable {
         struct Node: Decodable {
             let id: String
-            let sourceSubscription: String?
-
-            enum CodingKeys: String, CodingKey {
-                case id
-                case sourceSubscription = "source_subscription"
-            }
         }
         struct SortingCase: Decodable {
             let name: String
@@ -90,13 +84,17 @@ final class CollectionOrderingTests: XCTestCase {
         let schemaVersion: Int
         let modes: [String]
         let directionModes: [String]
+        /// Manual nodes of the draft.
         let nodes: [Node]
+        /// Stored subscription nodes, as the read interface returns them.
+        let subscriptionNodes: SubscriptionNodeInventory
         let latestResults: [ProbeLatestResult]
         let cases: [SortingCase]
 
         enum CodingKeys: String, CodingKey {
             case schemaVersion = "schema_version"
             case directionModes = "direction_modes"
+            case subscriptionNodes = "subscription_nodes"
             case latestResults = "latest_results"
             case modes, nodes, cases
         }
@@ -128,7 +126,8 @@ final class CollectionOrderingTests: XCTestCase {
         let document = try fixture()
         XCTAssertEqual(document.schemaVersion, 1)
         XCTAssertEqual(Set(document.collections), Set(SteerUISpec.contract.collectionOrdering.keys))
-        XCTAssertEqual(SteerUISpec.orderingPolicy(for: "nodes")?.groupField, "source_subscription")
+        XCTAssertEqual(SteerUISpec.orderingPolicy(for: "nodes")?.movableKinds, [])
+        XCTAssertNil(SteerUISpec.orderingPolicy(for: "nodes")?.pinnedLastBooleanField)
         XCTAssertEqual(SteerUISpec.orderingPolicy(for: "routes")?.movableKinds, ["single", "wireguard"])
         XCTAssertEqual(SteerUISpec.orderingPolicy(for: "rules")?.pinnedLastBooleanField, "default")
     }
@@ -224,7 +223,11 @@ final class CollectionOrderingTests: XCTestCase {
         XCTAssertEqual(contract.defaultDirection, "best_first")
 
         for testCase in document.cases {
-            let ids = document.nodes.filter { ($0.sourceSubscription ?? "") == testCase.group }.map(\.id)
+            // The manual group is the draft; a subscription group is its stored nodes.
+            let ids = testCase.group.isEmpty
+                ? document.nodes.map(\.id)
+                : (document.subscriptionNodes.subscriptions.first { $0.id == testCase.group }?.nodes.map(\.id) ?? [])
+            XCTAssertFalse(ids.isEmpty, testCase.name)
             XCTAssertEqual(
                 NodeDisplaySorting.sortedIDs(
                     ids, mode: testCase.mode, direction: testCase.direction,

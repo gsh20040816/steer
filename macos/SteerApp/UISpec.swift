@@ -143,28 +143,22 @@ struct UICollectionReference: Decodable {
 struct UICollectionOrderingPolicy: Decodable {
     let stableIDField: String
     let moveActions: [String]
-    let groupField: String?
     let movableKinds: [String]
     let pinnedLastBooleanField: String?
-    let sourceOwnedRefresh: String?
 
     enum CodingKeys: String, CodingKey {
         case stableIDField = "stable_id_field"
         case moveActions = "move_actions"
-        case groupField = "group_field"
         case movableKinds = "movable_kinds"
         case pinnedLastBooleanField = "pinned_last_boolean_field"
-        case sourceOwnedRefresh = "source_owned_refresh"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         stableIDField = try container.decode(String.self, forKey: .stableIDField)
         moveActions = try container.decode([String].self, forKey: .moveActions)
-        groupField = try container.decodeIfPresent(String.self, forKey: .groupField)
         movableKinds = try container.decodeIfPresent([String].self, forKey: .movableKinds) ?? []
         pinnedLastBooleanField = try container.decodeIfPresent(String.self, forKey: .pinnedLastBooleanField)
-        sourceOwnedRefresh = try container.decodeIfPresent(String.self, forKey: .sourceOwnedRefresh)
     }
 }
 
@@ -266,12 +260,18 @@ struct UISubscriptionNodesContract: Decodable {
     let manualCopyField: String
     let actions: [String: UILocalizedText]
     let errorCodes: [String]
+    let errors: [String: UILocalizedText]
+    let routesPlaceholder: String
+    let validationIssues: [String: UILocalizedText]
+    let messages: [String: UILocalizedText]
 
     enum CodingKeys: String, CodingKey {
-        case actions
+        case actions, errors, messages
         case readOnly = "read_only"
         case manualCopyField = "manual_copy_field"
         case errorCodes = "error_codes"
+        case routesPlaceholder = "routes_placeholder"
+        case validationIssues = "validation_issues"
     }
 }
 
@@ -376,6 +376,31 @@ enum SteerUISpec {
         contract.subscriptionNodes.actions[action]?.zhCN ?? action
     }
 
+    /// A shared subscription node text (read_only_note, load_failed,
+    /// empty_group, stale_marker, cleaned, list_separator).
+    static func subscriptionNodeMessage(_ key: String) -> String {
+        contract.subscriptionNodes.messages[key]?.zhCN ?? ""
+    }
+
+    /// The shared text of a validation issue owned by subscription nodes.
+    static func subscriptionNodeValidationIssueText(code: String) -> String? {
+        contract.subscriptionNodes.validationIssues[code]?.zhCN
+    }
+
+    /// The shared reason for a subscription node error code. A code without a
+    /// shared text, or NODE_STILL_REFERENCED without route names, falls back
+    /// to the backend message. Route names fill the routes placeholder.
+    static func subscriptionNodeErrorText(code: String, routes: [String] = [], fallback: String) -> String {
+        let nodes = contract.subscriptionNodes
+        guard let text = nodes.errors[code]?.zhCN, !text.isEmpty else { return fallback }
+        guard text.contains(nodes.routesPlaceholder) else { return text }
+        guard !routes.isEmpty else { return fallback }
+        return text.replacingOccurrences(
+            of: nodes.routesPlaceholder,
+            with: routes.joined(separator: subscriptionNodeMessage("list_separator"))
+        )
+    }
+
     static var unchangedRuntimeNotice: String { contract.applyResult.unchangedNotice.zhCN }
 
     /// Whether an Apply result matches the shared condition for the
@@ -408,11 +433,6 @@ enum SteerUISpec {
         if let pinnedField = policy.pinnedLastBooleanField,
            object[pinnedField]?.boolValue == true { return false }
         return true
-    }
-
-    static func orderingGroup(collection: String, object: [String: JSONValue]) -> String {
-        guard let field = orderingPolicy(for: collection)?.groupField else { return "" }
-        return object[field]?.stringValue ?? ""
     }
 
     static func nodeFields(for nodeType: String, section: String? = nil) -> [UIFieldSpec] {

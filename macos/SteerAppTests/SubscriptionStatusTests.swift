@@ -7,10 +7,12 @@ import XCTest
 final class SubscriptionStatusTests: XCTestCase {
     private struct FixtureDocument: Decodable {
         let schemaVersion: Int
+        let subscriptionNodes: SubscriptionNodeInventory
         let cases: [FixtureCase]
 
         enum CodingKeys: String, CodingKey {
             case schemaVersion = "schema_version"
+            case subscriptionNodes = "subscription_nodes"
             case cases
         }
     }
@@ -50,5 +52,14 @@ final class SubscriptionStatusTests: XCTestCase {
         XCTAssertEqual(failed.lastFailure?.summary, "subscription server returned HTTP 503")
         XCTAssertEqual(failed.inventorySummary, "新增 0 · 当前 1 · 已失效 1 · 已跳过 1")
         XCTAssertEqual(failed.stale[0].referencedBy.first?.id, "proxy")
+
+        // The stored nodes of the same subscriptions, as the read interface lists them.
+        XCTAssertEqual(document.subscriptionNodes.subscriptions.map(\.id), document.cases.map(\.status.id))
+        for status in document.cases.map(\.status) {
+            let nodes = document.subscriptionNodes.subscriptions.first { $0.id == status.id }?.nodes ?? []
+            XCTAssertEqual(nodes.count, status.nodeCount, status.id)
+            XCTAssertEqual(nodes.filter(\.pinnedStale).map(\.id), status.stale.map(\.id), status.id)
+            XCTAssertTrue(nodes.allSatisfy { $0.manualCopy?["id"] == nil && $0.manualCopy?["source_subscription"] == nil })
+        }
     }
 }

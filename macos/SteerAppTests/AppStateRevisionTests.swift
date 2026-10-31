@@ -110,14 +110,14 @@ final class AppStateRevisionTests: XCTestCase {
         )
     }
 
-    func testTimerUpdateMakesStaleSaveAndApplyConflictWithoutChangingDraftSavedOrActive() async throws {
+    func testExternalSaveMakesStaleSaveAndApplyConflictWithoutChangingDraftSavedOrActive() async throws {
         for operation in [DraftConflictOperation.save, .apply] {
             let backend = RevisionBackend(document: "loaded", revision: "revision-1")
             let model = AppModel(backend: backend)
             model.loadDraft()
             try await waitUntil { !model.isBusy && model.savedRevision == "revision-1" }
 
-            await backend.replaceSaved(document: "subscription inventory", revision: "revision-2")
+            await backend.replaceSaved(document: "changed elsewhere", revision: "revision-2")
             model.rawJSON = "local draft"
             model.markDirty()
             if operation == .save {
@@ -129,7 +129,7 @@ final class AppStateRevisionTests: XCTestCase {
 
             let saved = await backend.savedSnapshot()
             let appliedCount = await backend.appliedCount()
-            XCTAssertEqual(saved.document, "subscription inventory")
+            XCTAssertEqual(saved.document, "changed elsewhere")
             XCTAssertEqual(saved.revision, "revision-2")
             XCTAssertEqual(appliedCount, 0)
             XCTAssertEqual(model.rawJSON, "local draft")
@@ -143,13 +143,16 @@ final class AppStateRevisionTests: XCTestCase {
             } else {
                 model.reloadSavedAfterRevisionConflict()
                 try await waitUntil { !model.isBusy && model.revisionConflict == nil }
-                XCTAssertEqual(model.rawJSON, "subscription inventory")
+                XCTAssertEqual(model.rawJSON, "changed elsewhere")
                 XCTAssertEqual(model.savedRevision, "revision-2")
                 XCTAssertFalse(model.isDirty)
             }
         }
     }
 
+    /// Subscription update and cleanup write only the subscription node
+    /// store. Even when the Saved configuration changed meanwhile, they never
+    /// reload the draft, adopt the new revision or present a conflict.
     func testManualSubscriptionUpdatePreservesEditsMadeWhileRunning() async throws {
         let backend = RevisionBackend(document: "loaded", revision: "revision-1")
         let model = AppModel(backend: backend)
@@ -160,30 +163,26 @@ final class AppStateRevisionTests: XCTestCase {
         await backend.waitUntilInventoryOperationStarts()
         model.rawJSON = "edit made during update"
         model.markDirty()
-        await backend.finishInventoryOperation(document: "updated inventory", revision: "revision-2")
+        await backend.finishInventoryOperation(document: "changed elsewhere", revision: "revision-2")
         try await waitUntil { !model.subscriptionOperationInProgress("public") }
 
         XCTAssertEqual(model.rawJSON, "edit made during update")
         XCTAssertEqual(model.savedRevision, "revision-1")
         XCTAssertTrue(model.isDirty)
-        XCTAssertEqual(model.revisionConflict?.currentRevision, "revision-2")
-        XCTAssertEqual(model.revisionConflict?.operation, .subscriptionInventory)
+        XCTAssertNil(model.revisionConflict)
         XCTAssertTrue(model.message.contains("当前运行配置未改变"))
         XCTAssertTrue(model.message.contains("已自动保留"))
-        let appliedBeforeOverwrite = await backend.appliedCount()
-        XCTAssertEqual(appliedBeforeOverwrite, 0)
-
-        model.overwriteAfterRevisionConflict()
-        try await waitUntil { !model.isBusy && model.revisionConflict == nil }
-        let overwritten = await backend.savedSnapshot()
         let appliedCount = await backend.appliedCount()
-        XCTAssertEqual(overwritten.document, "edit made during update")
-        XCTAssertEqual(model.savedRevision, overwritten.revision)
-        XCTAssertFalse(model.isDirty)
         XCTAssertEqual(appliedCount, 0)
+
+        // The external change is caught by the usual revision check on save.
+        model.saveDraft()
+        try await waitUntil { !model.isBusy && model.revisionConflict != nil }
+        XCTAssertEqual(model.revisionConflict?.currentRevision, "revision-2")
+        XCTAssertEqual(model.revisionConflict?.operation, .save)
     }
 
-    func testManualSubscriptionUpdateReloadsOnlyWhenDraftIsUnchanged() async throws {
+    func testManualSubscriptionUpdateNeverReloadsAnUnchangedDraft() async throws {
         let backend = RevisionBackend(document: "loaded", revision: "revision-1")
         let model = AppModel(backend: backend)
         model.loadDraft()
@@ -191,18 +190,18 @@ final class AppStateRevisionTests: XCTestCase {
 
         model.updateSubscription("public")
         await backend.waitUntilInventoryOperationStarts()
-        await backend.finishInventoryOperation(document: "updated inventory", revision: "revision-2")
+        await backend.finishInventoryOperation(document: "changed elsewhere", revision: "revision-2")
         try await waitUntil { !model.subscriptionOperationInProgress("public") }
 
-        XCTAssertEqual(model.rawJSON, "updated inventory")
-        XCTAssertEqual(model.savedRevision, "revision-2")
+        XCTAssertEqual(model.rawJSON, "loaded")
+        XCTAssertEqual(model.savedRevision, "revision-1")
         XCTAssertFalse(model.isDirty)
         XCTAssertNil(model.revisionConflict)
         let appliedCount = await backend.appliedCount()
         XCTAssertEqual(appliedCount, 0)
     }
 
-    func testSubscriptionInventoryOperationsPreserveDraftThatWasAlreadyDirty() async throws {
+    func testSubscriptionInventoryOperationsLeaveADirtyDraftAlone() async throws {
         for operation in ["update", "clean"] {
             let backend = RevisionBackend(document: "loaded", revision: "revision-1")
             let model = AppModel(backend: backend)
@@ -217,14 +216,13 @@ final class AppStateRevisionTests: XCTestCase {
                 model.cleanSubscriptionNode(subscriptionID: "public", nodeID: "stale")
             }
             await backend.waitUntilInventoryOperationStarts()
-            await backend.finishInventoryOperation(document: "updated inventory", revision: "revision-2")
+            await backend.finishInventoryOperation(document: "changed elsewhere", revision: "revision-2")
             try await waitUntil { !model.subscriptionOperationInProgress("public") }
 
             XCTAssertEqual(model.rawJSON, "dirty before operation", operation)
             XCTAssertEqual(model.savedRevision, "revision-1", operation)
             XCTAssertTrue(model.isDirty, operation)
-            XCTAssertEqual(model.revisionConflict?.currentRevision, "revision-2", operation)
-            XCTAssertEqual(model.revisionConflict?.operation, .subscriptionInventory, operation)
+            XCTAssertNil(model.revisionConflict, operation)
             let appliedCount = await backend.appliedCount()
             XCTAssertEqual(appliedCount, 0, operation)
         }
