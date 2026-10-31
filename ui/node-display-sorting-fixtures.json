@@ -3,16 +3,25 @@
   "modes": ["default", "connect", "download"],
   "direction_modes": ["best_first", "worst_first"],
   "nodes": [
-    {"id": "slow", "source_subscription": ""},
-    {"id": "stale", "source_subscription": ""},
-    {"id": "fast", "source_subscription": ""},
-    {"id": "failed", "source_subscription": ""},
-    {"id": "tie", "source_subscription": ""},
-    {"id": "missing", "source_subscription": ""},
-    {"id": "invalid", "source_subscription": ""},
-    {"id": "feed_slow", "source_subscription": "feed"},
-    {"id": "feed_fast", "source_subscription": "feed"}
+    {"id": "slow"},
+    {"id": "stale"},
+    {"id": "fast"},
+    {"id": "failed"},
+    {"id": "tie"},
+    {"id": "missing"},
+    {"id": "invalid"}
   ],
+  "subscription_nodes": {
+    "subscriptions": [
+      {
+        "id": "feed",
+        "nodes": [
+          {"id":"feed_slow","enabled":true,"name":"Feed slow","type":"socks","server":"slow.feed.example","server_port":1080,"source_subscription":"feed","source_fingerprint":"fp-slow","manual_copy":{"enabled":true,"name":"Feed slow","type":"socks","server":"slow.feed.example","server_port":1080}},
+          {"id":"feed_fast","enabled":true,"name":"Feed fast","type":"socks","server":"fast.feed.example","server_port":1080,"source_subscription":"feed","source_fingerprint":"fp-fast","manual_copy":{"enabled":true,"name":"Feed fast","type":"socks","server":"fast.feed.example","server_port":1080}}
+        ]
+      }
+    ]
+  },
   "latest_results": [
     {"scope":"nodes","object_id":"slow","kind":"connect","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":false,"metric_value":88,"summary":"88 ms","error_summary":""},
     {"scope":"nodes","object_id":"slow","kind":"download","tested_at":"2026-08-28T01:00:00Z","ok":true,"stale":false,"metric_value":32,"summary":"下载速度：32 Mbps","error_summary":""},

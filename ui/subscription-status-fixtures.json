@@ -1,5 +1,51 @@
 {
   "schema_version": 1,
+  "subscription_nodes": {
+    "subscriptions": [
+      { "id": "never", "nodes": [] },
+      {
+        "id": "success",
+        "nodes": [
+          {
+            "id": "success_a", "enabled": true, "name": "Success A", "type": "socks", "server": "a.success.example", "server_port": 1080,
+            "source_subscription": "success", "source_fingerprint": "fp-success_a",
+            "manual_copy": { "enabled": true, "name": "Success A", "type": "socks", "server": "a.success.example", "server_port": 1080 }
+          },
+          {
+            "id": "success_b", "enabled": true, "name": "Success B", "type": "socks", "server": "b.success.example", "server_port": 1080,
+            "source_subscription": "success", "source_fingerprint": "fp-success_b",
+            "manual_copy": { "enabled": true, "name": "Success B", "type": "socks", "server": "b.success.example", "server_port": 1080 }
+          }
+        ]
+      },
+      {
+        "id": "skipped",
+        "nodes": [
+          {
+            "id": "skipped_a", "enabled": true, "name": "Skipped A", "type": "socks", "server": "a.skipped.example", "server_port": 1080,
+            "source_subscription": "skipped", "source_fingerprint": "fp-skipped_a",
+            "manual_copy": { "enabled": true, "name": "Skipped A", "type": "socks", "server": "a.skipped.example", "server_port": 1080 }
+          }
+        ]
+      },
+      {
+        "id": "failed",
+        "nodes": [
+          {
+            "id": "failed_current", "enabled": true, "name": "Current", "type": "socks", "server": "current.failed.example", "server_port": 1080,
+            "source_subscription": "failed", "source_fingerprint": "fp-failed_current",
+            "manual_copy": { "enabled": true, "name": "Current", "type": "socks", "server": "current.failed.example", "server_port": 1080 }
+          },
+          {
+            "id": "failed_blocked", "enabled": true, "name": "Blocked stale", "type": "socks", "server": "blocked.failed.example", "server_port": 1080,
+            "source_subscription": "failed", "source_fingerprint": "fp-failed_blocked", "pinned_stale": true,
+            "manual_copy": { "enabled": true, "name": "Blocked stale", "type": "socks", "server": "blocked.failed.example", "server_port": 1080 }
+          }
+        ]
+      },
+      { "id": "disabled", "nodes": [] }
+    ]
+  },
   "cases": [
     {
       "name": "never-fetched",

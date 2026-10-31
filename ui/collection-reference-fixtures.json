@@ -4,8 +4,7 @@
     "nodes": [
       { "id": "node_used", "name": "Used node" },
       { "id": "node_other", "name": "Other node" },
-      { "id": "node_free", "name": "Free node" },
-      { "id": "feed_stale", "name": "Stale feed node", "source_subscription": "feed", "pinned_stale": true }
+      { "id": "node_free", "name": "Free node" }
     ],
     "routes": [
       { "id": "route_used", "name": "Used route", "kind": "single", "node": "node_used" },
@@ -27,6 +26,21 @@
     ],
     "rules": [
       { "id": "rule_a", "name": "Rule A", "route": "route_used", "dns_profile": "dns_used", "inbound": ["proxy_used"] }
+    ]
+  },
+  "subscription_nodes": {
+    "subscriptions": [
+      {
+        "id": "feed",
+        "nodes": [
+          {
+            "id": "feed_stale", "enabled": true, "name": "Stale feed node", "type": "socks", "server": "stale.example", "server_port": 1080,
+            "source_subscription": "feed", "source_fingerprint": "fp-stale", "pinned_stale": true,
+            "manual_copy": { "enabled": true, "name": "Stale feed node", "type": "socks", "server": "stale.example", "server_port": 1080 }
+          }
+        ]
+      },
+      { "id": "feed_free", "nodes": [] }
     ]
   },
   "cases": [

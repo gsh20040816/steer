@@ -11,17 +11,17 @@
   ],
   "cases": [
     {
-      "name": "nodes stay inside the visible source group",
+      "name": "manual nodes move by stable ID",
       "collection": "nodes",
       "objects": [
         { "id": "manual_a" },
-        { "id": "feed_a", "source_subscription": "feed" },
-        { "id": "manual_b" }
+        { "id": "manual_b" },
+        { "id": "manual_c" }
       ],
-      "visible_ids": ["manual_a", "manual_b"],
-      "move_id": "manual_b",
+      "visible_ids": ["manual_a", "manual_b", "manual_c"],
+      "move_id": "manual_c",
       "offset": -1,
-      "expected_ids": ["manual_b", "manual_a", "feed_a"]
+      "expected_ids": ["manual_a", "manual_c", "manual_b"]
     },
     {
       "name": "system routes remain outside the movable peer list",

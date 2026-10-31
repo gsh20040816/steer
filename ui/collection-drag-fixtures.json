@@ -3,12 +3,11 @@
   "states": ["idle", "dragging", "over", "cancelled", "committed"],
   "cases": [
     {
-      "name": "mouse commits one Node move inside the manual group",
+      "name": "mouse commits one manual Node move",
       "collection": "nodes",
       "input": "mouse",
       "objects": [
         {"id": "manual_a"},
-        {"id": "feed_a", "source_subscription": "feed"},
         {"id": "manual_b"}
       ],
       "visible_ids": ["manual_a", "manual_b"],
@@ -16,7 +15,7 @@
       "target_id": "manual_a",
       "after": false,
       "cancel": false,
-      "expected_ids": ["manual_b", "manual_a", "feed_a"],
+      "expected_ids": ["manual_b", "manual_a"],
       "expected_mutations": 1
     },
     {
@@ -108,22 +107,6 @@
       "after": false,
       "cancel": true,
       "expected_ids": ["rule_a", "rule_b", "default"],
-      "expected_mutations": 0
-    },
-    {
-      "name": "a Node drop cannot cross source groups",
-      "collection": "nodes",
-      "input": "touch",
-      "objects": [
-        {"id": "manual_a"},
-        {"id": "feed_a", "source_subscription": "feed"}
-      ],
-      "visible_ids": ["manual_a", "feed_a"],
-      "source_id": "manual_a",
-      "target_id": "feed_a",
-      "after": true,
-      "cancel": false,
-      "expected_ids": ["manual_a", "feed_a"],
       "expected_mutations": 0
     },
     {
