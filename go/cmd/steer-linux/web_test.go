@@ -351,6 +351,9 @@ func TestWebAssetsRunUnderStrictCSP(t *testing.T) {
 	if !strings.Contains(page.Body.String(), `id="side"`) || !strings.Contains(page.Body.String(), `src="/js/views/system.js"`) {
 		t.Fatalf("index has no redesigned shell or system view: %s", page.Body.String())
 	}
+	if page.Header().Get("Cache-Control") != "no-cache" {
+		t.Fatalf("index must be revalidated after upgrades: %q", page.Header().Get("Cache-Control"))
+	}
 
 	for path, contentType := range map[string]string{
 		"/app.js":             "application/javascript; charset=utf-8",
@@ -362,6 +365,9 @@ func TestWebAssetsRunUnderStrictCSP(t *testing.T) {
 		handler.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, path, nil))
 		if asset.Code != http.StatusOK || asset.Header().Get("Content-Type") != contentType || asset.Body.Len() == 0 {
 			t.Fatalf("asset %s failed: status=%d type=%q body=%d", path, asset.Code, asset.Header().Get("Content-Type"), asset.Body.Len())
+		}
+		if asset.Header().Get("Cache-Control") != "no-cache" {
+			t.Fatalf("asset %s must be revalidated after upgrades: %q", path, asset.Header().Get("Cache-Control"))
 		}
 	}
 	apiScript := httptest.NewRecorder()

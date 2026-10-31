@@ -115,6 +115,8 @@ func (app webApplication) handleIndex(writer http.ResponseWriter, request *http.
 		return
 	}
 	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Assets keep fixed URLs across upgrades, so browsers must revalidate them.
+	writer.Header().Set("Cache-Control", "no-cache")
 	content, err := webAssets.ReadFile("web/index.html")
 	if err != nil {
 		http.Error(writer, "web asset is unavailable", http.StatusInternalServerError)
@@ -146,6 +148,7 @@ func (app webApplication) handleAsset(writer http.ResponseWriter, request *http.
 	} else {
 		writer.Header().Set("Content-Type", "text/css; charset=utf-8")
 	}
+	writer.Header().Set("Cache-Control", "no-cache")
 	if request.Method == http.MethodGet {
 		_, _ = writer.Write(content)
 	}
