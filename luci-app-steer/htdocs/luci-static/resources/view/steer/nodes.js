@@ -444,14 +444,6 @@ function addGeneratedNodeField(section, field) {
 	else {
 		field.types.forEach((type) => option.depends('type', type));
 	}
-	if ((field.required_types || []).length) {
-		option.validate = function(sectionId, value) {
-			const type = uci.get('steer', sectionId, 'type');
-			if (field.required_types.includes(type) && (value == null || value === '' || (Array.isArray(value) && !value.length)))
-				return _('%s is required for %s nodes.').format(nodeFieldLabel(field), protocolLabel(type));
-			return true;
-		};
-	}
 	return option;
 }
 

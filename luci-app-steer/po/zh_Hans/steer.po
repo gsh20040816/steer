@@ -408,9 +408,6 @@ msgstr "代理节点 — %s（%d）"
 msgid "Downloading and validating every node."
 msgstr "正在下载并验证全部节点。"
 
-msgid "Invalid section ID"
-msgstr "配置项 ID 无效"
-
 msgid "Subscription update failed"
 msgstr "订阅更新失败"
 
@@ -578,9 +575,6 @@ msgstr "运行时"
 
 msgid "Subscriptions"
 msgstr "订阅"
-
-msgid "%s is required for %s nodes."
-msgstr "%s 是 %s 节点的必填项。"
 
 msgid "System default"
 msgstr "系统默认"
@@ -1038,9 +1032,6 @@ msgstr "此规则仅含连接阶段条件，因此 DNS 会继续匹配后续规�
 msgid "This field is not applicable here."
 msgstr "此字段在当前位置不适用。"
 
-msgid "This field is required by the selected encrypted DNS protocol."
-msgstr "所选加密 DNS 协议要求填写此字段。"
-
 msgid "This value is not supported."
 msgstr "不支持此值。"
 
@@ -1176,9 +1167,6 @@ msgstr "节点：%s"
 msgid "Subscription: %s"
 msgstr "订阅：%s"
 
-msgid "Use the shared 1–32 character lowercase ID policy."
-msgstr "使用共享的 1–32 字符小写 ID 规则。"
-
 msgid "not selected"
 msgstr "未选择"
 
@@ -1260,7 +1248,7 @@ msgstr "当前 %d 个 / 已失效 %d 个 / 已跳过 %d 个"
 msgid "Abnormal"
 msgstr "异常"
 
-msgid "Addresses reachable from other devices require username and password authentication."
+msgid "Addresses reachable from other devices require authentication."
 msgstr "可被其他设备访问的地址必须设置用户名和密码。"
 
 msgid "All changes saved"

@@ -28,15 +28,8 @@ function dependOnDNSField(option, field) {
 		.forEach((protocol) => option.depends('protocol', protocol.value));
 	if (uiSpec.dns_protocols.some((protocol) => protocol.required_fields.includes(field)))
 		option.rmempty = false;
-	option.validate = function(sectionId, value) {
-		const protocolOption = this.map?.lookupOption?.('protocol', sectionId)?.[0];
-		const protocol = dnsProtocol(protocolOption?.formvalue?.(sectionId) || uci.get('steer', sectionId, 'protocol'));
-		if (!protocol?.fields.includes(field)) return true;
-		if (protocol.required_fields.includes(field) && String(value || '').trim() == '')
-			return _('This field is required by the selected encrypted DNS protocol.');
-		if (field == 'path') return steer.validateInput('dns_http_path', value);
-		return true;
-	};
+	if (field == 'path')
+		option.validate = (sectionId, value) => steer.validateInput('dns_http_path', value);
 	option.write = function(sectionId, value) {
 		const protocol = dnsProtocol(uci.get('steer', sectionId, 'protocol'));
 		if (!protocol?.fields.includes(field))

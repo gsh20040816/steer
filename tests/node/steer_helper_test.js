@@ -306,6 +306,13 @@ async function main() {
 	assert.ok(helper.issueText({ code: 'SUBSCRIPTION_NODE_IN_CONFIG', object_type: 'node', object_id: 'feed_a', option: 'source_subscription' })
 		.endsWith(sharedNodes.validation_issues.SUBSCRIPTION_NODE_IN_CONFIG.label),
 		'the SUBSCRIPTION_NODE_IN_CONFIG validation issue uses the shared text');
+	for (const [ code, wording ] of [
+		[ 'INVALID_LISTEN_ADDRESS', 'not a hostname' ],
+		[ 'INCOMPLETE_LOCAL_PROXY_AUTH', 'both be set or both be empty' ],
+		[ 'LOCAL_PROXY_AUTH_REQUIRED', 'reachable from other devices' ]
+	])
+		assert.ok(helper.issueText({ code, object_type: 'local_proxy', object_id: 'entry', option: 'listen' }).includes(wording),
+			`${code} keeps the specific local proxy wording`);
 	runtime.inventoryResult = { subscriptions: [ { id: 'feed', nodes: [ { id: 'feed_a', enabled: true } ] } ] };
 	assert.deepEqual(await helper.subscriptionNodes(), runtime.inventoryResult);
 	await helper.subscriptionNodes('feed');
@@ -436,12 +443,9 @@ async function main() {
 	helper.configureNamedSection(namedSection, { enabled: '1' });
 	assert.equal(namedSection.anonymous, false, 'Steer-owned sections retain stable named IDs');
 	assert.equal(namedSection.autoIDs, true, 'regular Add generates the stable ID instead of asking the user');
-	assert.equal(namedSection.handleAdd(null, 'Rule-A'), undefined,
-		'Invalid UCI section IDs fail before saving');
-	assert.equal(runtime.notifications.at(-1).level, 'danger');
 	await namedSection.handleAdd(null, 'laptop_direct');
 	assert.deepEqual(addedSections, [ [ 'steer', 'rule', 'laptop_direct' ] ],
-		'Valid section IDs create one provisional named UCI section');
+		'Add creates one provisional named UCI section with the generated ID');
 	assert.deepEqual(modalSections, [ { sectionId: 'laptop_direct', values: {
 		enabled: '1', default: '0', dns_profile: '', route: 'direct'
 	} } ],

@@ -17,7 +17,6 @@ if (typeof String.prototype.format != 'function') {
 
 const root = path.resolve(__dirname, '../..');
 const uiSpec = JSON.parse(fs.readFileSync(path.join(root, 'ui/steer-ui-spec.json'), 'utf8'));
-const localProxyFixtures = JSON.parse(fs.readFileSync(path.join(root, 'ui/local-proxy-listen-fixtures.json'), 'utf8'));
 const subscriptionStatusFixtures = JSON.parse(fs.readFileSync(path.join(root, 'ui/subscription-status-fixtures.json'), 'utf8'));
 const probeDiagnosticsFixtures = JSON.parse(fs.readFileSync(path.join(root, 'ui/probe-diagnostics-fixtures.json'), 'utf8'));
 const stateLifecycleFixtures = JSON.parse(fs.readFileSync(path.join(root, 'ui/state-lifecycle-fixtures.json'), 'utf8'));
@@ -1675,8 +1674,8 @@ async function main() {
 	environment = await renderDns(dnsProfiles);
 	dnsProtocol = allOptions(environment).find((option) => option.name == 'protocol');
 	const tlsServerName = allOptions(environment).find((option) => option.name == 'tls_server_name');
-	assert.notEqual(tlsServerName.validate('default_port', ''), true,
-		'encrypted DNS dynamically requires a TLS server name before Save');
+	assert.equal(tlsServerName.rmempty, false,
+		'encrypted DNS shows the TLS server name as a required LuCI field');
 	environment.steer.validateInput = (format, value) => format == 'dns_http_path' && String(value).startsWith('/') ? true : 'invalid DNS path';
 	const dnsPath = allOptions(environment).find((option) => option.name == 'path');
 	assert.equal(dnsPath.validate('default_port', 'dns-query'), 'invalid DNS path');
@@ -1770,36 +1769,8 @@ async function main() {
 	const localPassword = options.find((option) => option.name == 'password');
 	assert.ok(localListen.description?.attributes?.class == 'steer-exposure-warning',
 		'LuCI must present a prominent non-loopback exposure warning');
-	assert.ok([ localListen, localUsername, localPassword ].every((option) => typeof option.validate == 'function'),
-		'LuCI must validate address scope and paired authentication before form submission');
-	for (const fixture of localProxyFixtures.cases) {
-		assert.equal(environment.localProxyView.classifyLocalProxyListen(fixture.listen), fixture.classification,
-			`LuCI classification drifted for ${fixture.name}`);
-		localListen.formValues.entry = fixture.listen;
-		localUsername.formValues.entry = '';
-		localPassword.formValues.entry = '';
-		const unauthenticated = localListen.validate('entry', fixture.listen);
-		assert.equal(unauthenticated === true, fixture.allow_unauthenticated,
-			`LuCI unauthenticated result drifted for ${fixture.name}`);
-
-		localUsername.formValues.entry = 'user';
-		localPassword.formValues.entry = 'secret';
-		const authenticated = localListen.validate('entry', fixture.listen);
-		assert.equal(authenticated === true, fixture.classification != 'invalid',
-			`LuCI authenticated result drifted for ${fixture.name}`);
-	}
-	localListen.formValues.entry = '127.0.0.1';
-	localPassword.formValues.entry = '';
-	assert.notEqual(localUsername.validate('entry', 'user'), true,
-		'LuCI must reject a username without its paired password');
-	localUsername.formValues.entry = '';
-	assert.notEqual(localPassword.validate('entry', 'secret'), true,
-		'LuCI must reject a password without its paired username');
-	localListen.formValues.entry = '0.0.0.0';
-	localUsername.formValues.entry = '';
-	localPassword.formValues.entry = '';
-	assert.ok(String(localListen.validate('entry', '0.0.0.0')).includes('reachable from other devices'),
-		'LuCI must explain the risk when blocking an exposed unauthenticated listener');
+	assert.ok([ localListen, localUsername, localPassword ].every((option) => typeof option.validate != 'function'),
+		'LuCI must leave address scope and paired authentication to the backend validation');
 	const groupedFixture = {
 		node: [ { '.name': 'cfg_manual', name: 'Manual', type: 'hysteria2' } ],
 		route: [
@@ -1848,8 +1819,8 @@ async function main() {
 	assert.ok(hysteriaPassword?.password === true && hysteriaPassword.dependencies.some((dependency) =>
 		dependency[0] == 'type' && dependency[1] == 'hysteria2'),
 		'Hysteria2 exposes its password as a generated secure field');
-	assert.notEqual(hysteriaPassword.validate('cfg_manual', ''), true,
-		'Hysteria2 password remains required in the native LuCI editor');
+	assert.equal(typeof hysteriaPassword.validate, 'undefined',
+		'required node fields are checked by the backend validation, not a LuCI copy');
 
 	const sshKey = '-----BEGIN OPENSSH PRIVATE KEY-----\nline one\nline two\n-----END OPENSSH PRIVATE KEY-----\n';
 	const sshFixture = {

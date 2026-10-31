@@ -33,7 +33,6 @@ const callNodeExport = rpc.declare({ object: 'luci.steer', method: 'node_export'
 const callSessionAccess = rpc.declare({
 	object: 'session', method: 'access', params: [ 'scope', 'object', 'function' ], expect: { access: false }
 });
-const sectionIDPattern = new RegExp(uiSpec.id_policy.pattern);
 const collectionBySectionType = {
 	node: 'nodes', route: 'routes', dns_profile: 'dns_profiles', local_proxy: 'local_proxies',
 	rule: 'rules', subscription: 'subscriptions'
@@ -82,6 +81,9 @@ const validationMessages = {
 	DISABLED_LOCAL_PROXY: _('The referenced Local Proxy is disabled.'),
 	ROUTE_DETOUR_CYCLE: _('The Route detour chain contains a cycle.'),
 	PORT_COLLISION: _('The listener conflicts with another configured listener.'),
+	INVALID_LISTEN_ADDRESS: _('Listen address must be an IP address, not a hostname.'),
+	INCOMPLETE_LOCAL_PROXY_AUTH: _('Username and password must either both be set or both be empty.'),
+	LOCAL_PROXY_AUTH_REQUIRED: _('Addresses reachable from other devices require authentication.'),
 	DEFAULT_COUNT: _('Exactly one enabled Default Rule is required.'),
 	DIRECT_ROUTE_COUNT: _('Exactly one enabled Direct Route is required.'),
 	RULE_AFTER_DEFAULT: _('An enabled Rule appears after the Default Rule.'),
@@ -600,10 +602,6 @@ return baseclass.extend({
 			return row;
 		};
 		section.handleAdd = function(ev, sectionId) {
-			if (typeof(sectionId) != 'string' || !sectionIDPattern.test(sectionId)) {
-				ui.addNotification(_('Invalid section ID'), E('p', {}, _('Use the shared 1–32 character lowercase ID policy.')), 'danger');
-				return;
-			}
 			/* Keep GridSection's native provisional-section lifecycle so Add opens
 			 * the editor modal and Cancel removes the unsaved section. Inject the
 			 * Steer defaults synchronously at the native data.add() boundary so the
