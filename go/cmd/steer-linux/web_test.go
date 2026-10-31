@@ -345,11 +345,12 @@ func TestWebAssetsRunUnderStrictCSP(t *testing.T) {
 	if page.Code != http.StatusOK || page.Header().Get("Content-Security-Policy") != "default-src 'self'; style-src 'self'; script-src 'self'" {
 		t.Fatalf("strict CSP was not returned: status=%d headers=%v", page.Code, page.Header())
 	}
-	if strings.Contains(page.Body.String(), "const token =") || !strings.Contains(page.Body.String(), `src="/app.js"`) {
+	version := "?v=" + assetVersion()
+	if strings.Contains(page.Body.String(), "const token =") || !strings.Contains(page.Body.String(), `src="/app.js`+version+`"`) {
 		t.Fatalf("index still contains inline application code: %s", page.Body.String())
 	}
-	if !strings.Contains(page.Body.String(), `id="side"`) || !strings.Contains(page.Body.String(), `src="/js/views/system.js"`) {
-		t.Fatalf("index has no redesigned shell or system view: %s", page.Body.String())
+	if !strings.Contains(page.Body.String(), `id="side"`) || !strings.Contains(page.Body.String(), `src="/js/views/system.js`+version+`"`) || !strings.Contains(page.Body.String(), `href="/style.css`+version+`"`) {
+		t.Fatalf("index has no redesigned shell, system view or versioned assets: %s", page.Body.String())
 	}
 	if page.Header().Get("Cache-Control") != "no-cache" {
 		t.Fatalf("index must be revalidated after upgrades: %q", page.Header().Get("Cache-Control"))
@@ -367,7 +368,12 @@ func TestWebAssetsRunUnderStrictCSP(t *testing.T) {
 			t.Fatalf("asset %s failed: status=%d type=%q body=%d", path, asset.Code, asset.Header().Get("Content-Type"), asset.Body.Len())
 		}
 		if asset.Header().Get("Cache-Control") != "no-cache" {
-			t.Fatalf("asset %s must be revalidated after upgrades: %q", path, asset.Header().Get("Cache-Control"))
+			t.Fatalf("unversioned asset %s must be revalidated: %q", path, asset.Header().Get("Cache-Control"))
+		}
+		versioned := httptest.NewRecorder()
+		handler.ServeHTTP(versioned, httptest.NewRequest(http.MethodGet, path+version, nil))
+		if versioned.Code != http.StatusOK || versioned.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" {
+			t.Fatalf("versioned asset %s is not cacheable: status=%d cache=%q", path, versioned.Code, versioned.Header().Get("Cache-Control"))
 		}
 	}
 	apiScript := httptest.NewRecorder()

@@ -3,19 +3,42 @@
 package main
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	linuxplatform "github.com/gsh20040816/steer/go/internal/platform/linux"
 )
 
 //go:embed web/*
 var webAssets embed.FS
+
+// assetVersion identifies the embedded console build. Asset URLs carry it, so
+// browsers can keep assets indefinitely and still fetch new ones after an
+// upgrade.
+var assetVersion = sync.OnceValue(func() string {
+	digest := sha256.New()
+	_ = fs.WalkDir(webAssets, "web", func(name string, entry fs.DirEntry, _ error) error {
+		if !entry.IsDir() {
+			content, _ := webAssets.ReadFile(name)
+			digest.Write([]byte(name))
+			digest.Write(content)
+		}
+		return nil
+	})
+	return hex.EncodeToString(digest.Sum(nil))[:12]
+})
+
+var assetReference = regexp.MustCompile(`(src|href)="(/[^"?]+\.(?:js|css))"`)
 
 type webApplication struct {
 	WebConfigPath  string
@@ -115,14 +138,13 @@ func (app webApplication) handleIndex(writer http.ResponseWriter, request *http.
 		return
 	}
 	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// Assets keep fixed URLs across upgrades, so browsers must revalidate them.
 	writer.Header().Set("Cache-Control", "no-cache")
 	content, err := webAssets.ReadFile("web/index.html")
 	if err != nil {
 		http.Error(writer, "web asset is unavailable", http.StatusInternalServerError)
 		return
 	}
-	_, _ = writer.Write(content)
+	_, _ = writer.Write(assetReference.ReplaceAll(content, []byte(`$1="$2?v=`+assetVersion()+`"`)))
 }
 
 func (app webApplication) handleAsset(writer http.ResponseWriter, request *http.Request) {
@@ -148,7 +170,11 @@ func (app webApplication) handleAsset(writer http.ResponseWriter, request *http.
 	} else {
 		writer.Header().Set("Content-Type", "text/css; charset=utf-8")
 	}
-	writer.Header().Set("Cache-Control", "no-cache")
+	if request.URL.Query().Get("v") == assetVersion() {
+		writer.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		writer.Header().Set("Cache-Control", "no-cache")
+	}
 	if request.Method == http.MethodGet {
 		_, _ = writer.Write(content)
 	}
