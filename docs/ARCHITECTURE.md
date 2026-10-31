@@ -127,7 +127,7 @@ TUN 使用默认公网路由加必要的排除。进入 TUN 的流量依次处�
 6. **健康检查**：检查服务进程、TUN、nftables 和必要的监听端口；
 7. **收尾**：删除其他运行配置。
 
-第 5 步用共享的 `generation.Unchanged` 判断：平台只提供运行文件列表（`sing-box.json` 之外，OpenWrt/Linux 是 `platform.json`、`firewall.nft`，macOS 是 `platform.json` 和去掉生成 ID、配置摘要后的 `generation.json`）和一次性的健康检查。`intent.json` 不参与比较，所以只改了节点名、没被引用的节点或订阅设置时不会重启。应用结果里的 `restarted` 说明这次有没有重启服务。macOS 的看护进程用 `sing-box.json` 的内容摘要标记 DNS 接管和 WireGuard 状态，切换到等价的运行配置后这些标记依然有效。
+第 5 步用共享的 `generation.Unchanged` 判断：平台只提供运行文件列表（`sing-box.json` 之外，OpenWrt/Linux 是 `platform.json`、`firewall.nft`，macOS 是 `platform.json`）和一次性的健康检查。`intent.json` 不参与比较，所以只改了节点名、没被引用的节点或订阅设置时不会重启。应用结果里的 `restarted` 说明这次有没有重启服务。macOS 的看护进程用 `sing-box.json` 的内容摘要标记 DNS 接管和 WireGuard 状态，切换到等价的运行配置后这些标记依然有效。
 
 第 4 步之前的失败不会改动正在运行的东西。`current` 在启动新进程之前就已更新，供 procd 读取。切换之后的失败会返回错误并保持出错时的状态；没有自动恢复、没有旧配置备份，也没有回滚接口。
 

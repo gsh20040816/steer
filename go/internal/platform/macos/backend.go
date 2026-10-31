@@ -100,19 +100,9 @@ func (backend *Backend) Prepare(ctx context.Context, value model.Intent, compile
 }
 
 // runtimeFiles are the macOS generation files besides sing-box.json that
-// change how the running service behaves. generation.json differs only in
-// its generation ID and Intent digest when the runtime is unchanged.
-var runtimeFiles = []generation.RuntimeFile{
-	{Name: "platform.json"},
-	{Name: "generation.json", Normalize: func(content []byte) ([]byte, error) {
-		var metadata GenerationMetadata
-		if err := unmarshalStrict(content, &metadata); err != nil {
-			return nil, err
-		}
-		metadata.GenerationID, metadata.IntentDigest = "", ""
-		return jsonMarshal(metadata)
-	}},
-}
+// change how the running service behaves. generation.json holds only the
+// generation's identity, which never changes how the service behaves.
+var runtimeFiles = []generation.RuntimeFile{{Name: "platform.json"}}
 
 func (backend *Backend) Activate(ctx context.Context, candidate generation.Candidate) (bool, error) {
 	if current, err := backend.paths().LoadCurrent(); err == nil {
@@ -198,9 +188,6 @@ func readGenerationMetadata(directory string) (GenerationMetadata, error) {
 	var metadata GenerationMetadata
 	if err := unmarshalStrict(content, &metadata); err != nil {
 		return GenerationMetadata{}, fmt.Errorf("decode macOS generation metadata: %w", err)
-	}
-	if metadata.SchemaVersion != RuntimeSchemaVersion || metadata.GenerationID == "" || metadata.IntentDigest == "" {
-		return GenerationMetadata{}, fmt.Errorf("invalid macOS generation metadata")
 	}
 	return metadata, nil
 }

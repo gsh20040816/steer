@@ -89,13 +89,6 @@ func (backend *Backend) checkHealthyOnce(ctx context.Context, expectedDirectory 
 	if !launchdOutputIsRunning(string(output)) {
 		return fmt.Errorf("macOS LaunchDaemon is not running")
 	}
-	current, err := backend.paths().LoadCurrent()
-	if err != nil {
-		return err
-	}
-	if filepath.Base(expectedDirectory) != current.Directory {
-		return fmt.Errorf("active macOS generation does not match the candidate")
-	}
 	if backend.options.CheckTUN != nil {
 		if err := backend.options.CheckTUN(backend.plan.Resources.TunAddresses); err != nil {
 			return err

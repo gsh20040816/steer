@@ -4,10 +4,8 @@ package macos
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
-	"github.com/gsh20040816/steer/go/internal/compiler"
 	"github.com/gsh20040816/steer/go/internal/generation"
 	model "github.com/gsh20040816/steer/go/internal/intent"
 )
@@ -31,42 +29,13 @@ type CurrentGeneration struct {
 }
 
 // Publish records the candidate after launchd has stopped the old sing-box
-// process and before the new LaunchDaemon is bootstrapped.
+// process and before the new LaunchDaemon is bootstrapped. The candidate is
+// one that Prepare created in the generations directory.
 func (paths Paths) Publish(prepared PreparedGeneration) error {
-	if prepared.Directory == "" || prepared.Metadata.GenerationID == "" {
-		return fmt.Errorf("cannot publish an incomplete macOS generation")
-	}
-	root, err := filepath.Abs(paths.GenerationsDirectory)
-	if err != nil {
-		return fmt.Errorf("resolve macOS generations directory: %w", err)
-	}
-	candidateDirectory, err := filepath.Abs(prepared.Directory)
-	if err != nil {
-		return fmt.Errorf("resolve macOS candidate directory: %w", err)
-	}
-	relative, err := filepath.Rel(root, candidateDirectory)
-	if err != nil || relative == "." || relative == ".." || len(relative) < 3 || relative[:3] == ".."+string(filepath.Separator) {
-		return fmt.Errorf("macOS candidate is outside the generations directory")
-	}
-	info, err := os.Stat(candidateDirectory)
-	if err != nil || !info.IsDir() {
-		return fmt.Errorf("macOS candidate directory is unavailable: %w", err)
-	}
-	metadataContent, err := readJSON(filepath.Join(candidateDirectory, "generation.json"))
-	if err != nil {
-		return err
-	}
-	var metadata GenerationMetadata
-	if err := unmarshalStrict(metadataContent, &metadata); err != nil {
-		return fmt.Errorf("decode macOS candidate metadata: %w", err)
-	}
-	if metadata.SchemaVersion != RuntimeSchemaVersion || metadata.GenerationID != prepared.Metadata.GenerationID || metadata.IntentDigest != prepared.Metadata.IntentDigest {
-		return fmt.Errorf("macOS candidate metadata does not match the prepared generation")
-	}
 	current := CurrentGeneration{
 		SchemaVersion: RuntimeSchemaVersion,
 		GenerationID:  prepared.Metadata.GenerationID,
-		Directory:     filepath.Base(candidateDirectory),
+		Directory:     filepath.Base(prepared.Directory),
 		IntentDigest:  prepared.Metadata.IntentDigest,
 	}
 	encoded, err := marshalJSON(current)
@@ -89,7 +58,7 @@ func (paths Paths) LoadCurrent() (CurrentGeneration, error) {
 	if err := unmarshalStrict(content, &current); err != nil {
 		return CurrentGeneration{}, fmt.Errorf("decode macOS current generation: %w", err)
 	}
-	if current.SchemaVersion != RuntimeSchemaVersion || current.GenerationID == "" || current.IntentDigest == "" ||
+	if current.SchemaVersion != RuntimeSchemaVersion ||
 		current.Directory == "" || current.Directory == "." || filepath.Base(current.Directory) != current.Directory {
 		return CurrentGeneration{}, fmt.Errorf("invalid macOS current generation contract")
 	}
@@ -104,23 +73,12 @@ func (paths Paths) LoadCurrentIntent() (CurrentGeneration, model.Intent, error) 
 	if err != nil {
 		return CurrentGeneration{}, model.Intent{}, err
 	}
-	directory := filepath.Join(paths.GenerationsDirectory, current.Directory)
-	metadata, err := readGenerationMetadata(directory)
-	if err != nil {
-		return CurrentGeneration{}, model.Intent{}, err
-	}
-	if metadata.GenerationID != current.GenerationID || metadata.IntentDigest != current.IntentDigest {
-		return CurrentGeneration{}, model.Intent{}, fmt.Errorf("current macOS generation metadata does not match current.json")
-	}
-	value, err := generation.ReadIntent(directory)
+	value, err := generation.ReadIntent(filepath.Join(paths.GenerationsDirectory, current.Directory))
 	if err != nil {
 		return CurrentGeneration{}, model.Intent{}, err
 	}
 	if !value.Main.Enabled {
 		return CurrentGeneration{}, model.Intent{}, fmt.Errorf("current macOS generation is disabled")
-	}
-	if digest := compiler.IntentDigest(value); digest != current.IntentDigest {
-		return CurrentGeneration{}, model.Intent{}, fmt.Errorf("current macOS intent digest does not match current.json")
 	}
 	return current, value, nil
 }

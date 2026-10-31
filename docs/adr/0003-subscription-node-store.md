@@ -16,7 +16,7 @@
 
 `apply.Backend.Activate` 返回是否重启了服务。平台在启用前比较候选配置和当前运行配置：
 
-- 当前运行配置存在且服务健康（平台对当前运行配置做一次现有的单次健康检查：OpenWrt 的 procd sing-box 实例在运行、TUN、nftables 和 DNS 监听就绪；Linux 的 systemd 服务处于 active、TUN、nftables 和监听就绪；macOS 的 LaunchDaemon 在运行、`current.json` 和元数据有效、utun 和 DNS 接管就绪），并且候选配置和当前配置里会影响运行的文件逐字节相同（`sing-box.json`，以及平台自己的运行文件：OpenWrt/Linux 的 `platform.json`、`firewall.nft`，macOS 的 `platform.json` 和 `generation.json` 里除生成 ID 和配置摘要以外的部分），这时只把 `current` 原子地切换到候选配置，不停止、不启动服务，也不重新加载 nftables。
+- 当前运行配置存在且服务健康（平台对当前运行配置做一次现有的单次健康检查：OpenWrt 的 procd sing-box 实例在运行、TUN、nftables 和 DNS 监听就绪；Linux 的 systemd 服务处于 active、TUN、nftables 和监听就绪；macOS 的 LaunchDaemon 在运行、utun 和 DNS 接管就绪），并且候选配置和当前配置里会影响运行的文件逐字节相同（`sing-box.json`，以及平台自己的运行文件：OpenWrt/Linux 的 `platform.json`、`firewall.nft`，macOS 的 `platform.json`），这时只把 `current` 原子地切换到候选配置，不停止、不启动服务，也不重新加载 nftables。
 - 其他情况照旧：停服务、设置平台资源、切换 `current`、启动。
 
 切换后照常执行健康检查和收尾。应用结果新增 `restarted` 字段（布尔值，总是输出），说明这次应用是否重启了服务；macOS control 的 `apply`/`set-enabled` 响应也带上完整的 `apply_result`。macOS 的看护进程原来用运行配置的路径标记 DNS 接管（`dns-ready.json`）和 WireGuard 状态，改为记录 `sing-box.json` 的内容摘要，这样切换到等价的运行配置、旧目录被清理后，这些标记仍然对应正在运行的 sing-box。`intent.json` 不参与比较，所以只改了配置里不影响运行的部分（例如节点名、未被引用的节点、订阅元数据）时，应用会更新当前配置的记录，但不重启。

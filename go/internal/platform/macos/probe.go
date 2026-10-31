@@ -101,9 +101,6 @@ func SpeedTestRoute(ctx context.Context, configPath, stateDirectory, singBoxPath
 		return TestReport{}, fmt.Errorf("enabled single-node route %q was not found", routeID)
 	}
 	outbounds := compiler.CompileRouteChainOutbounds(value, route.ID)
-	if len(outbounds) == 0 {
-		return TestReport{}, fmt.Errorf("compiled route test has no route-chain outbounds")
-	}
 	target, kind := value.Main.ProbeProxyURL, "connect"
 	if download {
 		target, kind = value.Main.SpeedtestProxyURL, "download"
