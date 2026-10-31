@@ -488,6 +488,129 @@ func TestCompileRoutePrivateOutboundsAndDetour(t *testing.T) {
 	}
 }
 
+// domainStrategyIntent has the global bootstrap strategy prefer_ipv6, a
+// domain node pinned to IPv4 (osa), a domain node that follows bootstrap (lax)
+// and an IP node whose strategy has nothing to resolve.
+func domainStrategyIntent() model.Intent {
+	intent := representativeIntent()
+	intent.Bootstrap.Strategy = "prefer_ipv6"
+	intent.Nodes = []model.Node{
+		{ID: "osa", Enabled: true, Type: "socks", Server: "osa.example", ServerPort: 1080, DomainStrategy: "prefer_ipv4"},
+		{ID: "lax", Enabled: true, Type: "socks", Server: "lax.example", ServerPort: 1080},
+		{ID: "literal", Enabled: true, Type: "socks", Server: "2001:db8::10", ServerPort: 1080, DomainStrategy: "ipv4_only"},
+	}
+	intent.Routes = []model.Route{
+		{ID: "direct", Enabled: true, Kind: "direct"},
+		{ID: "proxy", Enabled: true, Kind: "single", Node: "osa"},
+		{ID: "lax_route", Enabled: true, Kind: "single", Node: "lax"},
+		{ID: "literal_route", Enabled: true, Kind: "single", Node: "literal"},
+		{ID: "osa_via_lax", Enabled: true, Kind: "single", Node: "osa", Detour: "lax_route"},
+		{ID: "lax_via_osa", Enabled: true, Kind: "single", Node: "lax", Detour: "proxy"},
+		{ID: "block", Enabled: true, Kind: "block"},
+	}
+	return intent
+}
+
+func compiledOutbounds(outbounds []any) map[string]map[string]any {
+	result := map[string]map[string]any{}
+	for _, raw := range outbounds {
+		outbound := raw.(map[string]any)
+		result[outbound["tag"].(string)] = outbound
+	}
+	return result
+}
+
+func TestCompileNodeDomainStrategyPinsOnlyDomainServers(t *testing.T) {
+	bundle := Compile(domainStrategyIntent(), testOptions())
+	outbounds := compiledOutbounds(bundle.SingBox["outbounds"].([]any))
+	want := map[string]any{"server": BootstrapDNSServerTag, "strategy": "prefer_ipv4"}
+	for _, tag := range []string{"steer-route-proxy", "steer-route-osa_via_lax"} {
+		if got := outbounds[tag]["domain_resolver"]; !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s domain resolver = %#v, want %#v", tag, got, want)
+		}
+	}
+	for _, tag := range []string{"steer-route-lax_route", "steer-route-literal_route", "steer-route-lax_via_osa"} {
+		if resolver, exists := outbounds[tag]["domain_resolver"]; exists {
+			t.Fatalf("%s must follow route.default_domain_resolver, got %#v", tag, resolver)
+		}
+	}
+	if outbounds["steer-route-osa_via_lax"]["detour"] != "steer-route-lax_route" || outbounds["steer-route-lax_via_osa"]["detour"] != "steer-route-proxy" {
+		t.Fatalf("domain strategy changed the detour chain: %#v", outbounds)
+	}
+	defaultResolver := bundle.SingBox["route"].(map[string]any)["default_domain_resolver"].(map[string]any)
+	if defaultResolver["server"] != BootstrapDNSServerTag || defaultResolver["strategy"] != "prefer_ipv6" {
+		t.Fatalf("node strategy leaked into the global domain resolver: %#v", defaultResolver)
+	}
+	assertDomainResolversAreDefined(t, bundle.SingBox)
+}
+
+func TestCompileNodeDomainStrategyDoesNotChangeOtherOutputs(t *testing.T) {
+	base := domainStrategyIntent()
+	base.Nodes[0].DomainStrategy = ""
+	base.Nodes[2].DomainStrategy = ""
+	unset := Compile(base, testOptions())
+	if strings.Contains(string(mustJSON(unset.SingBox["outbounds"])), "domain_resolver") {
+		t.Fatalf("nodes without a domain strategy gained a domain resolver: %s", mustJSON(unset.SingBox["outbounds"]))
+	}
+
+	// A strategy on an IP literal server has nothing to resolve.
+	literal := base
+	literal.Nodes = append([]model.Node(nil), base.Nodes...)
+	literal.Nodes[2].DomainStrategy = "ipv4_only"
+	compiled := Compile(literal, testOptions())
+	if !reflect.DeepEqual(compiled.SingBox, unset.SingBox) || compiled.RuntimeDigest != unset.RuntimeDigest {
+		t.Fatal("a domain strategy on an IP literal server changed the runtime configuration")
+	}
+
+	pinned := base
+	pinned.Nodes = append([]model.Node(nil), base.Nodes...)
+	pinned.Nodes[0].DomainStrategy = "prefer_ipv4"
+	if Compile(pinned, testOptions()).RuntimeDigest == unset.RuntimeDigest {
+		t.Fatal("a domain strategy on a domain server must change the runtime configuration")
+	}
+}
+
+func TestCompileRouteChainAndProbeOutboundsKeepNodeDomainStrategy(t *testing.T) {
+	intent := domainStrategyIntent()
+	want := map[string]any{"server": BootstrapDNSServerTag, "strategy": "prefer_ipv4"}
+	chain := compiledOutbounds(CompileRouteChainOutbounds(intent, "lax_via_osa"))
+	if len(chain) != 2 || !reflect.DeepEqual(chain["steer-route-proxy"]["domain_resolver"], want) {
+		t.Fatalf("route chain lost the detour node's domain strategy: %#v", chain)
+	}
+	if _, exists := chain["steer-route-lax_via_osa"]["domain_resolver"]; exists {
+		t.Fatalf("route chain pinned a node that follows bootstrap: %#v", chain)
+	}
+	chain = compiledOutbounds(CompileRouteChainOutbounds(intent, "osa_via_lax"))
+	if !reflect.DeepEqual(chain["steer-route-osa_via_lax"]["domain_resolver"], want) || chain["steer-route-osa_via_lax"]["detour"] != "steer-route-lax_route" {
+		t.Fatalf("route chain lost the exit node's domain strategy: %#v", chain)
+	}
+	node := CompileNodeOutbound(intent.Nodes[0])
+	if node["tag"] != "steer-node-osa" || !reflect.DeepEqual(node["domain_resolver"], want) {
+		t.Fatalf("node probe outbound lost its domain strategy: %#v", node)
+	}
+	for _, other := range intent.Nodes[1:] {
+		if resolver, exists := CompileNodeOutbound(other)["domain_resolver"]; exists {
+			t.Fatalf("node probe outbound %s gained a domain resolver: %#v", other.ID, resolver)
+		}
+	}
+}
+
+// assertDomainResolversAreDefined checks that every domain_resolver in a
+// sing-box configuration names one of its DNS servers.
+func assertDomainResolversAreDefined(t *testing.T, config map[string]any) {
+	t.Helper()
+	servers := map[string]bool{}
+	for _, raw := range config["dns"].(map[string]any)["servers"].([]any) {
+		servers[raw.(map[string]any)["tag"].(string)] = true
+	}
+	for _, raw := range config["outbounds"].([]any) {
+		outbound := raw.(map[string]any)
+		if resolver, exists := outbound["domain_resolver"]; exists && !servers[resolver.(map[string]any)["server"].(string)] {
+			t.Fatalf("%s resolves through an undefined DNS server: %#v", outbound["tag"], resolver)
+		}
+	}
+}
+
 func TestCompileSingBoxProxyNodeFamilies(t *testing.T) {
 	base := representativeIntent()
 	base.Nodes = []model.Node{

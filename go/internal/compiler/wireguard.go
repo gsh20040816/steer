@@ -46,7 +46,7 @@ func compileWireGuard(intent model.Intent) (endpoints, access []any) {
 		if strategy == "" {
 			strategy = intent.Bootstrap.Strategy
 		}
-		ep := map[string]any{"type": "wireguard", "tag": wireGuardTag(t.ID), "system": false, "address": t.Address, "private_key": t.PrivateKey, "peers": peers, "domain_resolver": map[string]any{"server": "steer-dns-bootstrap", "strategy": strategy}}
+		ep := map[string]any{"type": "wireguard", "tag": wireGuardTag(t.ID), "system": false, "address": t.Address, "private_key": t.PrivateKey, "peers": peers, "domain_resolver": map[string]any{"server": BootstrapDNSServerTag, "strategy": strategy}}
 		if t.ListenPort > 0 {
 			ep["listen_port"] = t.ListenPort
 		}

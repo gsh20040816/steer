@@ -161,3 +161,44 @@ func TestTemporaryProbeConfigPreservesBootstrapAndMarksDialSockets(t *testing.T)
 		}
 	}
 }
+
+func TestTemporaryProbeResolvesNodeDomainStrategyThroughBootstrap(t *testing.T) {
+	bootstrap := model.Bootstrap{Protocol: "udp", Server: "1.1.1.1", ServerPort: 53, Strategy: "prefer_ipv6"}
+	value := model.Intent{
+		Nodes: []model.Node{
+			{ID: "front", Enabled: true, Type: "socks", Server: "front.example", ServerPort: 1080},
+			{ID: "osa", Enabled: true, Type: "socks", Server: "osa.example", ServerPort: 1080, DomainStrategy: "prefer_ipv4"},
+		},
+		Routes: []model.Route{
+			{ID: "front", Enabled: true, Kind: "single", Node: "front"},
+			{ID: "osa", Enabled: true, Kind: "single", Node: "osa", Detour: "front"},
+		},
+	}
+	for name, outbounds := range map[string][]any{
+		"node":  {compiler.CompileNodeOutbound(value.Nodes[1])},
+		"route": compiler.CompileRouteChainOutbounds(value, "osa"),
+	} {
+		config, err := temporaryProbeConfig(bootstrap, outbounds, "probe", 12345)
+		if err != nil {
+			t.Fatal(err)
+		}
+		servers := map[string]bool{}
+		for _, raw := range config["dns"].(map[string]any)["servers"].([]any) {
+			servers[raw.(map[string]any)["tag"].(string)] = true
+		}
+		pinned := 0
+		for _, raw := range config["outbounds"].([]any) {
+			resolver, exists := raw.(map[string]any)["domain_resolver"].(map[string]any)
+			if !exists {
+				continue
+			}
+			if !servers[resolver["server"].(string)] || resolver["strategy"] != "prefer_ipv4" {
+				t.Fatalf("%s probe outbound resolves through an undefined server or strategy: %#v", name, resolver)
+			}
+			pinned++
+		}
+		if pinned != 1 {
+			t.Fatalf("%s probe must pin exactly the osa node, got %d: %#v", name, pinned, config["outbounds"])
+		}
+	}
+}

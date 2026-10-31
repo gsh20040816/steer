@@ -174,12 +174,12 @@ func temporaryProbeConfig(bootstrap model.Bootstrap, outbounds []any, finalTag s
 	return map[string]any{
 		"log": map[string]any{"level": "error"},
 		"dns": map[string]any{"servers": []any{map[string]any{
-			"type": bootstrap.Protocol, "tag": "steer-dns-bootstrap", "server": bootstrap.Server, "server_port": bootstrap.ServerPort,
+			"type": bootstrap.Protocol, "tag": compiler.BootstrapDNSServerTag, "server": bootstrap.Server, "server_port": bootstrap.ServerPort,
 		}}},
 		"inbounds":  []any{map[string]any{"type": "mixed", "tag": "test-in", "listen": "127.0.0.1", "listen_port": port}},
 		"outbounds": outbounds,
 		"route": map[string]any{"final": finalTag, "auto_detect_interface": true,
-			"default_domain_resolver": map[string]any{"server": "steer-dns-bootstrap", "strategy": bootstrap.Strategy}},
+			"default_domain_resolver": map[string]any{"server": compiler.BootstrapDNSServerTag, "strategy": bootstrap.Strategy}},
 	}
 }
 

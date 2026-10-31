@@ -16,6 +16,12 @@ import (
 	model "github.com/gsh20040816/steer/go/internal/intent"
 )
 
+// BootstrapDNSServerTag is the DNS server compiled from bootstrap. Node and
+// DNS server domains are resolved through it, so every sing-box configuration
+// that carries compiled outbounds, including temporary probe configurations,
+// must define a DNS server with this tag.
+const BootstrapDNSServerTag = "steer-dns-bootstrap"
+
 type Output struct {
 	IntentDigest         string         `json:"intent_digest"`
 	RuntimeDigest        string         `json:"runtime_digest"`
@@ -253,7 +259,7 @@ func compileSingBox(intent model.Intent, target Target, dnsPaths []DNSPath, geoR
 	}
 
 	dnsServers := []any{map[string]any{
-		"type": intent.Bootstrap.Protocol, "tag": "steer-dns-bootstrap", "server": intent.Bootstrap.Server,
+		"type": intent.Bootstrap.Protocol, "tag": BootstrapDNSServerTag, "server": intent.Bootstrap.Server,
 		"server_port": intent.Bootstrap.ServerPort,
 	}}
 	for _, path := range dnsPaths {
@@ -316,7 +322,7 @@ func compileSingBox(intent model.Intent, target Target, dnsPaths []DNSPath, geoR
 		if t.Enabled {
 			for _, p := range t.Peers {
 				if p.Server != "" {
-					dnsRules = append(dnsRules, map[string]any{"domain": []string{p.Server}, "action": "route", "server": "steer-dns-bootstrap", "disable_cache": true})
+					dnsRules = append(dnsRules, map[string]any{"domain": []string{p.Server}, "action": "route", "server": BootstrapDNSServerTag, "disable_cache": true})
 				}
 			}
 		}
@@ -352,7 +358,7 @@ func compileSingBox(intent model.Intent, target Target, dnsPaths []DNSPath, geoR
 		}
 	}
 	routeRules = append(routeRules, privateFallback...)
-	finalDNS := "steer-dns-bootstrap"
+	finalDNS := BootstrapDNSServerTag
 	if routes[defaultRule.Route].Kind == "block" {
 		dnsRules = append(dnsRules, map[string]any{"action": "reject"})
 	} else {
@@ -390,7 +396,7 @@ func compileSingBox(intent model.Intent, target Target, dnsPaths []DNSPath, geoR
 	}
 	routeOptions := map[string]any{
 		"rules": routeRules, "rule_set": ruleSets, "final": finalRoute, "auto_detect_interface": true,
-		"default_domain_resolver": map[string]any{"server": "steer-dns-bootstrap", "strategy": intent.Bootstrap.Strategy},
+		"default_domain_resolver": map[string]any{"server": BootstrapDNSServerTag, "strategy": intent.Bootstrap.Strategy},
 	}
 	result := map[string]any{
 		"log":       map[string]any{"level": intent.Main.LogLevel, "timestamp": true},
@@ -430,6 +436,9 @@ func compileNode(node model.Node) map[string]any {
 			result["server_ports"] = node.ServerPorts
 		} else {
 			result["server_port"] = node.ServerPort
+		}
+		if resolver := nodeDomainResolver(node); resolver != nil {
+			result["domain_resolver"] = resolver
 		}
 	}
 	switch node.Type {
@@ -554,6 +563,21 @@ func compileNode(node model.Node) map[string]any {
 	return clean(result)
 }
 
+// nodeDomainResolver pins the address strategy used to resolve one node's
+// server domain. Without a node strategy, and for IP literal servers, the
+// outbound keeps using route.default_domain_resolver (bootstrap.strategy).
+// An explicit resolver also makes sing-box resolve the domain locally when
+// the route has a detour, instead of handing the name to the detour outbound.
+func nodeDomainResolver(node model.Node) map[string]any {
+	if node.DomainStrategy == "" {
+		return nil
+	}
+	if _, err := netip.ParseAddr(node.Server); err == nil {
+		return nil
+	}
+	return map[string]any{"server": BootstrapDNSServerTag, "strategy": node.DomainStrategy}
+}
+
 // CompileNodeOutbound exposes the same typed lowering used by the final config
 // for temporary node diagnostics such as speed tests.
 func CompileNodeOutbound(node model.Node) map[string]any { return compileNode(node) }
@@ -646,7 +670,7 @@ func compileDNSPath(profile model.DNSProfile, route model.Route, path DNSPath, d
 		result["detour"] = routeTag(path.Route)
 	}
 	if _, err := netip.ParseAddr(profile.Server); err != nil {
-		result["domain_resolver"] = map[string]any{"server": "steer-dns-bootstrap", "strategy": domainResolverStrategy}
+		result["domain_resolver"] = map[string]any{"server": BootstrapDNSServerTag, "strategy": domainResolverStrategy}
 	}
 	if profile.Protocol == "tls" || profile.Protocol == "https" || profile.Protocol == "quic" || profile.Protocol == "h3" {
 		result["tls"] = map[string]any{"enabled": true, "server_name": profile.TLSServerName, "insecure": profile.Insecure}
