@@ -89,7 +89,7 @@ macOS 用 launchd、utun 和管理员授权。SwiftUI 界面和 LuCI、Linux 网
 
 `tests/integration/run-openwrt-vm.sh` 只能在一次性的 OpenWrt 25.12.5 x86/64 虚拟机上运行，它会覆盖 UCI、运行目录、nftables 和 procd。覆盖的内容包括：公开 RPC、通过真实 ucode RPC 导入单条/多行/Base64 节点、正常应用/重载/重启、DNS 转发规则、sing-box 1.14 原生 MAC 规则、停用后重新启用，以及非法配置被直接拒绝。
 
-`tests/integration/run-linux-system.sh` 只能在设置了 `STEER_LINUX_SYSTEM_TEST=1` 的一次性特权 systemd 容器里运行。每次提交的 CI 都会用固定的 Debian 镜像、校验过 SHA-256 的 sing-box 1.14.1 musl 版和当前的 SRS 数据，在独立的网络命名空间里测试本机和转发流量的 IPv4/IPv6 TCP、UDP、DNS，监听端口的访问限制，停用/启用，服务重启和 nftables 重启后的恢复。这些 Linux 专属的检查只放在平台集成测试里，不放进共享核心的测试。
+`tests/integration/run-linux-system.sh` 只能在设置了 `STEER_LINUX_SYSTEM_TEST=1` 的一次性特权 systemd 容器里运行。每次提交的 CI 都会用固定的 Debian 镜像、校验过 SHA-256 的 sing-box 1.14.4 musl 版和当前的 SRS 数据，在独立的网络命名空间里测试本机和转发流量的 IPv4/IPv6 TCP、UDP、DNS，监听端口的访问限制，停用/启用，服务重启和 nftables 重启后的恢复。这些 Linux 专属的检查只放在平台集成测试里，不放进共享核心的测试。
 
 发布条件：
 
