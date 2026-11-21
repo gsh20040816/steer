@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Steer OpenWrt 软件源</title>
+  <style>
+    :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+    body { max-width: 52rem; margin: 4rem auto; padding: 0 1.25rem; line-height: 1.6; }
+    code, pre { font-family: ui-monospace, monospace; }
+    pre { overflow-x: auto; padding: 1rem; border: 1px solid #8886; border-radius: .5rem; }
+  </style>
+</head>
+<body>
+  <h1>Steer OpenWrt 软件源</h1>
+  <p>适用于 OpenWrt 25.12.5 x86_64。索引由项目 CI 使用固定 P-256 密钥签名，包含 Steer、LuCI、简体中文翻译，以及校验官方摘要后由同一密钥重签的 SagerNet sing-box APK。</p>
+  <pre><code>wget -O /etc/apk/keys/steer-apk.pem \
+  https://gsh20040816.github.io/steer/openwrt/25.12.5/x86_64/steer-apk.pem
+echo 'https://gsh20040816.github.io/steer/openwrt/25.12.5/x86_64/packages.adb' \
+  &gt;&gt; /etc/apk/repositories.d/customfeeds.list
+apk update
+apk add steer luci-app-steer luci-i18n-steer-zh-cn</code></pre>
+  <p><a href="openwrt/25.12.5/x86_64/packages.adb">packages.adb</a> · <a href="openwrt/25.12.5/x86_64/steer-apk.pem">签名公钥</a> · <a href="geodata/latest/manifest.json">当前 Geo manifest</a> · <a href="https://github.com/gsh20040816/steer">源代码</a></p>
+</body>
+</html>
