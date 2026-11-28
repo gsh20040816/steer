@@ -1,0 +1,7 @@
+OpenWrt release: 25.12.5
+OpenWrt target: x86/64
+Source revision: e218f425aa4d76420c22de062161979041e3641d
+Geo data version: 202611272204
+Geo manifest SHA256: 52fa21d120be3b2f52b0677a2b52e57bf5e77849458ed944caa80062cedb8568
+sing-box mirrored SHA256: d842b06b5e147a18a714a67c9739791e291d303feeff959452cd70586be8c910
+Repository key SHA256: 26ea598c23daedaf7580f6fb6433a511987dbaae8bb80b4f34c12b45475ee2fc
