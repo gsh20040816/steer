@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	model "github.com/gsh20040816/steer/go/internal/intent"
@@ -166,5 +167,133 @@ func TestDefaultDNSVerificationRejectsOnlyScopedMatch(t *testing.T) {
 		if (backend.checkSystemDNS(context.Background()) == nil) != good {
 			t.Fatalf("incorrect default DNS check for good=%v", good)
 		}
+	}
+}
+
+type fakeScutilRunner struct {
+	entry     string
+	setCalls  int
+	delCalls  int
+	denyWrite bool
+}
+
+func (r *fakeScutilRunner) OutputWithInput(_ context.Context, input, _ string, _ ...string) ([]byte, error) {
+	switch {
+	case strings.HasPrefix(input, "show "):
+		if r.entry == "" {
+			return []byte("  No such key\n"), nil
+		}
+		return []byte(r.entry), nil
+	case strings.HasPrefix(input, "d.init\n"):
+		r.setCalls++
+		if r.denyWrite {
+			return []byte("  Permission denied\n"), nil
+		}
+		if !strings.Contains(input, "d.add SupplementalMatchDomains * \"\"\n") ||
+			!strings.Contains(input, "d.add SupplementalMatchOrders * # 1\n") ||
+			!strings.Contains(input, "set "+DynamicStoreDNSKey+"\n") {
+			return nil, errors.New("unexpected scutil set script: " + input)
+		}
+		r.entry = `<dictionary> {
+  ServerAddresses : <array> {
+    0 : 198.18.0.2
+    1 : fdfe:dcba:9876::2
+  }
+  SupplementalMatchDomains : <array> {
+    0 : 
+  }
+  SupplementalMatchOrders : <array> {
+    0 : 1
+  }
+}
+`
+		return nil, nil
+	case strings.HasPrefix(input, "remove "):
+		r.delCalls++
+		if r.denyWrite {
+			return []byte("  Permission denied\n"), nil
+		}
+		r.entry = ""
+		return nil, nil
+	default:
+		return nil, errors.New("unexpected scutil input: " + input)
+	}
+}
+
+func TestDynamicStoreDNSAcquireIdempotentAndClear(t *testing.T) {
+	runner := &fakeScutilRunner{}
+	settings := DynamicStoreDNSSettings{Runner: runner}
+	ctx := context.Background()
+
+	if err := settings.SetGlobal(ctx, SystemDNSServers); err != nil {
+		t.Fatal(err)
+	}
+	if runner.setCalls != 1 {
+		t.Fatalf("expected 1 set call, got %d", runner.setCalls)
+	}
+	// Repeating Acquire must not rewrite SCDynamicStore when already matching.
+	if err := settings.SetGlobal(ctx, SystemDNSServers); err != nil {
+		t.Fatal(err)
+	}
+	if runner.setCalls != 1 {
+		t.Fatalf("expected idempotent SetGlobal, got %d set calls", runner.setCalls)
+	}
+	if err := settings.ClearGlobal(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if runner.delCalls != 1 {
+		t.Fatalf("expected 1 remove call, got %d", runner.delCalls)
+	}
+	// Clearing an absent key must be a no-op.
+	if err := settings.ClearGlobal(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if runner.delCalls != 1 {
+		t.Fatalf("expected idempotent ClearGlobal, got %d remove calls", runner.delCalls)
+	}
+
+	runner.denyWrite = true
+	if err := settings.SetGlobal(ctx, SystemDNSServers); err == nil {
+		t.Fatal("expected error on Permission denied")
+	}
+}
+
+func TestDNSManagerMigratesLegacyJournalWhenUsingDynamicStore(t *testing.T) {
+	stateDir := t.TempDir()
+	legacy := &fakeDNSSettings{services: map[string]DNSService{
+		"wifi": {Name: "Wi-Fi"},
+	}}
+	ctx := context.Background()
+	// Simulate an older Steer version having mutated preferences.plist and saved dns-restore.json.
+	if err := (DNSManager{StateDirectory: stateDir, Settings: legacy}).Acquire(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(legacy.services["wifi"].Servers, SystemDNSServers) {
+		t.Fatal("legacy setup did not write managed servers")
+	}
+
+	scutil := &fakeScutilRunner{}
+	manager := DNSManager{
+		StateDirectory: stateDir,
+		Settings:       legacy,
+		Global:         DynamicStoreDNSSettings{Runner: scutil},
+	}
+	if err := manager.Acquire(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(legacy.services["wifi"].Servers) != 0 {
+		t.Fatalf("expected legacy Wi-Fi DNS to be restored to DHCP, got %v", legacy.services["wifi"].Servers)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "dns-restore.json")); !os.IsNotExist(err) {
+		t.Fatal("expected legacy dns-restore.json to be removed after migration")
+	}
+	if scutil.setCalls != 1 || scutil.entry == "" {
+		t.Fatal("expected DynamicStore DNS to be installed")
+	}
+	if err := manager.Restore(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if scutil.entry != "" {
+		t.Fatal("expected DynamicStore DNS to be cleared on restore")
 	}
 }

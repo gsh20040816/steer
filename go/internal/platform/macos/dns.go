@@ -22,6 +22,165 @@ import (
 // deliberately leaves dns_address unset so its automatic DNS handler is used.
 var SystemDNSServers = []string{"198.18.0.2", "fdfe:dcba:9876::2"}
 
+const (
+	DynamicStoreDNSKey = "State:/Network/Service/com.steer.dns/DNS"
+	scutilBinary       = "/usr/sbin/scutil"
+)
+
+type GlobalDNSSettings interface {
+	SetGlobal(context.Context, []string) error
+	ClearGlobal(context.Context) error
+}
+
+// DynamicStoreDNSSettings registers an ephemeral supplemental DNS service in
+// macOS's SCDynamicStore with an empty match domain and highest priority.
+// Physical interfaces keep their DHCP/manual scoped DNS so captive portal
+// detection (captiveagent) and Wi-Fi broken-backhaul probes remain healthy.
+type DynamicStoreDNSSettings struct{ Runner InputRunner }
+
+func (s DynamicStoreDNSSettings) SetGlobal(ctx context.Context, servers []string) error {
+	current, exists, err := s.read(ctx)
+	if err != nil {
+		return err
+	}
+	if exists && dynamicStoreDNSMatches(current, servers) {
+		return nil
+	}
+	var script strings.Builder
+	script.WriteString("d.init\n")
+	script.WriteString("d.add ServerAddresses * ")
+	script.WriteString(strings.Join(servers, " "))
+	script.WriteString("\n")
+	script.WriteString("d.add SupplementalMatchDomains * \"\"\n")
+	script.WriteString("d.add SupplementalMatchOrders * # 1\n")
+	script.WriteString("set " + DynamicStoreDNSKey + "\n")
+	script.WriteString("quit\n")
+	output, err := s.Runner.OutputWithInput(ctx, script.String(), scutilBinary)
+	if err != nil {
+		return fmt.Errorf("set dynamic store DNS: %w", err)
+	}
+	if err := checkScutilMutationError(string(output)); err != nil {
+		return fmt.Errorf("set dynamic store DNS: %w", err)
+	}
+	updated, exists, err := s.read(ctx)
+	if err != nil {
+		return err
+	}
+	if !exists || !dynamicStoreDNSMatches(updated, servers) {
+		return errors.New("dynamic store DNS update did not take effect")
+	}
+	return nil
+}
+
+func (s DynamicStoreDNSSettings) ClearGlobal(ctx context.Context) error {
+	_, exists, err := s.read(ctx)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	script := "remove " + DynamicStoreDNSKey + "\nquit\n"
+	output, err := s.Runner.OutputWithInput(ctx, script, scutilBinary)
+	if err != nil {
+		return fmt.Errorf("clear dynamic store DNS: %w", err)
+	}
+	if err := checkScutilMutationError(string(output)); err != nil {
+		return fmt.Errorf("clear dynamic store DNS: %w", err)
+	}
+	_, exists, err = s.read(ctx)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return errors.New("dynamic store DNS entry remained after removal")
+	}
+	return nil
+}
+
+type dynamicStoreDNSState struct {
+	servers []string
+	domains []string
+	orders  []string
+}
+
+func (s DynamicStoreDNSSettings) read(ctx context.Context) (dynamicStoreDNSState, bool, error) {
+	script := "show " + DynamicStoreDNSKey + "\nquit\n"
+	output, err := s.Runner.OutputWithInput(ctx, script, scutilBinary)
+	if err != nil {
+		return dynamicStoreDNSState{}, false, fmt.Errorf("read dynamic store DNS: %w", err)
+	}
+	text := string(output)
+	if strings.Contains(text, "No such key") {
+		return dynamicStoreDNSState{}, false, nil
+	}
+	if err := checkScutilMutationError(text); err != nil {
+		return dynamicStoreDNSState{}, false, fmt.Errorf("read dynamic store DNS: %w", err)
+	}
+	if !strings.Contains(text, "<dictionary>") {
+		return dynamicStoreDNSState{}, false, fmt.Errorf("unexpected scutil output reading dynamic store DNS: %s", strings.TrimSpace(text))
+	}
+	return parseDynamicStoreDNS(text), true, nil
+}
+
+func checkScutilMutationError(output string) error {
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || trimmed == "No such key" {
+			continue
+		}
+		if strings.Contains(trimmed, "Permission denied") ||
+			strings.Contains(trimmed, "error") ||
+			strings.Contains(trimmed, "Error") ||
+			strings.Contains(trimmed, "Failed") {
+			return errors.New(trimmed)
+		}
+	}
+	return nil
+}
+
+func parseDynamicStoreDNS(output string) dynamicStoreDNSState {
+	var state dynamicStoreDNSState
+	section := ""
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "}" {
+			section = ""
+			continue
+		}
+		switch {
+		case strings.HasPrefix(trimmed, "ServerAddresses : <array>"):
+			section = "servers"
+		case strings.HasPrefix(trimmed, "SupplementalMatchDomains : <array>"):
+			section = "domains"
+		case strings.HasPrefix(trimmed, "SupplementalMatchOrders : <array>"):
+			section = "orders"
+		case section != "" && strings.Contains(trimmed, " : "):
+			_, value, _ := strings.Cut(trimmed, " : ")
+			value = strings.TrimSpace(value)
+			switch section {
+			case "servers":
+				state.servers = append(state.servers, value)
+			case "domains":
+				state.domains = append(state.domains, value)
+			case "orders":
+				state.orders = append(state.orders, value)
+			}
+		case section != "" && strings.HasSuffix(trimmed, " :"):
+			if section == "domains" {
+				state.domains = append(state.domains, "")
+			}
+		}
+	}
+	return state
+}
+
+func dynamicStoreDNSMatches(state dynamicStoreDNSState, servers []string) bool {
+	return slices.Equal(state.servers, servers) &&
+		slices.Equal(state.domains, []string{""}) &&
+		slices.Equal(state.orders, []string{"1"})
+}
+
 type DNSService struct {
 	Name     string
 	Servers  []string
@@ -177,14 +336,17 @@ type dnsLease struct {
 	Released bool     `json:"released,omitempty"`
 }
 
-// DNSManager journals before every mutation. An empty original list means
-// automatic/DHCP DNS, never a snapshot of a previous network's DHCP addresses.
+// DNSManager owns macOS system DNS takeover. When Global is configured, it
+// manages an ephemeral SCDynamicStore supplemental DNS entry and automatically
+// migrates/restores any legacy preferences.plist lease journal left by older
+// versions. When Global is nil, it falls back to legacy per-service takeover.
 type DNSManager struct {
 	StateDirectory string
 	Settings       DNSSettings
+	Global         GlobalDNSSettings
 }
 
-func (m DNSManager) update(ctx context.Context, restore bool) error {
+func (m DNSManager) withLock(ctx context.Context, fn func(context.Context) error) error {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	if err := os.MkdirAll(m.StateDirectory, 0o700); err != nil {
@@ -210,6 +372,13 @@ func (m DNSManager) update(ctx context.Context, restore bool) error {
 		}
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	return fn(ctx)
+}
+
+func (m DNSManager) updateLocked(ctx context.Context, restore bool) error {
+	if m.Settings == nil {
+		return nil
+	}
 	path := filepath.Join(m.StateDirectory, "dns-restore.json")
 	leases := map[string]dnsLease{}
 	data, err := os.ReadFile(path)
@@ -299,8 +468,37 @@ func (m DNSManager) update(ctx context.Context, restore bool) error {
 	return errors.Join(failures...)
 }
 
-func (m DNSManager) Acquire(ctx context.Context) error { return m.update(ctx, false) }
-func (m DNSManager) Restore(ctx context.Context) error { return m.update(ctx, true) }
+func (m DNSManager) Acquire(ctx context.Context) error {
+	return m.withLock(ctx, func(ctx context.Context) error {
+		if m.Global == nil {
+			return m.updateLocked(ctx, false)
+		}
+		var errs []error
+		if err := m.updateLocked(ctx, true); err != nil {
+			errs = append(errs, err)
+		}
+		if err := m.Global.SetGlobal(ctx, SystemDNSServers); err != nil {
+			errs = append(errs, err)
+		}
+		return errors.Join(errs...)
+	})
+}
+
+func (m DNSManager) Restore(ctx context.Context) error {
+	return m.withLock(ctx, func(ctx context.Context) error {
+		if m.Global == nil {
+			return m.updateLocked(ctx, true)
+		}
+		var errs []error
+		if err := m.Global.ClearGlobal(ctx); err != nil {
+			errs = append(errs, err)
+		}
+		if err := m.updateLocked(ctx, true); err != nil {
+			errs = append(errs, err)
+		}
+		return errors.Join(errs...)
+	})
+}
 
 func (backend *Backend) DNSManager() DNSManager {
 	runner := backend.runner
@@ -308,7 +506,14 @@ func (backend *Backend) DNSManager() DNSManager {
 		commandRunner.JoinProcessGroup = true
 		runner = commandRunner
 	}
-	return DNSManager{StateDirectory: backend.options.StateDirectory, Settings: NetworkDNSSettings{Runner: runner}}
+	manager := DNSManager{
+		StateDirectory: backend.options.StateDirectory,
+		Settings:       NetworkDNSSettings{Runner: runner},
+	}
+	if inputRunner, ok := runner.(InputRunner); ok {
+		manager.Global = DynamicStoreDNSSettings{Runner: inputRunner}
+	}
+	return manager
 }
 
 // RecoverDNSIfStopped is also called by the independent control daemon. It

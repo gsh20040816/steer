@@ -32,7 +32,7 @@ TUN 的设置：
 - `route_exclude_address` 排除回环、链路本地、组播、文档地址和其他保留地址；
 - 不用 Linux 才有的 `auto_redirect`，也不用 iproute2 mark、nftables 或 pf。
 
-DNS 全部由 sing-box 的 DNS 模块处理。TUN 设置 `dns_mode=hijack`，不写 `dns_address`，由 sing-box 自己用 `198.18.0.2` 和 `fdfe:dcba:9876::2` 接收 DNS 查询。macOS 的命令行版 sing-box 不会修改系统 DNS，所以 `_run` 在确认 DNS 可用后，按网络服务的 UUID 记下原来的 DNS 并改成上面两个地址，退出时再改回去。进程崩溃留下的记录由常驻的 control 服务负责恢复。恢复时只处理 DNS 仍是 Steer 写入的那些服务，用户后来自己改过的不动；VPN 的网络服务和搜索域也不动。
+DNS 全部由 sing-box 的 DNS 模块处理。TUN 设置 `dns_mode=hijack`，不写 `dns_address`，由 sing-box 自己用 `198.18.0.2` 和 `fdfe:dcba:9876::2` 接收 DNS 查询。macOS 的命令行版 sing-box 不会修改系统 DNS，所以 `_run` 在确认 DNS 可用后，通过 `SCDynamicStore`（`/usr/sbin/scutil`）写入内存态的独立补充解析器 `State:/Network/Service/com.steer.dns/DNS`（`SupplementalMatchDomains=[""]`、`SupplementalMatchOrders=[1]`），退出时移除该键；若检测到旧版本遗留的 `dns-restore.json`，会自动恢复物理网络服务的 `preferences.plist` 设置并清理。不直接改写物理网卡（如 `en0`）的 DNS，以保证绑定物理接口的 `captiveagent` 联网探测、Wi-Fi 回程健康检查及 Captive Portal 认证页正常工作。进程崩溃留下的内存态键由常驻的 control 服务负责清理，重启后天然清空。
 
 进入 TUN 的流量按这个顺序处理：
 

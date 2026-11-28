@@ -109,6 +109,7 @@ func TestSystemDNSAllowsManagedSingleStack(t *testing.T) {
 		{"scoped-only", "DNS configuration\nDNS configuration (for scoped queries)\nresolver #1\n  nameserver[0] : 198.18.0.2\n", false},
 		{"empty-default", "resolver #1\nresolver #2\n  nameserver[0] : 198.18.0.2\n", false},
 		{"scoped-vpn", "resolver #1\n  nameserver[0] : 198.18.0.2\nDNS configuration (for scoped queries)\nresolver #1\n  nameserver[0] : 10.0.0.1\n", true},
+		{"supplemental-global-with-en0-scoped", "DNS configuration\nresolver #1\n  search domain[0] : bbrouter\n  nameserver[0] : 198.18.0.2\n  nameserver[1] : fdfe:dcba:9876::2\n  flags    : Supplemental, Request A records, Request AAAA records\n  order    : 1\nresolver #2\n  nameserver[0] : fe80::1%en0\n  nameserver[1] : 192.168.1.1\n  if_index : 12 (en0)\n  order    : 200000\nDNS configuration (for scoped queries)\nresolver #1\n  nameserver[0] : fe80::1%en0\n  nameserver[1] : 192.168.1.1\n  if_index : 12 (en0)\n", true},
 		{"empty", "", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {

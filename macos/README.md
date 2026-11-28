@@ -82,7 +82,7 @@ swift run --build-system native SteerApp
 - sing-box 管理 utun 和 `auto_route`。不用 `auto_redirect`、nftables 或 pf。
 - TUN 的 `route_address` 只有默认路由，不额外添加私网路由。私网目标如果进了 TUN，会被规则送去直连。
 - 规则顺序：TUN 里目标端口 53 的 TCP/UDP → `hijack-dns`，然后是 ICMP，然后私网 → 直连，然后嗅探和用户规则。回环、链路本地、组播、文档地址和其他保留地址不进 TUN。普通的公网 IPv6 地址（即使在同一链路上）按用户规则处理。DoH/DoT 不在 53 端口劫持范围内。
-- sing-box 不会自己改系统 DNS，所以 `_run` 在 DNS 可用后把物理网络服务的 DNS 改成 Steer 的地址，退出时改回去。细节见 [ADR 0002](../docs/adr/0002-macos-launchd-tun.md)。
+- sing-box 不会自己改系统 DNS，所以 `_run` 在 DNS 可用后通过 `SCDynamicStore` 挂载高优先级的内存态全局补充 DNS（`State:/Network/Service/com.steer.dns/DNS`），不动物理网卡的 DHCP/Scoped DNS，退出时移除。细节见 [ADR 0002](../docs/adr/0002-macos-launchd-tun.md)。
 - 网络变化不会触发重新 Apply。
 
 ## WireGuard

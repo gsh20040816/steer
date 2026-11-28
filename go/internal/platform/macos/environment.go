@@ -20,10 +20,14 @@ type Runner interface {
 	Output(context.Context, string, ...string) ([]byte, error)
 }
 
+type InputRunner interface {
+	OutputWithInput(context.Context, string, string, ...string) ([]byte, error)
+}
+
 type ExecRunner struct {
 	Timeout time.Duration
 	// DNS mutations must stay in launchd's process group so a killed owner
-	// cannot leave a late networksetup write racing recovery.
+	// cannot leave a late DNS write racing recovery.
 	JoinProcessGroup bool
 }
 
@@ -33,6 +37,14 @@ const (
 )
 
 func (runner ExecRunner) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return runner.run(ctx, "", name, args...)
+}
+
+func (runner ExecRunner) OutputWithInput(ctx context.Context, input, name string, args ...string) ([]byte, error) {
+	return runner.run(ctx, input, name, args...)
+}
+
+func (runner ExecRunner) run(ctx context.Context, input, name string, args ...string) ([]byte, error) {
 	timeout := runner.Timeout
 	if timeout <= 0 {
 		timeout = defaultCommandTimeout
@@ -40,6 +52,9 @@ func (runner ExecRunner) Output(ctx context.Context, name string, args ...string
 	commandCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	command := exec.CommandContext(commandCtx, name, args...)
+	if input != "" {
+		command.Stdin = strings.NewReader(input)
+	}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: !runner.JoinProcessGroup}
 	command.Cancel = func() error {
 		if command.Process == nil {
